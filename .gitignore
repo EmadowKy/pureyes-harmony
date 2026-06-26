@@ -1,0 +1,46 @@
+# ==========================================
+# Pureyes Project .gitignore
+# ==========================================
+
+# OS/System files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# HarmonyOS Frontend
+frontend/node_modules/
+frontend/oh_modules/
+frontend/local.properties
+frontend/.idea/
+frontend/.hvigor/
+frontend/.cxx/
+frontend/.clangd/
+frontend/.clang-format
+frontend/.clang-tidy
+frontend/.appanalyzer/
+frontend/build/
+**/build/
+**/.test/
+
+# Python Backend
+backend/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.pyd
+backend/.pytest_cache/
+backend/.venv/
+backend/venv/
+backend/env/
+backend/.env
+
+# Backend Databases & State
+backend/user.db
+backend/*.db
+backend/*.sqlite3
+
+# Backend Media Storage & Transcode Caches (Runtime data)
+backend/storage/live/
+backend/storage/streams/
+backend/storage/slices/
+backend/temp/
+backend/uploads/

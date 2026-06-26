@@ -1,0 +1,24 @@
+# QA Storage Configuration
+storage:
+  # 每个用户最多保存的问答记录数
+  max_records_per_user: 100
+  
+  # 存储数据的根目录（相对于项目根目录，即 backend 的父目录）
+  storage_dir: "output/qa_records"
+  
+  # 是否启用自动备份
+  enable_backup: true
+  
+  # 备份目录
+  backup_dir: "output/qa_backups"
+
+# Video Upload Configuration
+video:
+  # 单个视频最大大小限制 (字节)：500MB = 516710400 bytes
+  max_single_video_size: 524288000
+  
+  # 每个用户最大总存储大小 (字节)：2GB = 2147483648 bytes
+  max_storage_per_user: 2147483648
+  
+  # 每个用户最多上传视频数
+  max_videos_per_user: 30
