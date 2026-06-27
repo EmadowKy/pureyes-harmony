@@ -263,6 +263,32 @@ const BASE_URL = 'https://abc123.autodl.com:6006/api';
 - `BASE_URL` 后面要加 `/api`
 - 地址末尾不要多写 `/`
 - `http` 还是 `https` 要和 AutoDL 给你的地址保持一致
+- DevEco 模拟器里不要写 `localhost`。`localhost` 在模拟器里通常指模拟器自己，不是你的 Windows，也不是 AutoDL。
+
+如果你用的是 AutoDL 弹窗给的 SSH 隧道命令，例如这种形式：
+
+```bash
+ssh -CNg -L 6006:127.0.0.1:6006 root@你的AutoDL连接地址 -p 端口号
+```
+
+那它的意思是“让 Windows 浏览器可以用 `http://localhost:6006` 访问 AutoDL 后端”。这不代表 DevEco 模拟器里的 App 也可以写 `localhost:6006`。
+
+先在 Windows 浏览器里测试：
+
+```text
+http://localhost:6006/api/health
+```
+
+如果 Windows 本机都打不开，说明后端或 SSH 隧道还没通，先不要调前端。
+
+如果 Windows 本机能打开，再给 DevEco 模拟器试这个地址：
+
+```ts
+export const BASE_HOST = 'http://10.0.2.2:6006';
+const BASE_URL = 'http://10.0.2.2:6006/api';
+```
+
+如果 `10.0.2.2` 也不通，就回到 AutoDL 控制台复制真正的公网访问地址，按上面的方式填入 `http.ets`。
 
 改完保存。
 
@@ -337,6 +363,7 @@ App 打开后，用默认账号：
 | --- | --- | --- |
 | AutoDL 里 `curl 127.0.0.1:6006/api/health` 不通 | 后端没启动或端口不对 | 重新 `PORT=6006 python run.py` |
 | 浏览器打不开 `AutoDL地址/api/health` | AutoDL 端口映射没开或地址不对 | 去 AutoDL 控制台复制外部访问地址 |
+| App 启动后红字提示“服务器未连接” | 模拟器访问不到后端，常见是误写了 `localhost` | Windows 先测 `后端地址/api/health`；模拟器不要用 `localhost`，优先用 AutoDL 公网地址，SSH 隧道调试可试 `10.0.2.2:6006` |
 | App 登录 Network Error | 前端地址填错 | 改 `frontend/entry/src/main/ets/utils/http.ets` |
 | 后端报模型路径不存在 | 模型没放到 `models/Qwen3-VL-2B-Instruct` | 下载模型或改 `model.yaml` |
 | DevEco Studio 打不开工程 | 打开目录错了 | 选择 `frontend/` 文件夹 |

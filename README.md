@@ -261,6 +261,29 @@ ssh -L 8000:127.0.0.1:8000 root@你的服务器地址
 
 手机端 HarmonyOS 应用必须能访问后端地址。如果只开本机 SSH 隧道，手机通常访问不到；真机调试更推荐使用 AutoDL 公网端口、内网穿透或同一局域网可访问的地址。
 
+特别注意 DevEco 模拟器：前端里不要写 `http://localhost:6006`。`localhost` 在模拟器里通常表示模拟器自己，不是 Windows 主机，也不是 AutoDL 服务器。推荐直接使用 AutoDL 控制台给出的公网访问地址。
+
+如果你只能使用 AutoDL 提示的 SSH 隧道方式，先在 Windows PowerShell 保持隧道运行：
+
+```bash
+ssh -CNg -L 6006:127.0.0.1:6006 root@你的AutoDL连接地址 -p 端口号
+```
+
+然后先确认 Windows 浏览器能打开：
+
+```text
+http://localhost:6006/api/health
+```
+
+如果 Windows 本机都打不开，DevEco 模拟器一定也连不上。Windows 本机能打开后，模拟器访问 Windows 主机时可尝试把前端地址改成：
+
+```ts
+export const BASE_HOST = 'http://10.0.2.2:6006';
+const BASE_URL = 'http://10.0.2.2:6006/api';
+```
+
+如果 `10.0.2.2` 不通，改用 AutoDL 控制台提供的公网访问地址最稳。
+
 ## 9. 模型推理最小测试
 
 仓库没有自带 `backend/example/1.mp4` 和 `backend/example/2.mp4`。可以先用 FFmpeg 生成两个测试视频：
@@ -317,6 +340,8 @@ const BASE_URL = 'http://10.32.212.191:8000/api';
 export const BASE_HOST = 'http://你的AutoDL公网地址:公网端口';
 const BASE_URL = 'http://你的AutoDL公网地址:公网端口/api';
 ```
+
+不要在 DevEco 模拟器里使用 `localhost`。如果 App 打开后提示“服务器未连接”，优先检查 Windows 浏览器是否能打开 `后端地址/api/health`，再检查 `http.ets` 里 `BASE_HOST` 和 `BASE_URL` 是否一起改了。
 
 然后在 DevEco Studio 中：
 
