@@ -152,6 +152,46 @@ def process_qa_thread(app, task_id, question, video_paths):
             running_tasks[task_id]['progress_queue'].put(error_entry)
 
 
+@workspaces_bp.get("/example-videos")
+@jwt_required()
+def get_example_videos():
+    """
+    列出与 backend 同级的 example 目录下的所有视频文件及时长。
+    """
+    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+    
+    if not os.path.exists(example_dir) or not os.path.isdir(example_dir):
+        return success(data=[])
+        
+    from app.core.config import get_ffmpeg_path
+    import subprocess
+    
+    video_files = [f for f in os.listdir(example_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
+    results = []
+    
+    for vf in video_files:
+        path = os.path.join(example_dir, vf)
+        duration = 0.0
+        try:
+            cmd = [
+                get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1', path
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            duration = float(res.stdout.strip())
+        except Exception as e:
+            print(f"[Workspace QA] Failed to get duration of {vf}: {e}")
+            
+        results.append({
+            "name": vf,
+            "url": f"example/{vf}",
+            "duration": duration
+        })
+        
+    return success(data=results)
+
+
 @workspaces_bp.post("/<int:workspace_id>/qa")
 @jwt_required()
 def submit_qa(workspace_id):
@@ -166,7 +206,7 @@ def submit_qa(workspace_id):
         
     data = request.get_json() or {}
     question = data.get("question")
-    selections = data.get("selections", []) # list of {monitor_id, start_time, end_time}
+    selections = data.get("selections", []) # list of {video_name, start_time_offset, end_time_offset}
     
     if not question or not selections:
         return fail(message="question and selections are required", code=5004, http_status=400)
@@ -176,40 +216,64 @@ def submit_qa(workspace_id):
     db.session.add(record)
     
     # Process selections and map to video files
-    from app.monitors.slicer import slice_video, SLICE_OUTPUT_BASE
+    from app.monitors.slicer import SLICE_OUTPUT_BASE
+    from app.core.config import get_ffmpeg_path
+    import subprocess
+    
+    # Define example directory at the same level as backend
+    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+    os.makedirs(example_dir, exist_ok=True)
+    os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
     
     video_paths = []
     for sel in selections:
-        monitor_id = sel["monitor_id"]
-        start_time_str = sel["start_time"]
-        end_time_str = sel["end_time"]
+        video_name = sel.get("video_name")
+        if not video_name:
+            continue
+            
+        start_offset = float(sel.get("start_time_offset", 0.0))
+        end_offset = float(sel.get("end_time_offset", 0.0))
+        duration = max(1.0, end_offset - start_offset)
+        
+        example_video_path = os.path.join(example_dir, video_name)
+        if not os.path.exists(example_video_path):
+            print(f"[Workspace QA ERROR] Example video {video_name} not found.")
+            continue
         
         # Add selection row in DB
         qvs = QAVideoSelection(
             record_id=task_id,
-            monitor_id=monitor_id,
-            start_time=datetime.fromisoformat(start_time_str.replace("Z", "")),
-            end_time=datetime.fromisoformat(end_time_str.replace("Z", ""))
+            monitor_id=0, # mock monitor ID
+            start_time=datetime.fromtimestamp(start_offset),
+            end_time=datetime.fromtimestamp(end_offset)
         )
         db.session.add(qvs)
         
-        # Get slice path
-        filename = slice_video(monitor_id, start_time_str, end_time_str)
-        abs_slice_path = os.path.join(SLICE_OUTPUT_BASE, filename)
+        # Output filename in storage/slices/ to make it look like a real slice
+        sim_filename = f"sim_{video_name.replace('.', '_')}_{uuid.uuid4().hex[:8]}.mp4"
+        sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
         
-        # Check if the slice is mock text (size is tiny) or missing
-        is_mock = True
-        if os.path.exists(abs_slice_path):
-            file_size = os.path.getsize(abs_slice_path)
-            if file_size > 1000:
-                is_mock = False
-                
-        if is_mock:
-            # Fall back to example videos relative to backend root
-            idx = len(video_paths) % 2
-            video_paths.append(f"example/{idx+1}.mp4")
-        else:
-            video_paths.append(f"storage/slices/{filename}")
+        try:
+            ffmpeg_bin = get_ffmpeg_path("ffmpeg")
+            cmd = [
+                ffmpeg_bin, "-y",
+                "-ss", f"{start_offset:.3f}",
+                "-t", f"{duration:.3f}",
+                "-i", example_video_path,
+                "-c:v", "libx264", "-preset", "fast",
+                "-c:a", "aac",
+                sim_output_path
+            ]
+            print(f"[Workspace QA] Slicing simulated video: {' '.join(cmd)}")
+            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+            if result.returncode == 0 and os.path.exists(sim_output_path) and os.path.getsize(sim_output_path) > 1000:
+                video_paths.append(f"storage/slices/{sim_filename}")
+            else:
+                raise RuntimeError("FFmpeg failed to generate simulated slice")
+        except Exception as slice_err:
+            print(f"[Workspace QA ERROR] Simulated slice failed: {slice_err}. Falling back to direct path.")
+            video_paths.append(f"../example/{video_name}")
             
     db.session.commit()
     

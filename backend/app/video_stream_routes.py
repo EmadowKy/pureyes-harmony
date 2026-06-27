@@ -228,6 +228,30 @@ def serve_video(video_path):
         abort(500, description=f"Internal server error: {str(e)}")
 
 
+@video_stream_bp.route('/example/<path:video_path>')
+def serve_example_video(video_path):
+    """
+    提供 example 目录下的视频访问服务。
+    """
+    try:
+        example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+        full_path = os.path.abspath(os.path.join(example_dir, video_path))
+        
+        # 安全性校验：防止路径穿越
+        if not full_path.startswith(example_dir + os.sep) and full_path != example_dir:
+            abort(403, description="Access denied")
+            
+        if not os.path.exists(full_path):
+            abort(404, description=f"Example video not found: {video_path}")
+            
+        return send_file(full_path, mimetype='video/mp4')
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error serving example video: {e}")
+        abort(500, description=f"Internal server error: {str(e)}")
+
+
 from app.models.monitor import Monitor
 
 LIVE_STREAM_BASE = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "live"))
