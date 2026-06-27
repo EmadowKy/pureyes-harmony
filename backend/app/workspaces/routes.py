@@ -108,15 +108,18 @@ def process_qa_thread(app, task_id, question, selections):
                         "-ss", f"{start_offset:.3f}",
                         "-t", f"{duration:.3f}",
                         "-i", example_video_path,
-                        "-c:v", "libx264", "-preset", "fast",
+                        "-c:v", "copy",
                         "-c:a", "aac",
+                        "-map", "0:v",
+                        "-map", "0:a?",
                         sim_output_path
                     ]
-                    print(f"[Workspace QA Background Thread] Slicing video: {' '.join(cmd)}")
-                    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                    print(f"[Workspace QA Background Thread] Slicing video (copy video, transcode audio): {' '.join(cmd)}")
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
                     if result.returncode == 0 and os.path.exists(sim_output_path) and os.path.getsize(sim_output_path) > 1000:
                         video_paths.append(f"storage/slices/{sim_filename}")
                     else:
+                        print(f"[Workspace QA Background Thread ERROR] FFmpeg exit code {result.returncode}. Stderr:\n{result.stderr}")
                         raise RuntimeError("FFmpeg 裁剪命令返回异常。")
                 except Exception as slice_err:
                     print(f"[Workspace QA Background Thread ERROR] Slicing failed: {slice_err}. Falling back to direct path.")
