@@ -55,17 +55,89 @@ from flask import current_app
 # Global in-memory running tasks registry
 running_tasks = {}
 
-def process_qa_thread(app, task_id, question, video_paths):
+def process_qa_thread(app, task_id, question, selections):
     with app.app_context():
         try:
-            # Add initial progress entry
+            # Stage 1: Video Slicing
             init_msg = {
+                "stage": "slicing",
+                "status": "started",
+                "message": "大模型后台推理服务就绪，开始对选择的视频时间段进行高精度物理裁剪..."
+            }
+            running_tasks[task_id]['progress'].append(init_msg)
+            running_tasks[task_id]['progress_queue'].put(init_msg)
+
+            from app.monitors.slicer import SLICE_OUTPUT_BASE
+            from app.core.config import get_ffmpeg_path
+            import subprocess
+            
+            BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+            os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
+            
+            video_paths = []
+            for sel in selections:
+                video_name = sel.get("video_name")
+                if not video_name:
+                    continue
+                    
+                start_offset = float(sel.get("start_time_offset", 0.0))
+                end_offset = float(sel.get("end_time_offset", 0.0))
+                duration = max(1.0, end_offset - start_offset)
+                
+                example_video_path = os.path.join(example_dir, video_name)
+                if not os.path.exists(example_video_path):
+                    err_msg = f"未找到示例视频文件 {video_name}"
+                    raise RuntimeError(err_msg)
+                
+                sim_filename = f"sim_{video_name.replace('.', '_')}_{uuid.uuid4().hex[:8]}.mp4"
+                sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
+                
+                slice_log = {
+                    "stage": "slicing",
+                    "status": "running",
+                    "message": f"正在裁剪视频 {video_name} 的时间范围 [{start_offset:.1f}s - {end_offset:.1f}s]..."
+                }
+                running_tasks[task_id]['progress'].append(slice_log)
+                running_tasks[task_id]['progress_queue'].put(slice_log)
+                
+                try:
+                    ffmpeg_bin = get_ffmpeg_path("ffmpeg")
+                    cmd = [
+                        ffmpeg_bin, "-y",
+                        "-ss", f"{start_offset:.3f}",
+                        "-t", f"{duration:.3f}",
+                        "-i", example_video_path,
+                        "-c:v", "libx264", "-preset", "fast",
+                        "-c:a", "aac",
+                        sim_output_path
+                    ]
+                    print(f"[Workspace QA Background Thread] Slicing video: {' '.join(cmd)}")
+                    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                    if result.returncode == 0 and os.path.exists(sim_output_path) and os.path.getsize(sim_output_path) > 1000:
+                        video_paths.append(f"storage/slices/{sim_filename}")
+                    else:
+                        raise RuntimeError("FFmpeg 裁剪命令返回异常。")
+                except Exception as slice_err:
+                    print(f"[Workspace QA Background Thread ERROR] Slicing failed: {slice_err}. Falling back to direct path.")
+                    video_paths.append(f"../example/{video_name}")
+
+            slice_completed = {
+                "stage": "slicing",
+                "status": "completed",
+                "message": "视频时间段高精度物理裁剪完成，切片已就绪。"
+            }
+            running_tasks[task_id]['progress'].append(slice_completed)
+            running_tasks[task_id]['progress_queue'].put(slice_completed)
+
+            # Stage 2: Model Initialization
+            model_init = {
                 "stage": "model_initialization",
                 "status": "started",
                 "message": "大模型后台推理服务启动中..."
             }
-            running_tasks[task_id]['progress'].append(init_msg)
-            running_tasks[task_id]['progress_queue'].put(init_msg)
+            running_tasks[task_id]['progress'].append(model_init)
+            running_tasks[task_id]['progress_queue'].put(model_init)
 
             # Attempt to import ask_model (and its underlying torch dependencies)
             # This is done inside the thread to avoid crashing Flask startup if imports fail.
@@ -226,7 +298,8 @@ def submit_qa(workspace_id):
     os.makedirs(example_dir, exist_ok=True)
     os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
     
-    video_paths = []
+    from datetime import timedelta
+    base_time = datetime(2026, 6, 27, 0, 0, 0)
     for sel in selections:
         video_name = sel.get("video_name")
         if not video_name:
@@ -234,46 +307,15 @@ def submit_qa(workspace_id):
             
         start_offset = float(sel.get("start_time_offset", 0.0))
         end_offset = float(sel.get("end_time_offset", 0.0))
-        duration = max(1.0, end_offset - start_offset)
-        
-        example_video_path = os.path.join(example_dir, video_name)
-        if not os.path.exists(example_video_path):
-            print(f"[Workspace QA ERROR] Example video {video_name} not found.")
-            continue
         
         # Add selection row in DB
         qvs = QAVideoSelection(
             record_id=task_id,
             monitor_id=0, # mock monitor ID
-            start_time=datetime.fromtimestamp(start_offset),
-            end_time=datetime.fromtimestamp(end_offset)
+            start_time=base_time + timedelta(seconds=start_offset),
+            end_time=base_time + timedelta(seconds=end_offset)
         )
         db.session.add(qvs)
-        
-        # Output filename in storage/slices/ to make it look like a real slice
-        sim_filename = f"sim_{video_name.replace('.', '_')}_{uuid.uuid4().hex[:8]}.mp4"
-        sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
-        
-        try:
-            ffmpeg_bin = get_ffmpeg_path("ffmpeg")
-            cmd = [
-                ffmpeg_bin, "-y",
-                "-ss", f"{start_offset:.3f}",
-                "-t", f"{duration:.3f}",
-                "-i", example_video_path,
-                "-c:v", "libx264", "-preset", "fast",
-                "-c:a", "aac",
-                sim_output_path
-            ]
-            print(f"[Workspace QA] Slicing simulated video: {' '.join(cmd)}")
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-            if result.returncode == 0 and os.path.exists(sim_output_path) and os.path.getsize(sim_output_path) > 1000:
-                video_paths.append(f"storage/slices/{sim_filename}")
-            else:
-                raise RuntimeError("FFmpeg failed to generate simulated slice")
-        except Exception as slice_err:
-            print(f"[Workspace QA ERROR] Simulated slice failed: {slice_err}. Falling back to direct path.")
-            video_paths.append(f"../example/{video_name}")
             
     db.session.commit()
     
@@ -286,9 +328,9 @@ def submit_qa(workspace_id):
         "error": None
     }
     
-    # Start thread
+    # Start thread (perform video slicing asynchronously in background)
     app = current_app._get_current_object()
-    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, video_paths))
+    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, selections))
     t.daemon = True
     t.start()
     

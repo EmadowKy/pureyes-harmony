@@ -199,6 +199,12 @@ export struct WorkspaceTab {
   @State activeVideo: SelectableVideo = new SelectableVideo();
   @State activeIndex: number = 0;
 
+  @State activeTaskId: string = '';
+  @State activeTaskQuestion: string = '';
+  @State activeTaskAnswer: string = '';
+  @State activeTaskStatus: string = '';
+  @State activeTaskProgress: Array<Record<string, Object>> = [];
+
   createDialogController: CustomDialogController = new CustomDialogController({
     builder: CreateWorkspaceDialog({
       confirm: (name: string): void => {
@@ -239,6 +245,11 @@ export struct WorkspaceTab {
     this.showCreateQA = false;
     this.questionText = '';
     this.aiProgressText = '';
+    this.activeTaskId = '';
+    this.activeTaskQuestion = '';
+    this.activeTaskAnswer = '';
+    this.activeTaskStatus = '';
+    this.activeTaskProgress = [];
     this.loadWorkspaces();
   }
 
@@ -293,6 +304,15 @@ export struct WorkspaceTab {
     video.startOffset = start;
     video.endOffset = end;
     this.exampleVideos = [...this.exampleVideos];
+  }
+
+  async fetchSingleStatus(taskId: string): Promise<void> {
+    const res = await HttpUtil.get(`/workspaces/qa/${taskId}/status`);
+    if (res.code === 0 && res.data) {
+      const statusObj = JSON.parse(res.data) as Record<string, Object>;
+      const progressList = statusObj['progress'] as Array<Record<string, Object>>;
+      this.activeTaskProgress = progressList || [];
+    }
   }
 
   async loadWorkspaces(): Promise<void> {
@@ -369,6 +389,11 @@ export struct WorkspaceTab {
         const answer = (statusObj['answer'] as string) || '';
         const error = (statusObj['error'] as string) || '';
         const progressList = statusObj['progress'] as Array<Record<string, Object>>;
+        
+        this.activeTaskStatus = status;
+        this.activeTaskAnswer = answer ? answer : (error ? '错误: ' + error : '');
+        this.activeTaskProgress = progressList || [];
+        
         if (progressList && progressList.length > 0) {
           const latestItem = progressList[progressList.length - 1];
           this.aiProgressText = latestItem['message'] as string;
@@ -437,6 +462,17 @@ export struct WorkspaceTab {
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       const taskId = dataObj['task_id'] as string;
+      
+      // Directly transition to analysis process view
+      this.activeTaskId = taskId;
+      this.activeTaskQuestion = this.questionText;
+      this.activeTaskAnswer = '';
+      this.activeTaskStatus = 'processing';
+      this.activeTaskProgress = [];
+      this.showCreateQA = false;
+      this.questionText = '';
+      
+      this.loadQARecords(this.selectedWorkspaceId);
       this.startPollingStatus(taskId);
     } else {
       this.aiProgressText = '提交失败: ' + (res.message || '未知异常');
@@ -461,6 +497,7 @@ export struct WorkspaceTab {
               this.showCreateQA = false;
               this.aiProgressText = '';
               this.questionText = '';
+              this.activeTaskId = '';
               this.loadWorkspaces();
             })
 
@@ -473,7 +510,151 @@ export struct WorkspaceTab {
         .width('100%')
         .padding(15)
 
-        if (this.showCreateQA) {
+        if (this.activeTaskId !== '') {
+          // ===== Q&A Analysis Process / Detail View =====
+          Column({ space: 15 }) {
+            // Header with back to list button
+            Row() {
+              Button('← 返回列表')
+                .fontSize(14)
+                .backgroundColor('#E5E7EB')
+                .fontColor('#374151')
+                .height(36)
+                .onClick((): void => {
+                  if (this.pollIntervalId) {
+                    clearInterval(this.pollIntervalId);
+                    this.pollIntervalId = 0;
+                  }
+                  this.activeTaskId = '';
+                  this.loadQARecords(this.selectedWorkspaceId);
+                })
+              Blank()
+              // Status Badge
+              Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
+                .fontSize(12)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
+                .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
+                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                .borderRadius(12)
+            }
+            .width('90%')
+            .margin({ top: 5 })
+
+            Scroll() {
+              Column({ space: 15 }) {
+                // 1. Question Card
+                Column({ space: 8 }) {
+                  Text('问题')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#9CA3AF')
+                    .alignSelf(ItemAlign.Start)
+                  
+                  Text(this.activeTaskQuestion)
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#111827')
+                    .width('100%')
+                }
+                .width('100%')
+                .padding(15)
+                .backgroundColor(Color.White)
+                .borderRadius(8)
+                .shadow({ radius: 3, color: '#0D000000' })
+
+                // 2. AI Answer Card
+                Column({ space: 8 }) {
+                  Text('AI 回答')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#9CA3AF')
+                    .alignSelf(ItemAlign.Start)
+
+                  if (this.activeTaskStatus === 'processing' && !this.activeTaskAnswer) {
+                    Row({ space: 8 }) {
+                      Text('AI 正在分析中，请稍候...')
+                        .fontSize(14)
+                        .fontColor('#6B7280')
+                    }
+                    .padding({ top: 10, bottom: 10 })
+                  } else {
+                    Text(this.activeTaskAnswer ? this.activeTaskAnswer : '分析中...')
+                      .fontSize(14)
+                      .fontColor(this.activeTaskStatus === 'failed' ? '#EF4444' : '#1F2937')
+                      .width('100%')
+                  }
+                }
+                .width('100%')
+                .padding(15)
+                .backgroundColor(Color.White)
+                .borderRadius(8)
+                .shadow({ radius: 3, color: '#0D000000' })
+
+                // 3. Real-time Analysis Logs (Timeline)
+                Column({ space: 10 }) {
+                  Text('分析过程日志')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#9CA3AF')
+                    .alignSelf(ItemAlign.Start)
+
+                  if (this.activeTaskProgress.length > 0) {
+                    ForEach(this.activeTaskProgress, (item: Record<string, Object>, idx: number): void => {
+                      Row() {
+                        // Timeline Dot & vertical connector
+                        Column() {
+                          Circle({ width: 8, height: 8 })
+                            .fill(idx === this.activeTaskProgress.length - 1 && this.activeTaskStatus === 'processing' ? '#3B82F6' : '#9CA3AF')
+                          
+                          if (idx < this.activeTaskProgress.length - 1) {
+                            Column()
+                              .width(2)
+                              .height(30)
+                              .backgroundColor('#E5E7EB')
+                              .margin({ top: 4 })
+                          }
+                        }
+                        .width(20)
+                        .justifyContent(FlexAlign.Start)
+                        .alignItems(HorizontalAlign.Center)
+
+                        // Log text
+                        Column() {
+                          Text(item['message'] as string)
+                            .fontSize(13)
+                            .fontColor('#4B5563')
+                            .width('100%')
+                            .lineHeight(18)
+                        }
+                        .layoutWeight(1)
+                        .margin({ left: 8 })
+                        .padding({ bottom: idx < this.activeTaskProgress.length - 1 ? 15 : 0 })
+                      }
+                      .alignItems(VerticalAlign.Top)
+                      .width('100%')
+                    })
+                  } else {
+                    Text('等待分析任务启动...')
+                      .fontSize(13)
+                      .fontColor('#9CA3AF')
+                      .padding(15)
+                  }
+                }
+                .width('100%')
+                .padding(15)
+                .backgroundColor(Color.White)
+                .borderRadius(8)
+                .shadow({ radius: 3, color: '#0D000000' })
+              }
+              .width('100%')
+            }
+            .width('90%')
+            .layoutWeight(1)
+          }
+          .width('100%')
+          .layoutWeight(1)
+        } else if (this.showCreateQA) {
           // ===== New QA Form (Multi-video Grid + Range Slider popup) =====
           Column({ space: 10 }) {
             Text('新建 AI 问答 - 选择分析视频')
@@ -590,8 +771,8 @@ export struct WorkspaceTab {
                       .fontWeight(FontWeight.Bold)
                       .fontSize(15)
 
-                    Text('A: ' + (record.answer ? record.answer : record.status))
-                      .fontColor('#666666')
+                    Text('A: ' + (record.status === 'processing' ? '分析中...' : (record.answer ? record.answer : record.status)))
+                      .fontColor(record.status === 'processing' ? '#007DFF' : '#666666')
                       .fontSize(14)
 
                     Text('创建时间: ' + record.created_at)
@@ -604,6 +785,18 @@ export struct WorkspaceTab {
                   .backgroundColor(Color.White)
                   .borderRadius(8)
                   .shadow({ radius: 4, color: '#1A000000' })
+                  .onClick((): void => {
+                    this.activeTaskId = record.id;
+                    this.activeTaskQuestion = record.question;
+                    this.activeTaskAnswer = record.answer;
+                    this.activeTaskStatus = record.status;
+                    this.activeTaskProgress = [];
+                    if (record.status === 'processing') {
+                      this.startPollingStatus(record.id);
+                    } else {
+                      this.fetchSingleStatus(record.id);
+                    }
+                  })
                 }
               })
             }
