@@ -1,6 +1,6 @@
 # 用户与小组模块说明
 
-更新时间：2026-06-27 18:16:14 +08:00
+更新时间：2026-06-27 18:51:45 +08:00
 
 本文说明当前由 `用户（包含小组管理）` 分工负责的功能范围、接口合同和对接注意事项。实现尽量独立在 `backend/app/users`、`backend/app/groups`、`backend/app/user_center` 与前端 `ProfileTab`、`GroupTab` 内，不改变监控与工作区模块的调用方式。
 
@@ -231,6 +231,14 @@
 
 ## 远程后端检查记录
 
+2026-06-27 18:51:45 +08:00：
+
+- 远程正式仓库 `/root/autodl-tmp/pureyes-harmony` 已放置本地模型目录 `models/Qwen3-VL-2B-Instruct`，模型大小约 4.0 GB。
+- 远程 `backend/configs/model.yaml` 已指向相对路径 `../../models/Qwen3-VL-2B-Instruct`；配合 `deploy/run_backend_autodl.py` 从 `backend/configs` 作为工作目录启动，可解析到仓库内模型目录。
+- 已在远程 `pureyes` Conda 环境设置 `HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1` 后运行 `python deploy/check_env.py --require-local-model`，通过。
+- 已在远程用 `AutoProcessor.from_pretrained(..., local_files_only=True)` 和 `Qwen3VLForConditionalGeneration.from_pretrained(..., local_files_only=True, device_map="cuda:0")` 做实际加载冒烟测试，通过；加载后显存占用约 3.96 GB。
+- 已通过本机 SSH 隧道把模拟器访问转发到远程后端，DevEco 模拟器完成 `admin/admin` 登录、用户页展示、空小组态展示、创建测试小组 `UITest0627`、小组页成员列表刷新测试。测试小组写入远程正式数据库，便于后续继续联调。
+
 2026-06-27 18:22:19 +08:00：
 
 - 已在远程临时目录 `/root/autodl-tmp/pureyes-harmony-codex-test` 同步本次改动。
@@ -246,7 +254,7 @@
 - PyTorch：`2.7.0+cu126`，CUDA 可用
 - Transformers：`4.57.6`
 - FFmpeg/FFprobe：可用
-- 当前大模型状态：`backend/configs/model.yaml` 已指向 `../../models/Qwen3-VL-2B-Instruct`，但远程 `/root/autodl-tmp/pureyes-harmony/models/Qwen3-VL-2B-Instruct` 目录不存在，因此模型推理尚未配好。把 Hugging Face 模型文件放到该目录后，再运行 `python deploy/check_env.py --require-local-model`。
+- 当前大模型状态：`backend/configs/model.yaml` 已指向 `../../models/Qwen3-VL-2B-Instruct`，并且远程 `/root/autodl-tmp/pureyes-harmony/models/Qwen3-VL-2B-Instruct` 目录已存在；离线环境检查和实际 CUDA 加载测试已通过。
 
 ## 测试方式
 
