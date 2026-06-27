@@ -44,6 +44,23 @@ git clone https://github.com/EmadowKy/pureyes-harmony.git
 cd pureyes-harmony
 ```
 
+如果 AutoDL 容器中 `git clone` 报 SSL 证书链错误，例如：
+
+```text
+SSL certificate OpenSSL verify result: self-signed certificate in certificate chain (19)
+```
+
+优先更新系统 CA 证书后再重试：
+
+```bash
+apt-get update
+apt-get install -y ca-certificates openssl git
+update-ca-certificates
+
+git config --global http.sslVerify true
+git config --global http.sslCAInfo /etc/ssl/certs/ca-certificates.crt
+```
+
 如果网络较慢，可以先在服务器上手动下载模型文件；项目默认不会再强制设置 Hugging Face 镜像地址。
 
 ## 3. 创建 Conda 环境
