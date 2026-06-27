@@ -6,7 +6,10 @@ APP_DIR = os.path.dirname(CORE_DIR)
 BACKEND_DIR = os.path.dirname(APP_DIR)
 
 class Config:
-    SQLALCHEMY_DATABASE_URI = f"sqlite:///{os.path.join(BACKEND_DIR, 'user.db')}"
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        "DATABASE_URL",
+        f"sqlite:///{os.path.join(BACKEND_DIR, 'user.db')}",
+    )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -23,15 +26,15 @@ def get_ffmpeg_path(name="ffmpeg"):
     """
     ext = ".exe" if os.name == "nt" else ""
     exe_name = f"{name}{ext}"
-    
+
     # Check project root (backend/)
     local_path = os.path.join(BACKEND_DIR, exe_name)
     if os.path.exists(local_path):
         return local_path
-        
+
     # Check backend/bin/
     local_bin_path = os.path.join(BACKEND_DIR, "bin", exe_name)
     if os.path.exists(local_bin_path):
         return local_bin_path
-        
-    return name
+
+    return name

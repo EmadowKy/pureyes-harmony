@@ -49,4 +49,8 @@ export class HttpUtil {
   static put(url: string, data?: Object): Promise<HttpResult> {
     return HttpUtil.request(url, http.RequestMethod.PUT, data);
   }
+
+  static del(url: string, data?: Object): Promise<HttpResult> {
+    return HttpUtil.request(url, http.RequestMethod.DELETE, data);
+  }
 }

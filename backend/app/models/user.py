@@ -30,5 +30,6 @@ class User(db.Model):
             "avatar": self.avatar,
             "role": self.role,
             "is_active": self.is_active,
-            "created_at": self.created_at.isoformat() + "Z"
+            "created_at": self.created_at.isoformat() + "Z",
+            "updated_at": self.updated_at.isoformat() + "Z"
         }

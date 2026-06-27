@@ -5,17 +5,22 @@ import router from '@ohos.router'
 export class UserInfo {
   emp_id: string = '';
   name: string = '';
+  phone: string = '';
   avatar: string = '';
   role: string = '';
+  is_active: boolean = true;
 }
 
 export class InviteInfo {
   group_id: number = 0;
   group_name: string = '';
+  creator_id: string = '';
 }
 
 class EditPayload {
   name: string = '';
+  phone: string = '';
+  avatar: string = '';
   password: string = '';
 }
 
@@ -30,29 +35,49 @@ class RespondPayload {
 class CreateUserPayload {
   emp_id: string = '';
   name: string = '';
+  phone: string = '';
   password: string = '';
+}
+
+class RolePayload {
+  role: string = '';
 }
 
 @CustomDialog
 export struct EditProfileDialog {
   controller: CustomDialogController
   @State name: string = '';
+  @State phone: string = '';
+  @State avatar: string = '';
   @State pass: string = '';
-  confirm: (name: string, pass: string) => void = (name: string, pass: string): void => {};
+  confirm: (name: string, phone: string, avatar: string, pass: string) => void =
+    (_name: string, _phone: string, _avatar: string, _pass: string): void => {};
 
   build() {
-    Column({ space: 15 }) {
+    Column({ space: 12 }) {
       Text('修改个人资料')
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
 
-      TextInput({ placeholder: '新姓名', text: this.name })
+      TextInput({ placeholder: '姓名', text: this.name })
         .onChange((val: string): void => {
           this.name = val;
         })
         .height(40)
 
-      TextInput({ placeholder: '新密码 (不少于6位，不修改留空)', text: this.pass })
+      TextInput({ placeholder: '手机号', text: this.phone })
+        .onChange((val: string): void => {
+          this.phone = val;
+        })
+        .height(40)
+
+      TextInput({ placeholder: '头像地址', text: this.avatar })
+        .onChange((val: string): void => {
+          this.avatar = val;
+        })
+        .height(40)
+
+      TextInput({ placeholder: '新密码，不修改留空', text: this.pass })
         .type(InputType.Password)
         .onChange((val: string): void => {
           this.pass = val;
@@ -66,13 +91,13 @@ export struct EditProfileDialog {
           })
           .backgroundColor(Color.Gray)
 
-        Button('确认')
+        Button('保存')
           .onClick((): void => {
-            this.confirm(this.name, this.pass);
+            this.confirm(this.name, this.phone, this.avatar, this.pass);
             this.controller.close();
           })
       }
-      .margin({ top: 10 })
+      .margin({ top: 8 })
     }
     .padding(20)
     .width('90%')
@@ -84,29 +109,36 @@ export struct CreateUserDialog {
   controller: CustomDialogController
   @State empId: string = '';
   @State name: string = '';
+  @State phone: string = '';
   @State pass: string = '';
-  confirm: (empId: string, name: string, pass: string) => void =
-    (empId: string, name: string, pass: string): void => {};
+  confirm: (empId: string, name: string, phone: string, pass: string) => void =
+    (_empId: string, _name: string, _phone: string, _pass: string): void => {};
 
   build() {
-    Column({ space: 15 }) {
-      Text('创建新用户 (管理面板)')
+    Column({ space: 12 }) {
+      Text('创建新用户')
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
 
-      TextInput({ placeholder: '新工号', text: this.empId })
+      TextInput({ placeholder: '工号', text: this.empId })
         .onChange((val: string): void => {
           this.empId = val;
         })
         .height(40)
 
-      TextInput({ placeholder: '真实姓名', text: this.name })
+      TextInput({ placeholder: '姓名', text: this.name })
         .onChange((val: string): void => {
           this.name = val;
         })
         .height(40)
 
-      TextInput({ placeholder: '初始密码', text: this.pass })
+      TextInput({ placeholder: '手机号，可选', text: this.phone })
+        .onChange((val: string): void => {
+          this.phone = val;
+        })
+        .height(40)
+
+      TextInput({ placeholder: '初始密码，至少6位', text: this.pass })
         .type(InputType.Password)
         .onChange((val: string): void => {
           this.pass = val;
@@ -122,12 +154,12 @@ export struct CreateUserDialog {
 
         Button('创建')
           .onClick((): void => {
-            this.confirm(this.empId, this.name, this.pass);
+            this.confirm(this.empId, this.name, this.phone, this.pass);
             this.controller.close();
           })
           .backgroundColor(Color.Orange)
       }
-      .margin({ top: 10 })
+      .margin({ top: 8 })
     }
     .padding(20)
     .width('90%')
@@ -139,12 +171,14 @@ export struct ProfileTab {
   @State user: UserInfo = new UserInfo();
   @State invites: Array<InviteInfo> = [];
   @State newGroupName: string = '';
+  @State searchKeyword: string = '';
+  @State adminUsers: Array<UserInfo> = [];
+  @State selectedUser: UserInfo = new UserInfo();
 
   editDialogController: CustomDialogController = new CustomDialogController({
     builder: EditProfileDialog({
-      name: this.user.name,
-      confirm: (name: string, pass: string): void => {
-        this.submitEditProfile(name, pass);
+      confirm: (name: string, phone: string, avatar: string, pass: string): void => {
+        this.submitEditProfile(name, phone, avatar, pass);
       }
     }),
     autoCancel: true
@@ -152,8 +186,8 @@ export struct ProfileTab {
 
   createUserDialogController: CustomDialogController = new CustomDialogController({
     builder: CreateUserDialog({
-      confirm: (empId: string, name: string, pass: string): void => {
-        this.submitCreateUser(empId, name, pass);
+      confirm: (empId: string, name: string, phone: string, pass: string): void => {
+        this.submitCreateUser(empId, name, phone, pass);
       }
     }),
     autoCancel: true
@@ -164,16 +198,35 @@ export struct ProfileTab {
     this.loadInvites();
   }
 
+  roleLabel(role: string): string {
+    if (role === 'super_admin') {
+      return '超级管理员';
+    }
+    if (role === 'admin') {
+      return '管理员';
+    }
+    return '普通用户';
+  }
+
+  parseUser(dataObj: Record<string, Object>): UserInfo {
+    const u = new UserInfo();
+    u.emp_id = (dataObj['emp_id'] as string) || '';
+    u.name = (dataObj['name'] as string) || '';
+    u.phone = (dataObj['phone'] as string) || '';
+    u.avatar = (dataObj['avatar'] as string) || '';
+    u.role = (dataObj['role'] as string) || '';
+    u.is_active = (dataObj['is_active'] as boolean) !== false;
+    return u;
+  }
+
   async loadProfile(): Promise<void> {
     const res = await HttpUtil.get('/users/me');
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
-      const u = new UserInfo();
-      u.emp_id = (dataObj['emp_id'] as string) || '';
-      u.name = (dataObj['name'] as string) || '';
-      u.avatar = (dataObj['avatar'] as string) || '';
-      u.role = (dataObj['role'] as string) || '';
-      this.user = u;
+      this.user = this.parseUser(dataObj);
+      if (this.user.role === 'admin' || this.user.role === 'super_admin') {
+        this.searchUsers();
+      }
     }
   }
 
@@ -183,10 +236,13 @@ export struct ProfileTab {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       this.invites = listObj.map((item: Record<string, Object>): InviteInfo => {
         const inv = new InviteInfo();
-        inv.group_id = item['group_id'] as number;
-        inv.group_name = item['group_name'] as string;
+        inv.group_id = (item['group_id'] as number) || 0;
+        inv.group_name = (item['group_name'] as string) || '';
+        inv.creator_id = (item['creator_id'] as string) || '';
         return inv;
       });
+    } else {
+      this.invites = [];
     }
   }
 
@@ -195,8 +251,7 @@ export struct ProfileTab {
     payload.action = action;
     const res = await HttpUtil.post(`/groups/${groupId}/respond`, payload);
     if (res.code === 0) {
-      const actionLabel: string = action === 'accept' ? '已接受邀请' : '已拒绝邀请';
-      promptAction.showToast({ message: actionLabel, duration: 2000 });
+      promptAction.showToast({ message: action === 'accept' ? '已加入小组' : '已拒绝邀请', duration: 2000 });
       this.loadInvites();
       AppStorage.setOrCreate('refreshGroupFlag', Math.random());
     } else {
@@ -205,12 +260,14 @@ export struct ProfileTab {
   }
 
   async createGroup(): Promise<void> {
-    if (!this.newGroupName) {
+    const groupName = this.newGroupName.trim();
+    if (!groupName) {
       promptAction.showToast({ message: '请输入小组名称', duration: 2000 });
       return;
     }
+
     const payload = new CreateGroupPayload();
-    payload.name = this.newGroupName;
+    payload.name = groupName;
     const res = await HttpUtil.post('/groups/', payload);
     if (res.code === 0) {
       this.newGroupName = '';
@@ -221,9 +278,11 @@ export struct ProfileTab {
     }
   }
 
-  async submitEditProfile(name: string, pass: string): Promise<void> {
+  async submitEditProfile(name: string, phone: string, avatar: string, pass: string): Promise<void> {
     const payload = new EditPayload();
-    payload.name = name;
+    payload.name = name.trim() || this.user.name;
+    payload.phone = phone.trim();
+    payload.avatar = avatar.trim();
     payload.password = pass;
     const res = await HttpUtil.put('/users/me', payload);
     if (res.code === 0) {
@@ -234,56 +293,90 @@ export struct ProfileTab {
     }
   }
 
-  async submitCreateUser(empId: string, name: string, pass: string): Promise<void> {
+  async submitCreateUser(empId: string, name: string, phone: string, pass: string): Promise<void> {
     const payload = new CreateUserPayload();
-    payload.emp_id = empId;
-    payload.name = name;
+    payload.emp_id = empId.trim();
+    payload.name = name.trim();
+    payload.phone = phone.trim();
     payload.password = pass;
     const res = await HttpUtil.post('/users/', payload);
     if (res.code === 0) {
       promptAction.showToast({ message: '用户创建成功', duration: 2000 });
+      this.searchUsers();
     } else {
       promptAction.showToast({ message: res.message || '用户创建失败', duration: 2000 });
     }
   }
 
+  async searchUsers(): Promise<void> {
+    if (!(this.user.role === 'admin' || this.user.role === 'super_admin')) {
+      return;
+    }
+
+    const keyword = encodeURIComponent(this.searchKeyword.trim());
+    const res = await HttpUtil.get(`/users/?keyword=${keyword}`);
+    if (res.code === 0 && res.data) {
+      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      this.adminUsers = listObj.map((item: Record<string, Object>): UserInfo => this.parseUser(item));
+    } else {
+      this.adminUsers = [];
+    }
+  }
+
+  async updateSelectedUserRole(role: string): Promise<void> {
+    if (!this.selectedUser.emp_id) {
+      return;
+    }
+
+    const payload = new RolePayload();
+    payload.role = role;
+    const res = await HttpUtil.put(`/users/${this.selectedUser.emp_id}/role`, payload);
+    if (res.code === 0 && res.data) {
+      promptAction.showToast({ message: '角色已更新', duration: 2000 });
+      const dataObj = JSON.parse(res.data) as Record<string, Object>;
+      this.selectedUser = this.parseUser(dataObj);
+      this.searchUsers();
+    } else {
+      promptAction.showToast({ message: res.message || '角色更新失败', duration: 2000 });
+    }
+  }
+
   handleLogout(): void {
     AppStorage.setOrCreate('access_token', '');
+    AppStorage.setOrCreate('currentGroupId', 0);
     router.replaceUrl({ url: 'pages/Login' });
   }
 
   build() {
     Scroll() {
       Column({ space: 16 }) {
-        // ── User Info Card ──
         Row({ space: 15 }) {
           Image(this.user.avatar ? this.user.avatar : $r('app.media.foreground'))
-            .width(80)
-            .height(80)
-            .borderRadius(40)
+            .width(72)
+            .height(72)
+            .borderRadius(36)
             .backgroundColor('#EEEEEE')
 
           Column({ space: 5 }) {
             Text(this.user.name || '加载中...')
-              .fontSize(24)
+              .fontSize(22)
               .fontWeight(FontWeight.Bold)
             Text(`工号: ${this.user.emp_id}`)
               .fontColor(Color.Gray)
               .fontSize(14)
-            Text(`角色: ${this.user.role}`)
+            Text(`${this.roleLabel(this.user.role)}${this.user.phone ? ' · ' + this.user.phone : ''}`)
               .fontColor(Color.Gray)
               .fontSize(14)
           }
           .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
         }
         .width('90%')
-        .padding(20)
+        .padding(18)
         .backgroundColor(Color.White)
-        .borderRadius(12)
-        .shadow({ radius: 10, color: '#1A000000' })
+        .borderRadius(8)
         .margin({ top: 20 })
 
-        // ── Edit Profile Button ──
         Button('修改资料')
           .width('90%')
           .height(44)
@@ -291,9 +384,8 @@ export struct ProfileTab {
             this.editDialogController.open();
           })
 
-        // ── Create Group Section ──
         Column({ space: 10 }) {
-          Text('新建我的小组')
+          Text('新建小组')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .width('100%')
@@ -317,40 +409,43 @@ export struct ProfileTab {
         .width('90%')
         .padding(16)
         .backgroundColor(Color.White)
-        .borderRadius(12)
-        .shadow({ radius: 6, color: '#0D000000' })
+        .borderRadius(8)
 
-        // ── My Messages (Invites) Section ──
         Column({ space: 10 }) {
-          Text('我的消息 (入组邀请)')
+          Text('我的消息')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .width('100%')
 
           if (this.invites.length === 0) {
-            Text('暂无邀请消息')
+            Text('暂无入组邀请')
               .fontColor(Color.Gray)
               .fontSize(14)
               .margin({ top: 8 })
           }
 
           ForEach(this.invites, (invite: InviteInfo): void => {
-            Row() {
-              Text(`邀请加入: ${invite.group_name}`)
-                .layoutWeight(1)
-                .fontSize(15)
+            Row({ space: 8 }) {
+              Column({ space: 3 }) {
+                Text(`邀请加入: ${invite.group_name}`)
+                  .fontSize(15)
+                Text(`邀请人: ${invite.creator_id}`)
+                  .fontSize(12)
+                  .fontColor(Color.Gray)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
 
               Button('同意')
-                .backgroundColor('#4CAF50')
+                .backgroundColor('#2E7D32')
                 .fontColor(Color.White)
                 .height(32)
-                .margin({ right: 8 })
                 .onClick((): void => {
                   this.respondInvite(invite.group_id, 'accept');
                 })
 
               Button('拒绝')
-                .backgroundColor('#F44336')
+                .backgroundColor('#C62828')
                 .fontColor(Color.White)
                 .height(32)
                 .onClick((): void => {
@@ -366,37 +461,98 @@ export struct ProfileTab {
         .width('90%')
         .padding(16)
         .backgroundColor(Color.White)
-        .borderRadius(12)
-        .shadow({ radius: 6, color: '#0D000000' })
+        .borderRadius(8)
 
-        // ── Admin Panel ──
         if (this.user.role === 'admin' || this.user.role === 'super_admin') {
           Column({ space: 10 }) {
-            Text('管理员面板')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .width('100%')
+            Row() {
+              Text('用户管理')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .layoutWeight(1)
 
-            Button('创建用户')
+              Button('创建用户')
+                .height(36)
+                .backgroundColor(Color.Orange)
+                .onClick((): void => {
+                  this.createUserDialogController.open();
+                })
+            }
+            .width('100%')
+
+            Row({ space: 8 }) {
+              TextInput({ placeholder: '按姓名或工号搜索', text: this.searchKeyword })
+                .layoutWeight(1)
+                .height(40)
+                .onChange((val: string): void => {
+                  this.searchKeyword = val;
+                })
+
+              Button('搜索')
+                .height(40)
+                .onClick((): void => {
+                  this.searchUsers();
+                })
+            }
+            .width('100%')
+
+            ForEach(this.adminUsers, (item: UserInfo): void => {
+              Column({ space: 8 }) {
+                Row({ space: 8 }) {
+                  Column({ space: 3 }) {
+                    Text(`${item.name} (${item.emp_id})`)
+                      .fontSize(15)
+                      .fontWeight(FontWeight.Bold)
+                    Text(`${this.roleLabel(item.role)}${item.phone ? ' · ' + item.phone : ''}`)
+                      .fontSize(12)
+                      .fontColor(Color.Gray)
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+
+                  Button(this.selectedUser.emp_id === item.emp_id ? '收起' : '详情')
+                    .height(32)
+                    .onClick((): void => {
+                      this.selectedUser = this.selectedUser.emp_id === item.emp_id ? new UserInfo() : item;
+                    })
+                }
+
+                if (this.selectedUser.emp_id === item.emp_id && this.user.role === 'super_admin' && item.role !== 'super_admin') {
+                  Row({ space: 8 }) {
+                    Button('设为管理员')
+                      .height(32)
+                      .enabled(item.role !== 'admin')
+                      .opacity(item.role !== 'admin' ? 1 : 0.5)
+                      .onClick((): void => {
+                        this.updateSelectedUserRole('admin');
+                      })
+
+                    Button('设为普通用户')
+                      .height(32)
+                      .enabled(item.role !== 'user')
+                      .opacity(item.role !== 'user' ? 1 : 0.5)
+                      .onClick((): void => {
+                        this.updateSelectedUserRole('user');
+                      })
+                  }
+                }
+              }
               .width('100%')
-              .height(44)
-              .backgroundColor(Color.Orange)
-              .onClick((): void => {
-                this.createUserDialogController.open();
-              })
+              .padding(12)
+              .backgroundColor('#FAFAFA')
+              .borderRadius(8)
+            })
           }
           .width('90%')
           .padding(16)
           .backgroundColor(Color.White)
-          .borderRadius(12)
-          .shadow({ radius: 6, color: '#0D000000' })
+          .borderRadius(8)
         }
 
-        // ── Logout Button ──
         Button('退出登录')
           .width('90%')
           .height(44)
-          .backgroundColor('#F44336')
+          .backgroundColor('#D64545')
           .fontColor(Color.White)
           .margin({ top: 8, bottom: 30 })
           .onClick((): void => {
