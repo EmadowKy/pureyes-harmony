@@ -12,6 +12,7 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    print("✅ 后端服务启动中（通用相对路径配置）...")
-    # 启动服务，绑定8000端口
-    app.run(debug=True, host="0.0.0.0", port=8000)
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", os.environ.get("BACKEND_PORT", "8000")))
+    print(f"Backend service starting: http://{host}:{port}")
+    app.run(debug=True, host=host, port=port)

@@ -1,5 +1,7 @@
 # pureyes-harmony 部署运行指南
 
+零基础前后端部署请优先看：[docs/beginner-deploy.md](docs/beginner-deploy.md)。
+
 本项目分为两部分：
 
 - `backend/`: Python Flask 后端，负责账号、小组、监控、视频切片和 Qwen3-VL 多视频问答推理。
@@ -204,6 +206,13 @@ python run.py
 0.0.0.0:8000
 ```
 
+如果 AutoDL 控制台只方便映射 `6006` 或 `6008`，可以用环境变量改端口：
+
+```bash
+cd backend
+PORT=6006 python run.py
+```
+
 另开一个终端验证：
 
 ```bash
@@ -241,9 +250,9 @@ gunicorn -w 1 -b 0.0.0.0:8000 run:app --timeout 600
 
 ## 8. AutoDL 端口访问
 
-后端已经绑定 `0.0.0.0:8000`。在 AutoDL 上需要把 8000 端口暴露出去，常见方式：
+后端默认绑定 `0.0.0.0:8000`，也可以通过 `PORT=6006 python run.py` 改成 `6006`。在 AutoDL 上需要把后端实际使用的端口暴露出去，常见方式：
 
-- 在 AutoDL 控制台添加自定义服务端口，把容器内 `8000` 映射为公网访问地址。
+- 在 AutoDL 控制台添加自定义服务端口，把容器内 `8000` 或 `6006` 映射为公网访问地址。
 - 或使用 SSH 隧道只在本机调试：
 
 ```bash
