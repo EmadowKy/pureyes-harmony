@@ -30,6 +30,15 @@ AutoDL 选机建议：
 
 ## 2. 克隆代码
 
+如果要部署本文档对应的对接版本，直接克隆 `deploy-relative-paths` 分支：
+
+```bash
+git clone -b deploy-relative-paths --single-branch https://github.com/EmadowKy/pureyes-harmony.git
+cd pureyes-harmony
+```
+
+如果该分支后续已经合并到 `main`，再使用普通克隆即可：
+
 ```bash
 git clone https://github.com/EmadowKy/pureyes-harmony.git
 cd pureyes-harmony
