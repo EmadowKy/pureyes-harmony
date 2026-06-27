@@ -293,7 +293,7 @@ frontend/
 需要安装：
 
 - DevEco Studio。
-- HarmonyOS SDK，版本需要能识别项目里的 `modelVersion` / `targetSdkVersion` `26.0.0`。
+- HarmonyOS SDK，版本需要能识别项目里的 `targetSdkVersion` / `compileSdkVersion` `6.1.1(24)`。
 - 真机调试需要开启开发者模式并配置签名；模拟器按 DevEco Studio 提示配置即可。
 
 修改后端地址：
