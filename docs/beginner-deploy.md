@@ -342,6 +342,7 @@ App 打开后，用默认账号：
 | DevEco Studio 打不开工程 | 打开目录错了 | 选择 `frontend/` 文件夹 |
 | DevEco Studio 提示 hvigor 配置版本 `26.0.0` 不支持 | 前端工程的 Hvigor 配置版本高于 DevEco 6.1.1 支持范围 | 拉取最新 `deploy-relative-paths` 分支，或把 `frontend/oh-package.json5` 和 `frontend/hvigor/hvigor-config.json5` 的 `modelVersion` 改成 `6.1.1` |
 | DevEco Studio 提示 `compileSdkVersion / compatibleSdkVersion / targetSdkVersion` 不正确 | `frontend/build-profile.json5` 里的 SDK 版本仍是 `26.0.0` | 拉取最新 `deploy-relative-paths` 分支，或改成 `compatibleSdkVersion: "4.0.0(10)"`、`targetSdkVersion: "6.1.1(24)"`、`compileSdkVersion: "6.1.1(24)"` |
+| DevEco Studio 提示 `If Compatible SDK Version is 4.1.0(11) or earlier, set useNormalizedOHMUrl to false` | 兼容 SDK 较低但 strictMode 仍启用规范化 OHM URL | 拉取最新 `deploy-relative-paths` 分支，或把 `frontend/build-profile.json5` 中的 `useNormalizedOHMUrl` 改成 `false` |
 
 ## 9. 官方资料
 
