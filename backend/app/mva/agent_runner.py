@@ -44,9 +44,39 @@ def calculate_priority_score(current_score, acceleration, config):
     return priority
     # ---------------------------------------------------------
 
+def _project_root_from_config(config_path):
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    backend_dir = os.path.abspath(os.path.join(config_dir, os.pardir))
+    return os.path.abspath(os.path.join(backend_dir, os.pardir))
+
+
+def _resolve_project_path(path_value, project_root):
+    if not path_value:
+        return path_value
+    expanded_path = os.path.expanduser(path_value)
+    if os.path.isabs(expanded_path):
+        return expanded_path
+    return os.path.abspath(os.path.join(project_root, expanded_path))
+
+
 def load_config(config_path):
+    config_path = os.path.abspath(config_path)
     with open(config_path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+
+    project_root = _project_root_from_config(config_path)
+    config.setdefault('runtime', {})['project_root'] = project_root
+
+    models = config.get('models', {})
+    if models.get('main_model_path'):
+        models['main_model_path'] = _resolve_project_path(models['main_model_path'], project_root)
+
+    paths = config.get('paths', {})
+    for key in ('output_dir', 'video_frames_dir', 'key_frames_dir'):
+        if paths.get(key):
+            paths[key] = _resolve_project_path(paths[key], project_root)
+
+    return config
 
 class AgentRunner:
     def __init__(self, config_path, device_id=0, node_rank=0, run_id=None):
@@ -59,8 +89,8 @@ class AgentRunner:
         
         # If run_id is provided, override output paths to save everything in log/run_id folder
         if self.run_id:
-            # We assume the script is running from root, so 'log' will be in root
-            base_log_dir = os.path.join("log", self.run_id)
+            project_root = self.config.get('runtime', {}).get('project_root', os.getcwd())
+            base_log_dir = os.path.join(project_root, "log", self.run_id)
             
             # Update paths to be inside the log folder
             self.config['paths']['output_dir'] = base_log_dir

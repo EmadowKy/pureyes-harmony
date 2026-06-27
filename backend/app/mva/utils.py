@@ -3,20 +3,21 @@
 import base64
 import cv2
 import os
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-# os.environ["HF_HUB_OFFLINE"] = "1"
-# os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 from functools import lru_cache
 
 from transformers import Qwen3VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration, AutoProcessor, set_seed
 from qwen_vl_utils import process_vision_info
 
+DEFAULT_MODEL_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, "models", "Qwen3-VL-2B-Instruct")
+)
+
 # 全局模型缓存，按GPU ID存储
 _model_cache = {}
 _processor_cache = {}
 
-def init(model_path: str="Qwen3-VL-2B-Instruct", device_id: int=None):
+def init(model_path: str=DEFAULT_MODEL_PATH, device_id: int=None):
     """
     初始化模型和处理器
     
@@ -26,6 +27,12 @@ def init(model_path: str="Qwen3-VL-2B-Instruct", device_id: int=None):
     """
     # Set seed for reproducibility
     set_seed(42)
+
+    if os.path.isabs(model_path) and not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Local model path does not exist: {model_path}. "
+            "Download the model into the configured path first, or update backend/configs/model.yaml."
+        )
 
     # 如果指定了device_id，使用缓存
     if device_id is not None:
@@ -71,7 +78,7 @@ def init(model_path: str="Qwen3-VL-2B-Instruct", device_id: int=None):
     return model, processor
 
 
-def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tokens=2048):
+def Qwen_VL(messages, device_id=None, model_path=DEFAULT_MODEL_PATH, max_tokens=2048):
     model, processor = init(model_path=model_path, device_id=device_id)
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     
@@ -105,7 +112,7 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
     return final_output
 
 
-def answer(video_frames, question, options, prompt_template=None, device_id=None, model_path="Qwen3-VL-2B-Instruct", print_data=False, skip_iteration=False):
+def answer(video_frames, question, options, prompt_template=None, device_id=None, model_path=DEFAULT_MODEL_PATH, print_data=False, skip_iteration=False):
     """
     Generate an answer based on video frames and a question.
     
@@ -209,7 +216,7 @@ def answer(video_frames, question, options, prompt_template=None, device_id=None
 
     return output_text
 
-def question_analyse(question, options, prompt_template=None, device_id=None, model_path="Qwen3-VL-2B-Instruct", print_data=False):
+def question_analyse(question, options, prompt_template=None, device_id=None, model_path=DEFAULT_MODEL_PATH, print_data=False):
     """
     Analyze the question and options to determine the strategy.
     

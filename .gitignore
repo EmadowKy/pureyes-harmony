@@ -44,3 +44,8 @@ backend/storage/streams/
 backend/storage/slices/
 backend/temp/
 backend/uploads/
+
+# Local models and runtime outputs
+models/
+output/
+log/

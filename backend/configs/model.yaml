@@ -1,10 +1,11 @@
 models:
-  main_model_path: "Qwen/Qwen3-VL-2B-Instruct"
+  # Relative paths are resolved from the repository root.
+  main_model_path: "models/Qwen3-VL-2B-Instruct"
 
 paths:
-  output_dir: "../../output/output"
-  video_frames_dir: "../../output/video_frames"
-  key_frames_dir: "../../output/key_frames"
+  output_dir: "output/output"
+  video_frames_dir: "output/video_frames"
+  key_frames_dir: "output/key_frames"
   Benchmark_name: "Benchmark"  # 基准测试名称
 
 parameters:
