@@ -1,9 +1,9 @@
 from flask import request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import get_jwt_identity
 from app.core.db import db
 from app.models.user import User
 from app.core.response import success, fail
-from app.user_center.permissions import can_view_user, current_user, role_required
+from app.user_center.permissions import active_user_required, can_view_user, current_user, role_required
 from app.user_center.serializers import user_to_dict
 from . import users_bp
 
@@ -27,7 +27,7 @@ def _apply_user_updates(user, data):
     return None
 
 @users_bp.get("/me")
-@jwt_required()
+@active_user_required()
 def me():
     emp_id = get_jwt_identity()
     user = User.query.filter_by(emp_id=emp_id).first()
@@ -36,7 +36,7 @@ def me():
     return success(data=user_to_dict(user))
 
 @users_bp.put("/me")
-@jwt_required()
+@active_user_required()
 def update_me():
     emp_id = get_jwt_identity()
     user = User.query.filter_by(emp_id=emp_id).first()
@@ -52,7 +52,7 @@ def update_me():
 
 
 @users_bp.get("/<emp_id>")
-@jwt_required()
+@active_user_required()
 def get_user(emp_id):
     viewer = current_user()
     user = User.query.filter_by(emp_id=emp_id).first()

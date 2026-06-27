@@ -43,6 +43,21 @@ def role_required(*roles):
     return decorator
 
 
+def active_user_required():
+    def decorator(fn):
+        @wraps(fn)
+        @jwt_required()
+        def wrapper(*args, **kwargs):
+            user = current_user()
+            if not user or not user.is_active:
+                return fail(message="user is inactive or not found", code=2003, http_status=403)
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def accepted_member(group_id, emp_id):
     return GroupMember.query.filter_by(
         group_id=group_id,

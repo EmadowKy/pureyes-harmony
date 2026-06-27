@@ -6,6 +6,7 @@
 
 ## 更新记录
 
+- 2026-06-27 19:07:33 +08:00：补充用户模块启停用账号、停用用户旧 token 拦截、资料编辑防误清空，并细化 AutoDL/SSH 隧道/DevEco 模拟器联调步骤。
 - 2026-06-27 18:51:45 +08:00：远程服务器已补齐 `Qwen3-VL-2B-Instruct` 本地模型并通过离线加载检查；DevEco 模拟器完成登录、用户页、小组页和创建小组端到端冒烟测试。
 - 2026-06-27 18:22:19 +08:00：远程后端编译和用户/小组接口测试通过；本机 DevEco/Hvigor `assembleApp` 构建通过。
 - 2026-06-27 18:16:14 +08:00：补齐用户与小组模块后端接口、前端“我的/小组”页面、模块说明文档，并记录远程后端大模型检查结果。
@@ -217,25 +218,85 @@ curl -X POST http://127.0.0.1:6006/api/auth/login \
 
 健康检查和登录不会加载大模型。第一次调用 QA 推理接口时才会加载 Qwen3-VL。
 
-## 8. AutoDL 端口访问
+## 8. AutoDL 端口和前端地址
 
-AutoDL 上启动后端后，需要在控制台暴露容器端口，例如 `6006`。手机或 DevEco 模拟器必须访问 AutoDL 控制台给出的公网地址，而不是服务器内部的 `127.0.0.1`。
-
-如果只做本机浏览器调试，也可以用 SSH 隧道：
+先在远程服务器里确认后端跑起来：
 
 ```bash
-ssh -CNg -L 6006:127.0.0.1:6006 root@你的服务器地址 -p 端口号
+cd /root/autodl-tmp/pureyes-harmony
+conda activate pureyes
+export PORT=6006
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+python deploy/run_backend_autodl.py
 ```
 
-然后本机浏览器访问：
+远程服务器内部检查：
+
+```bash
+curl http://127.0.0.1:6006/api/health
+```
+
+看到 `{"code":0,...}` 就说明后端进程正常。
+
+### 方式 A：AutoDL 公网端口直连
+
+如果 AutoDL/SeetaCloud 控制台已经把容器 `6006` 端口映射成公网地址，例如：
 
 ```text
-http://localhost:6006/api/health
+http://公网主机:公网端口
 ```
 
-前端真机/模拟器通常不要填 `localhost`，因为那通常指设备或模拟器自己，不是 AutoDL 服务器。
+先在 Windows 浏览器或 PowerShell 检查：
 
-## 9. 前端 DevEco 配置
+```powershell
+Invoke-WebRequest http://公网主机:公网端口/api/health
+```
+
+能返回 `code: 0` 时，前端 `frontend/entry/src/main/ets/utils/http.ets` 写公网地址：
+
+```ts
+export const BASE_HOST = 'http://公网主机:公网端口';
+const BASE_URL = 'http://公网主机:公网端口/api';
+```
+
+### 方式 B：公网端口不可用时用 SSH 隧道
+
+如果公网地址访问 `/api/health` 是 `502`、超时或打不开，就在 Windows PowerShell 新开一个窗口执行：
+
+```powershell
+ssh -N -L 6006:127.0.0.1:6006 -p 你的SSH端口 root@你的SSH主机
+```
+
+这个窗口不要关闭。再开另一个 PowerShell 检查：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:6006/api/health
+```
+
+如果 Windows 本机浏览器访问，地址是：
+
+```text
+http://127.0.0.1:6006
+```
+
+如果 DevEco 模拟器访问 Windows 这个隧道，`http.ets` 要写：
+
+```ts
+export const BASE_HOST = 'http://10.0.2.2:6006';
+const BASE_URL = 'http://10.0.2.2:6006/api';
+```
+
+如果是真机访问 Windows 这个隧道，不能用 `10.0.2.2`，要把 `BASE_HOST` 改成 Windows 在同一局域网里的 IP，例如：
+
+```ts
+export const BASE_HOST = 'http://192.168.1.23:6006';
+const BASE_URL = 'http://192.168.1.23:6006/api';
+```
+
+不要把 `localhost` 写进前端，模拟器或真机会把 `localhost` 理解成设备自己。
+
+## 9. 前端 DevEco 配置和运行
 
 前端目录：
 
@@ -248,23 +309,33 @@ frontend/
 1. 在 Windows 本机安装 DevEco Studio / HarmonyOS SDK 26 beta。
 2. 用 DevEco Studio 打开 `frontend` 目录。
 3. 等待 DevEco 同步 ohpm/hvigor 工程。
-4. 在 `frontend/entry/src/main/ets/utils/http.ets` 中，把后端地址改为 AutoDL 暴露出来的公网地址。
+4. 按上面“方式 A”或“方式 B”修改 `frontend/entry/src/main/ets/utils/http.ets`。
+5. 在 DevEco 里选择模拟器或真机，点击运行。
 
-当前代码位置：
+当前代码默认地址只是占位，需要按你的实际后端地址修改：
 
 ```ts
 export const BASE_HOST = 'http://10.32.212.191:8000';
 const BASE_URL = 'http://10.32.212.191:8000/api';
 ```
 
-示例：
+也可以用命令行构建和安装，便于排错：
 
-```ts
-export const BASE_HOST = 'http://你的AutoDL公网地址:6006';
-const BASE_URL = 'http://你的AutoDL公网地址:6006/api';
+```powershell
+$env:NODE_HOME='D:\Huawei\DevEco Studio\tools\node'
+$env:JAVA_HOME='D:\Huawei\DevEco Studio\jbr'
+$env:DEVECO_SDK_HOME='D:\Huawei\DevEco Studio\sdk'
+$env:PATH="$env:JAVA_HOME\bin;$env:NODE_HOME;$env:PATH"
+
+cd D:\VSCode_MyCode\C4_AI\pureyes-harmony\frontend
+& 'D:\Huawei\DevEco Studio\tools\ohpm\bin\ohpm.bat' install
+& 'D:\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleApp --no-daemon
+& 'D:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' list targets
+& 'D:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' install -r .\entry\build\default\outputs\default\app\entry-default.hap
+& 'D:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell aa start -a EntryAbility -b cn.edu.nuaa.pureyes
 ```
 
-然后在 DevEco 中选择手机或模拟器运行。前端已有网络权限：
+前端已有网络权限：
 
 ```json5
 "name": "ohos.permission.INTERNET"

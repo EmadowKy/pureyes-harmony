@@ -79,6 +79,42 @@ class UserGroupApiTest(unittest.TestCase):
         )
         self.assertEqual(create_by_admin.status_code, 201, create_by_admin.get_json())
 
+    def test_inactive_user_cannot_use_stale_token_or_login(self):
+        self.create_user("inactive_case", "Inactive Case")
+        stale_headers = self.auth_headers("inactive_case", "pass1234")
+
+        disable = self.client.put(
+            "/api/users/inactive_case/status",
+            headers=self.super_headers,
+            json={"is_active": False},
+        )
+        self.assertEqual(disable.status_code, 200, disable.get_json())
+        self.assertFalse(disable.get_json()["data"]["is_active"])
+
+        stale_profile = self.client.get("/api/users/me", headers=stale_headers)
+        self.assertEqual(stale_profile.status_code, 403, stale_profile.get_json())
+
+        stale_group = self.client.post(
+            "/api/groups/",
+            headers=stale_headers,
+            json={"name": "Should Not Create"},
+        )
+        self.assertEqual(stale_group.status_code, 403, stale_group.get_json())
+
+        login_again = self.client.post(
+            "/api/auth/login",
+            json={"emp_id": "inactive_case", "password": "pass1234"},
+        )
+        self.assertEqual(login_again.status_code, 403, login_again.get_json())
+
+    def test_admin_cannot_disable_self(self):
+        response = self.client.put(
+            "/api/users/admin/status",
+            headers=self.super_headers,
+            json={"is_active": False},
+        )
+        self.assertEqual(response.status_code, 403, response.get_json())
+
     def test_group_invitation_acceptance_and_membership_visibility(self):
         self.create_user("leader", "Group Leader")
         self.create_user("member", "Group Member")

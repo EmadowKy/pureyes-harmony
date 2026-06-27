@@ -1,10 +1,10 @@
 from flask import request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import get_jwt_identity
 from app.core.db import db
 from app.models.group import Group, GroupMember
 from app.models.user import User
 from app.core.response import success, fail
-from app.user_center.permissions import require_group_creator, require_group_member
+from app.user_center.permissions import active_user_required, require_group_creator, require_group_member
 from app.user_center.serializers import group_to_dict, membership_to_dict
 from . import groups_bp
 
@@ -13,7 +13,7 @@ def _clean(value):
     return value.strip() if isinstance(value, str) else value
 
 @groups_bp.post("/")
-@jwt_required()
+@active_user_required()
 def create_group():
     emp_id = get_jwt_identity()
     data = request.get_json() or {}
@@ -37,7 +37,7 @@ def create_group():
     )
 
 @groups_bp.get("/")
-@jwt_required()
+@active_user_required()
 def get_my_groups():
     emp_id = get_jwt_identity()
     memberships = GroupMember.query.filter_by(emp_id=emp_id, status="accepted").all()
@@ -49,7 +49,7 @@ def get_my_groups():
 
 
 @groups_bp.get("/<int:group_id>")
-@jwt_required()
+@active_user_required()
 def get_group(group_id):
     emp_id = get_jwt_identity()
     group, member, error = require_group_member(group_id, emp_id)
@@ -61,7 +61,7 @@ def get_group(group_id):
 
 
 @groups_bp.put("/<int:group_id>")
-@jwt_required()
+@active_user_required()
 def update_group(group_id):
     emp_id = get_jwt_identity()
     group, error = require_group_creator(group_id, emp_id)
@@ -77,7 +77,7 @@ def update_group(group_id):
     return success(message="group updated", data=group_to_dict(group, current_emp_id=emp_id, include_counts=True))
 
 @groups_bp.get("/invites")
-@jwt_required()
+@active_user_required()
 def get_my_invites():
     emp_id = get_jwt_identity()
     memberships = GroupMember.query.filter_by(emp_id=emp_id, status="pending").all()
@@ -89,7 +89,7 @@ def get_my_invites():
     return success(data=results)
 
 @groups_bp.post("/<int:group_id>/invite")
-@jwt_required()
+@active_user_required()
 def invite_member(group_id):
     emp_id = get_jwt_identity()
     group, error = require_group_creator(group_id, emp_id)
@@ -120,7 +120,7 @@ def invite_member(group_id):
     return success(message="invitation sent", data=membership_to_dict(new_member, user=user, group=group), http_status=201)
 
 @groups_bp.post("/<int:group_id>/respond")
-@jwt_required()
+@active_user_required()
 def respond_invite(group_id):
     emp_id = get_jwt_identity()
     data = request.get_json() or {}
@@ -144,7 +144,7 @@ def respond_invite(group_id):
 
 
 @groups_bp.get("/<int:group_id>/invites")
-@jwt_required()
+@active_user_required()
 def get_group_invites(group_id):
     emp_id = get_jwt_identity()
     group, error = require_group_creator(group_id, emp_id)
@@ -155,7 +155,7 @@ def get_group_invites(group_id):
     return success(data=[membership_to_dict(m, group=group) for m in memberships])
 
 @groups_bp.get("/<int:group_id>/members")
-@jwt_required()
+@active_user_required()
 def get_group_members(group_id):
     emp_id = get_jwt_identity()
     group, member, error = require_group_member(group_id, emp_id)
@@ -184,7 +184,7 @@ def get_group_members(group_id):
 
 
 @groups_bp.delete("/<int:group_id>/members/<emp_id>")
-@jwt_required()
+@active_user_required()
 def remove_group_member(group_id, emp_id):
     actor_emp_id = get_jwt_identity()
     group, error = require_group_creator(group_id, actor_emp_id)
@@ -203,7 +203,7 @@ def remove_group_member(group_id, emp_id):
 
 
 @groups_bp.post("/<int:group_id>/leave")
-@jwt_required()
+@active_user_required()
 def leave_group(group_id):
     emp_id = get_jwt_identity()
     group, member, error = require_group_member(group_id, emp_id)

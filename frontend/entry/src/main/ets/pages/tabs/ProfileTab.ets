@@ -43,6 +43,10 @@ class RolePayload {
   role: string = '';
 }
 
+class StatusPayload {
+  is_active: boolean = true;
+}
+
 @CustomDialog
 export struct EditProfileDialog {
   controller: CustomDialogController
@@ -65,13 +69,13 @@ export struct EditProfileDialog {
         })
         .height(40)
 
-      TextInput({ placeholder: '手机号', text: this.phone })
+      TextInput({ placeholder: '手机号，不修改留空', text: this.phone })
         .onChange((val: string): void => {
           this.phone = val;
         })
         .height(40)
 
-      TextInput({ placeholder: '头像地址', text: this.avatar })
+      TextInput({ placeholder: '头像地址，不修改留空', text: this.avatar })
         .onChange((val: string): void => {
           this.avatar = val;
         })
@@ -281,8 +285,8 @@ export struct ProfileTab {
   async submitEditProfile(name: string, phone: string, avatar: string, pass: string): Promise<void> {
     const payload = new EditPayload();
     payload.name = name.trim() || this.user.name;
-    payload.phone = phone.trim();
-    payload.avatar = avatar.trim();
+    payload.phone = phone.trim() || this.user.phone;
+    payload.avatar = avatar.trim() || this.user.avatar;
     payload.password = pass;
     const res = await HttpUtil.put('/users/me', payload);
     if (res.code === 0) {
@@ -338,6 +342,24 @@ export struct ProfileTab {
       this.searchUsers();
     } else {
       promptAction.showToast({ message: res.message || '角色更新失败', duration: 2000 });
+    }
+  }
+
+  async updateSelectedUserStatus(isActive: boolean): Promise<void> {
+    if (!this.selectedUser.emp_id) {
+      return;
+    }
+
+    const payload = new StatusPayload();
+    payload.is_active = isActive;
+    const res = await HttpUtil.put(`/users/${this.selectedUser.emp_id}/status`, payload);
+    if (res.code === 0 && res.data) {
+      promptAction.showToast({ message: isActive ? '账号已启用' : '账号已停用', duration: 2000 });
+      const dataObj = JSON.parse(res.data) as Record<string, Object>;
+      this.selectedUser = this.parseUser(dataObj);
+      this.searchUsers();
+    } else {
+      promptAction.showToast({ message: res.message || '账号状态更新失败', duration: 2000 });
     }
   }
 
@@ -503,9 +525,9 @@ export struct ProfileTab {
                     Text(`${item.name} (${item.emp_id})`)
                       .fontSize(15)
                       .fontWeight(FontWeight.Bold)
-                    Text(`${this.roleLabel(item.role)}${item.phone ? ' · ' + item.phone : ''}`)
+                    Text(`${this.roleLabel(item.role)} · ${item.is_active ? '已启用' : '已停用'}${item.phone ? ' · ' + item.phone : ''}`)
                       .fontSize(12)
-                      .fontColor(Color.Gray)
+                      .fontColor(item.is_active ? '#808080' : '#C62828')
                   }
                   .alignItems(HorizontalAlign.Start)
                   .layoutWeight(1)
@@ -533,6 +555,18 @@ export struct ProfileTab {
                       .opacity(item.role !== 'user' ? 1 : 0.5)
                       .onClick((): void => {
                         this.updateSelectedUserRole('user');
+                      })
+                  }
+                }
+
+                if (this.selectedUser.emp_id === item.emp_id && item.role !== 'super_admin' && item.emp_id !== this.user.emp_id) {
+                  Row({ space: 8 }) {
+                    Button(item.is_active ? '停用账号' : '启用账号')
+                      .height(32)
+                      .backgroundColor(item.is_active ? '#D64545' : '#2E7D32')
+                      .fontColor(Color.White)
+                      .onClick((): void => {
+                        this.updateSelectedUserStatus(!item.is_active);
                       })
                   }
                 }
