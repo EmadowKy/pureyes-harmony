@@ -13,6 +13,13 @@ export class SelectItem {
   value: string = '';
 }
 
+enum NavIconType {
+  Monitor,
+  Workspace,
+  Group,
+  Profile
+}
+
 @Entry
 @Component
 struct Index {
@@ -20,6 +27,7 @@ struct Index {
   @StorageLink('currentGroupId') currentGroupId: number = 0; 
   @StorageLink('refreshGroupFlag') @Watch('onRefreshFlagChange') refreshGroupFlag: number = 0;
   @State groups: Array<GroupInfo> = [];
+  private tabsController: TabsController = new TabsController();
 
   aboutToAppear() {
     const token = AppStorage.get<string>('access_token');
@@ -76,36 +84,182 @@ struct Index {
     .width('100%')
     .height(60)
     .padding({ left: 16, right: 16 })
-    .backgroundColor('#f8f9fa')
+    .backgroundColor($r('app.color.app_top_bar_bg'))
+  }
+
+  @Builder MonitorIcon(isSelected: boolean) {
+    Column({ space: 2 }) {
+      Blank()
+        .width(22)
+        .height(14)
+        .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+        .borderRadius(4)
+      Row({ space: 2 }) {
+        Blank()
+          .width(10)
+          .height(3)
+          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .borderRadius(2)
+        Circle({ width: 4, height: 4 })
+          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+      }
+      .justifyContent(FlexAlign.Center)
+      .width(22)
+    }
+    .width(28)
+    .height(28)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder WorkspaceIcon(isSelected: boolean) {
+    Column({ space: 4 }) {
+      Row({ space: 3 }) {
+        Blank()
+          .width(8)
+          .height(8)
+          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .borderRadius(3)
+        Blank()
+          .width(8)
+          .height(8)
+          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .borderRadius(3)
+      }
+      Row({ space: 3 }) {
+        Blank()
+          .width(8)
+          .height(8)
+          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .borderRadius(3)
+        Blank()
+          .width(8)
+          .height(8)
+          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .borderRadius(3)
+      }
+    }
+    .width(28)
+    .height(28)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder GroupIcon(isSelected: boolean) {
+    Column({ space: 2 }) {
+      Row({ space: 1 }) {
+        Circle({ width: 7, height: 7 })
+          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .opacity(0.75)
+        Circle({ width: 10, height: 10 })
+          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+        Circle({ width: 7, height: 7 })
+          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+          .opacity(0.75)
+      }
+      .alignItems(VerticalAlign.Center)
+
+      Blank()
+        .width(23)
+        .height(9)
+        .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+        .borderRadius(9)
+    }
+    .width(28)
+    .height(28)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder ProfileIcon(isSelected: boolean) {
+    Column({ space: 3 }) {
+      Circle({ width: 10, height: 10 })
+        .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+      Blank()
+        .width(20)
+        .height(10)
+        .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+        .borderRadius(10)
+    }
+    .width(28)
+    .height(28)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder NavIcon(iconType: NavIconType, isSelected: boolean) {
+    if (iconType === NavIconType.Monitor) {
+      this.MonitorIcon(isSelected)
+    } else if (iconType === NavIconType.Workspace) {
+      this.WorkspaceIcon(isSelected)
+    } else if (iconType === NavIconType.Group) {
+      this.GroupIcon(isSelected)
+    } else {
+      this.ProfileIcon(isSelected)
+    }
+  }
+
+  @Builder NavBarItem(index: number, label: string, iconType: NavIconType) {
+    Column({ space: 3 }) {
+      Stack() {
+        this.NavIcon(iconType, this.currentIndex === index)
+      }
+      .width(50)
+      .height(40)
+      .borderRadius(16)
+      .backgroundColor(this.currentIndex === index ? $r('app.color.app_nav_item_bg') : Color.Transparent)
+      .shadow(this.currentIndex === index ? {
+        radius: 14,
+        color: $r('app.color.app_nav_shadow'),
+        offsetX: 0,
+        offsetY: 5
+      } : {
+        radius: 0,
+        color: Color.Transparent,
+        offsetX: 0,
+        offsetY: 0
+      })
+
+      Text(label)
+        .fontSize(12)
+        .fontWeight(this.currentIndex === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.currentIndex === index ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
+    }
+    .width('100%')
+    .height(64)
+    .justifyContent(FlexAlign.Center)
+    .onClick((): void => {
+      this.currentIndex = index;
+      this.tabsController.changeIndex(index);
+    })
   }
 
   build() {
     Column() {
       this.TopNavigation()
       
-      Tabs({ barPosition: BarPosition.End }) {
+      Tabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
         TabContent() {
           MonitorTab({ groupId: this.currentGroupId })
-        }.tabBar("监控")
+        }.tabBar(this.NavBarItem(0, '监控', NavIconType.Monitor))
 
         TabContent() {
           WorkspaceTab({ groupId: this.currentGroupId })
-        }.tabBar("工作区")
+        }.tabBar(this.NavBarItem(1, '工作区', NavIconType.Workspace))
 
         TabContent() {
           GroupTab({ groupId: this.currentGroupId })
-        }.tabBar("小组")
+        }.tabBar(this.NavBarItem(2, '小组', NavIconType.Group))
 
         TabContent() {
           ProfileTab()
-        }.tabBar("我的")
+        }.tabBar(this.NavBarItem(3, '我的', NavIconType.Profile))
       }
       .onChange((index: number) => {
         this.currentIndex = index;
       })
+      .barHeight(74)
+      .barBackgroundColor($r('app.color.app_nav_bar_bg'))
       .layoutWeight(1)
     }
     .width('100%')
     .height('100%')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }

@@ -3,6 +3,90 @@
     {
       "name": "start_window_background",
       "value": "#000000"
+    },
+    {
+      "name": "app_page_bg",
+      "value": "#0F1115"
+    },
+    {
+      "name": "app_top_bar_bg",
+      "value": "#171A21"
+    },
+    {
+      "name": "app_nav_bar_bg",
+      "value": "#171A21"
+    },
+    {
+      "name": "app_nav_item_bg",
+      "value": "#252B35"
+    },
+    {
+      "name": "app_nav_icon",
+      "value": "#9AA3B2"
+    },
+    {
+      "name": "app_nav_icon_selected",
+      "value": "#F7F8FA"
+    },
+    {
+      "name": "app_nav_text",
+      "value": "#9AA3B2"
+    },
+    {
+      "name": "app_nav_text_selected",
+      "value": "#F7F8FA"
+    },
+    {
+      "name": "app_nav_shadow",
+      "value": "#80000000"
+    },
+    {
+      "name": "app_card_bg",
+      "value": "#171A21"
+    },
+    {
+      "name": "app_card_subtle_bg",
+      "value": "#20252E"
+    },
+    {
+      "name": "app_input_bg",
+      "value": "#20252E"
+    },
+    {
+      "name": "app_text_primary",
+      "value": "#F7F8FA"
+    },
+    {
+      "name": "app_text_secondary",
+      "value": "#B8C0CC"
+    },
+    {
+      "name": "app_text_muted",
+      "value": "#7D8796"
+    },
+    {
+      "name": "app_border",
+      "value": "#313846"
+    },
+    {
+      "name": "app_shadow",
+      "value": "#66000000"
+    },
+    {
+      "name": "app_primary",
+      "value": "#4F83C6"
+    },
+    {
+      "name": "app_primary_soft",
+      "value": "#21344D"
+    },
+    {
+      "name": "app_success",
+      "value": "#4ADE80"
+    },
+    {
+      "name": "app_danger",
+      "value": "#F87171"
     }
   ]
 }

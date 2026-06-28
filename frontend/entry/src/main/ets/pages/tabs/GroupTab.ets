@@ -1,4 +1,4 @@
-import { HttpUtil } from '../../utils/http'
+﻿import { HttpUtil } from '../../utils/http'
 import promptAction from '@ohos.promptAction'
 
 export class MemberInfo {
@@ -39,12 +39,15 @@ export struct InviteMemberDialog {
       Text('邀请新成员')
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
 
       TextInput({ placeholder: '输入对方工号', text: this.empId })
         .onChange((val: string): void => {
           this.empId = val;
         })
         .height(40)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
 
       Row({ space: 20 }) {
         Button('取消')
@@ -54,6 +57,8 @@ export struct InviteMemberDialog {
           .backgroundColor(Color.Gray)
 
         Button('发送邀请')
+          .backgroundColor($r('app.color.app_primary'))
+          .fontColor(Color.White)
           .onClick((): void => {
             this.confirm(this.empId);
             this.controller.close();
@@ -77,12 +82,15 @@ export struct RenameGroupDialog {
       Text('修改小组名称')
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
 
       TextInput({ placeholder: '新的小组名称', text: this.groupName })
         .onChange((val: string): void => {
           this.groupName = val;
         })
         .height(40)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
 
       Row({ space: 20 }) {
         Button('取消')
@@ -92,6 +100,8 @@ export struct RenameGroupDialog {
           .backgroundColor(Color.Gray)
 
         Button('保存')
+          .backgroundColor($r('app.color.app_primary'))
+          .fontColor(Color.White)
           .onClick((): void => {
             this.confirm(this.groupName);
             this.controller.close();
@@ -262,9 +272,10 @@ export struct GroupTab {
           Text(this.group.name || '小组成员')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
           Text(`${this.group.member_count} 位成员 · ${this.group.pending_count} 个待确认邀请`)
             .fontSize(12)
-            .fontColor(Color.Gray)
+            .fontColor($r('app.color.app_text_secondary'))
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
@@ -272,6 +283,8 @@ export struct GroupTab {
         if (this.group.is_creator) {
           Button('改名')
             .height(36)
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
             .margin({ right: 8 })
             .onClick((): void => {
               this.renameDialogController.open();
@@ -279,13 +292,15 @@ export struct GroupTab {
 
           Button('邀请')
             .height(36)
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
             .onClick((): void => {
               this.inviteDialogController.open();
             })
         } else if (this.group.id !== 0) {
           Button('退出')
             .height(36)
-            .backgroundColor('#D64545')
+            .backgroundColor($r('app.color.app_danger'))
             .fontColor(Color.White)
             .onClick((): void => {
               this.leaveGroup();
@@ -299,7 +314,7 @@ export struct GroupTab {
         Column() {
           Text(this.groupId ? '暂无成员' : '请先创建或选择小组')
             .fontSize(16)
-            .fontColor(Color.Gray)
+            .fontColor($r('app.color.app_text_secondary'))
             .margin({ top: 80 })
         }
         .width('100%')
@@ -321,10 +336,11 @@ export struct GroupTab {
                     Text(member.name || member.emp_id)
                       .fontSize(16)
                       .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_text_primary'))
                     if (member.is_creator) {
                       Text('组长')
                         .fontSize(12)
-                        .fontColor('#2563EB')
+                        .fontColor($r('app.color.app_primary'))
                     } else if (member.status === 'pending') {
                       Text('待确认')
                         .fontSize(12)
@@ -334,10 +350,10 @@ export struct GroupTab {
 
                   Text(`工号: ${member.emp_id}`)
                     .fontSize(13)
-                    .fontColor(Color.Gray)
+                    .fontColor($r('app.color.app_text_secondary'))
                   Text(member.phone ? `手机: ${member.phone}` : `角色: ${member.role}`)
                     .fontSize(13)
-                    .fontColor(Color.Gray)
+                    .fontColor($r('app.color.app_text_secondary'))
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
@@ -345,7 +361,7 @@ export struct GroupTab {
                 if (this.group.is_creator && !member.is_creator) {
                   Button(member.status === 'pending' ? '撤回' : '移除')
                     .height(32)
-                    .backgroundColor('#F3F4F6')
+                    .backgroundColor($r('app.color.app_card_subtle_bg'))
                     .fontColor('#B91C1C')
                     .onClick((): void => {
                       this.removeMember(member);
@@ -354,8 +370,8 @@ export struct GroupTab {
               }
               .width('100%')
               .padding(15)
-              .backgroundColor(Color.White)
-              .borderRadius(8)
+              .backgroundColor($r('app.color.app_card_bg'))
+              .borderRadius(10)
             }
           })
         }
@@ -365,6 +381,8 @@ export struct GroupTab {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }
+
+

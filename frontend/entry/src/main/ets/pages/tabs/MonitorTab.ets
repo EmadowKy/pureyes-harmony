@@ -1,4 +1,4 @@
-import { HttpUtil, BASE_HOST } from '../../utils/http'
+﻿import { HttpUtil, BASE_HOST } from '../../utils/http'
 import promptAction from '@ohos.promptAction'
 
 export class MonitorInfo {
@@ -22,18 +22,23 @@ struct AddMonitorDialog {
   build() {
     Column({ space: 15 }) {
       Text('添加监控').fontSize(20).fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
 
       TextInput({ placeholder: '监控名称', text: this.monitorName })
         .onChange((val: string): void => {
           this.monitorName = val;
         })
         .height(40)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
 
       TextInput({ placeholder: '视频流地址 (stream_url)', text: this.streamUrl })
         .onChange((val: string): void => {
           this.streamUrl = val;
         })
         .height(40)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
 
       Row({ space: 20 }) {
         Button('取消')
@@ -43,6 +48,8 @@ struct AddMonitorDialog {
           .backgroundColor(Color.Gray)
 
         Button('提交')
+          .backgroundColor($r('app.color.app_primary'))
+          .fontColor(Color.White)
           .onClick((): void => {
             this.confirm(this.monitorName, this.streamUrl);
             this.controller.close();
@@ -129,6 +136,8 @@ export struct MonitorTab {
         // ---- Detail View ----
         Row() {
           Button('返回')
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
             .onClick((): void => {
               this.selectedMonitorId = 0;
               this.selectedMonitorName = '';
@@ -138,6 +147,7 @@ export struct MonitorTab {
           Text(this.selectedMonitorName)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
             .margin({ left: 10 })
             .layoutWeight(1)
             .maxLines(1)
@@ -180,16 +190,17 @@ export struct MonitorTab {
         Text('历史回放时间轴')
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
           .margin({ top: 20 })
 
         Row() {
-          Text('过去').fontColor(Color.Gray)
+          Text('过去').fontColor($r('app.color.app_text_secondary'))
           Slider({ value: this.timelineValue, min: 0, max: 100, style: SliderStyle.OutSet })
             .layoutWeight(1)
             .onChange((value: number, mode: SliderChangeMode): void => {
               this.timelineValue = value;
             })
-          Text('现在').fontColor(Color.Gray)
+          Text('现在').fontColor($r('app.color.app_text_secondary'))
         }
         .width('90%')
         .padding(20)
@@ -200,8 +211,11 @@ export struct MonitorTab {
           Text('监控列表')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
             .layoutWeight(1)
           Button('添加监控')
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
             .onClick((): void => {
               this.addMonitorDialogController.open();
             })
@@ -213,7 +227,7 @@ export struct MonitorTab {
           Column() {
             Text('暂无监控，请点击右上角添加')
               .fontSize(16)
-              .fontColor(Color.Gray)
+              .fontColor($r('app.color.app_text_secondary'))
               .margin({ top: 80 })
           }
           .width('100%')
@@ -233,13 +247,14 @@ export struct MonitorTab {
                     .backgroundColor(Color.Gray)
                   Text(monitor.name)
                     .fontSize(14)
+                    .fontColor($r('app.color.app_text_primary'))
                     .padding(8)
                     .width('100%')
                     .textAlign(TextAlign.Center)
                 }
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 4, color: '#1A000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .borderRadius(10)
+                .shadow({ radius: 5, color: $r('app.color.app_shadow') })
                 .onClick((): void => {
                   if (!monitor.stream_url) {
                     promptAction.showToast({ message: '该监控设备未配置有效的视频源地址！', duration: 2000 });
@@ -266,6 +281,8 @@ export struct MonitorTab {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }
+
+

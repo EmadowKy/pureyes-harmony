@@ -1,4 +1,4 @@
-import { HttpUtil } from '../utils/http'
+﻿import { HttpUtil } from '../utils/http'
 import router from '@ohos.router'
 
 @Entry
@@ -61,13 +61,14 @@ struct Login {
       Image($r('app.media.foreground'))
         .width(100)
         .height(100)
-        .margin({ top: 100 })
-        .backgroundColor(Color.Gray)
+        .margin({ top: 92 })
+        .backgroundColor($r('app.color.app_card_subtle_bg'))
         .borderRadius(50)
 
       Text('Pureyes 安防系统')
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
 
       Text(this.serverStatus)
         .fontSize(14)
@@ -77,6 +78,9 @@ struct Login {
       TextInput({ placeholder: '请输入工号 (例如: admin)' })
         .width('80%')
         .height(50)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
+        .borderRadius(10)
         .onChange((val: string): void => {
           this.empId = val;
         })
@@ -85,6 +89,9 @@ struct Login {
         .type(InputType.Password)
         .width('80%')
         .height(50)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
+        .borderRadius(10)
         .onChange((val: string): void => {
           this.pass = val;
         })
@@ -99,6 +106,8 @@ struct Login {
       Button(this.loading ? '登录中...' : '登录')
         .width('80%')
         .height(50)
+        .backgroundColor($r('app.color.app_primary'))
+        .fontColor(Color.White)
         .margin({ top: 20 })
         .enabled(!this.loading)
         .opacity(this.loading ? 0.6 : 1)
@@ -108,6 +117,8 @@ struct Login {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }
+
+

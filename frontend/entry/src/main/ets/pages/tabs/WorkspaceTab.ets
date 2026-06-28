@@ -1,4 +1,4 @@
-import { HttpUtil, BASE_HOST } from '../../utils/http'
+﻿import { HttpUtil, BASE_HOST } from '../../utils/http'
 import promptAction from '@ohos.promptAction'
 
 export class WorkspaceInfo {
@@ -35,9 +35,12 @@ struct CreateWorkspaceDialog {
       Text('创建工作区')
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
 
       TextInput({ placeholder: '请输入工作区名称', text: this.workspaceName })
         .height(45)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
         .onChange((val: string): void => {
           this.workspaceName = val;
         })
@@ -50,6 +53,8 @@ struct CreateWorkspaceDialog {
           })
 
         Button('确认创建')
+          .backgroundColor($r('app.color.app_primary'))
+          .fontColor(Color.White)
           .onClick((): void => {
             this.confirm(this.workspaceName);
             this.controller.close();
@@ -82,10 +87,11 @@ struct VideoRangeDialog {
       Text('选择裁剪时间范围')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
 
       Text(this.activeVideo.name)
         .fontSize(14)
-        .fontColor('#555555')
+        .fontColor($r('app.color.app_text_secondary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
@@ -97,23 +103,25 @@ struct VideoRangeDialog {
         .height(180)
         .autoPlay(true)
         .controls(true)
-        .borderRadius(8)
+        .borderRadius(10)
 
       Column({ space: 8 }) {
         Row() {
           Text(`开始: ${this.startOffset.toFixed(1)}s`)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
           Blank()
           Text(`结束: ${this.endOffset.toFixed(1)}s`)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
         }
         .width('100%')
 
         Text('拖动选择起始时间:')
           .fontSize(11)
-          .fontColor(Color.Gray)
+          .fontColor($r('app.color.app_text_secondary'))
           .alignSelf(ItemAlign.Start)
         Slider({
           value: this.startOffset,
@@ -121,9 +129,9 @@ struct VideoRangeDialog {
           max: this.activeVideo.duration,
           step: 0.1
         })
-          .blockColor('#007DFF')
+          .blockColor($r('app.color.app_primary'))
           .trackColor('#CCCCCC')
-          .selectedColor('#007DFF')
+          .selectedColor($r('app.color.app_primary'))
           .width('100%')
           .onChange((val: number): void => {
             this.startOffset = Math.min(val, this.endOffset - 0.5);
@@ -132,7 +140,7 @@ struct VideoRangeDialog {
 
         Text('拖动选择截止时间:')
           .fontSize(11)
-          .fontColor(Color.Gray)
+          .fontColor($r('app.color.app_text_secondary'))
           .alignSelf(ItemAlign.Start)
         Slider({
           value: this.endOffset,
@@ -140,9 +148,9 @@ struct VideoRangeDialog {
           max: this.activeVideo.duration,
           step: 0.1
         })
-          .blockColor('#007DFF')
+          .blockColor($r('app.color.app_primary'))
           .trackColor('#CCCCCC')
-          .selectedColor('#007DFF')
+          .selectedColor($r('app.color.app_primary'))
           .width('100%')
           .onChange((val: number): void => {
             this.endOffset = Math.max(val, this.startOffset + 0.5);
@@ -151,12 +159,12 @@ struct VideoRangeDialog {
       }
       .width('100%')
       .padding(10)
-      .backgroundColor('#F5F5F5')
-      .borderRadius(8)
+      .backgroundColor($r('app.color.app_page_bg'))
+      .borderRadius(10)
 
       Row({ space: 20 }) {
         Button('取消')
-          .backgroundColor('#999999')
+          .backgroundColor($r('app.color.app_text_muted'))
           .fontColor(Color.White)
           .width(100)
           .height(40)
@@ -165,7 +173,7 @@ struct VideoRangeDialog {
           })
 
         Button('确认')
-          .backgroundColor('#007DFF')
+          .backgroundColor($r('app.color.app_primary'))
           .fontColor(Color.White)
           .width(100)
           .height(40)
@@ -177,7 +185,7 @@ struct VideoRangeDialog {
     }
     .padding(20)
     .width('95%')
-    .backgroundColor(Color.White)
+    .backgroundColor($r('app.color.app_card_bg'))
     .borderRadius(16)
   }
 }
@@ -504,6 +512,7 @@ export struct WorkspaceTab {
           Text(this.selectedWorkspaceName)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
             .margin({ left: 12 })
             .layoutWeight(1)
         }
@@ -517,8 +526,8 @@ export struct WorkspaceTab {
             Row() {
               Button('← 返回列表')
                 .fontSize(14)
-                .backgroundColor('#E5E7EB')
-                .fontColor('#374151')
+                .backgroundColor($r('app.color.app_card_subtle_bg'))
+                .fontColor($r('app.color.app_text_primary'))
                 .height(36)
                 .onClick((): void => {
                   if (this.pollIntervalId) {
@@ -533,7 +542,7 @@ export struct WorkspaceTab {
               Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
                 .fontSize(12)
                 .fontWeight(FontWeight.Bold)
-                .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
+                .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : $r('app.color.app_primary')))
                 .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
                 .padding({ left: 10, right: 10, top: 4, bottom: 4 })
                 .borderRadius(12)
@@ -548,55 +557,55 @@ export struct WorkspaceTab {
                   Text('问题')
                     .fontSize(13)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor('#9CA3AF')
+                    .fontColor($r('app.color.app_text_muted'))
                     .alignSelf(ItemAlign.Start)
                   
                   Text(this.activeTaskQuestion)
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#111827')
+                    .fontColor($r('app.color.app_text_primary'))
                     .width('100%')
                 }
                 .width('100%')
                 .padding(15)
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 3, color: '#0D000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .borderRadius(10)
+                .shadow({ radius: 3, color: $r('app.color.app_shadow') })
 
                 // 2. AI Answer Card
                 Column({ space: 8 }) {
                   Text('AI 回答')
                     .fontSize(13)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor('#9CA3AF')
+                    .fontColor($r('app.color.app_text_muted'))
                     .alignSelf(ItemAlign.Start)
 
                   if (this.activeTaskStatus === 'processing' && !this.activeTaskAnswer) {
                     Row({ space: 8 }) {
                       Text('AI 正在分析中，请稍候...')
                         .fontSize(14)
-                        .fontColor('#6B7280')
+                        .fontColor($r('app.color.app_text_secondary'))
                     }
                     .padding({ top: 10, bottom: 10 })
                   } else {
                     Text(this.activeTaskAnswer ? this.activeTaskAnswer : '分析中...')
                       .fontSize(14)
-                      .fontColor(this.activeTaskStatus === 'failed' ? '#EF4444' : '#1F2937')
+                      .fontColor(this.activeTaskStatus === 'failed' ? '#EF4444' : $r('app.color.app_text_primary'))
                       .width('100%')
                   }
                 }
                 .width('100%')
                 .padding(15)
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 3, color: '#0D000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .borderRadius(10)
+                .shadow({ radius: 3, color: $r('app.color.app_shadow') })
 
                 // 3. Real-time Analysis Logs (Timeline)
                 Column({ space: 10 }) {
                   Text('分析过程日志')
                     .fontSize(13)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor('#9CA3AF')
+                    .fontColor($r('app.color.app_text_muted'))
                     .alignSelf(ItemAlign.Start)
 
                   if (this.activeTaskProgress.length > 0) {
@@ -605,13 +614,13 @@ export struct WorkspaceTab {
                         // Timeline Dot & vertical connector
                         Column() {
                           Circle({ width: 8, height: 8 })
-                            .fill(idx === this.activeTaskProgress.length - 1 && this.activeTaskStatus === 'processing' ? '#3B82F6' : '#9CA3AF')
+                            .fill(idx === this.activeTaskProgress.length - 1 && this.activeTaskStatus === 'processing' ? $r('app.color.app_primary') : '#9CA3AF')
                           
                           if (idx < this.activeTaskProgress.length - 1) {
                             Column()
                               .width(2)
                               .height(30)
-                              .backgroundColor('#E5E7EB')
+                              .backgroundColor($r('app.color.app_card_subtle_bg'))
                               .margin({ top: 4 })
                           }
                         }
@@ -623,7 +632,7 @@ export struct WorkspaceTab {
                         Column() {
                           Text(item['message'] as string)
                             .fontSize(13)
-                            .fontColor('#4B5563')
+                            .fontColor($r('app.color.app_text_secondary'))
                             .width('100%')
                             .lineHeight(18)
                         }
@@ -637,15 +646,15 @@ export struct WorkspaceTab {
                   } else {
                     Text('等待分析任务启动...')
                       .fontSize(13)
-                      .fontColor('#9CA3AF')
+                      .fontColor($r('app.color.app_text_muted'))
                       .padding(15)
                   }
                 }
                 .width('100%')
                 .padding(15)
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 3, color: '#0D000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .borderRadius(10)
+                .shadow({ radius: 3, color: $r('app.color.app_shadow') })
               }
               .width('100%')
             }
@@ -660,6 +669,7 @@ export struct WorkspaceTab {
             Text('新建 AI 问答 - 选择分析视频')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
               .alignSelf(ItemAlign.Start)
 
             if (this.exampleVideos.length > 0) {
@@ -689,12 +699,14 @@ export struct WorkspaceTab {
               Column() {
                 Text('未在 example 目录下发现测试视频')
                   .fontSize(14)
-                  .fontColor('#999999')
+                  .fontColor($r('app.color.app_text_muted'))
                   .margin({ bottom: 10 })
                 Button('刷新')
                   .width(80)
                   .height(35)
                   .fontSize(13)
+                  .backgroundColor($r('app.color.app_primary'))
+                  .fontColor(Color.White)
                   .onClick((): void => {
                     this.loadExampleVideos();
                   })
@@ -706,18 +718,20 @@ export struct WorkspaceTab {
 
             Text('AI 分析提问:')
               .fontSize(14)
-              .fontColor('#333333')
+              .fontColor($r('app.color.app_text_primary'))
               .alignSelf(ItemAlign.Start)
             TextArea({ placeholder: '请输入问题，例如：画面里有没有人经过？有几个人？', text: this.questionText })
               .height(80)
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_input_bg'))
               .onChange((val: string): void => {
                 this.questionText = val;
               })
 
             Row({ space: 15 }) {
-              Button('取消')
-                .layoutWeight(1)
-                .backgroundColor(Color.Gray)
+                Button('取消')
+                  .layoutWeight(1)
+                .backgroundColor($r('app.color.app_text_muted'))
                 .fontColor(Color.White)
                 .onClick((): void => {
                   this.showCreateQA = false;
@@ -727,6 +741,8 @@ export struct WorkspaceTab {
 
               Button('提交分析')
                 .layoutWeight(1)
+                .backgroundColor($r('app.color.app_primary'))
+                .fontColor(Color.White)
                 .onClick((): void => {
                   this.submitQA();
                 })
@@ -739,7 +755,7 @@ export struct WorkspaceTab {
                 .width('100%')
                 .padding(10)
                 .backgroundColor('#E8F5E9')
-                .borderRadius(8)
+                .borderRadius(10)
                 .fontColor('#2E7D32')
                 .fontSize(13)
             }
@@ -747,7 +763,7 @@ export struct WorkspaceTab {
           .padding(15)
           .width('100%')
           .layoutWeight(1)
-          .backgroundColor(Color.White)
+          .backgroundColor($r('app.color.app_card_bg'))
 
         } else {
           // ===== QA Records List =====
@@ -755,7 +771,7 @@ export struct WorkspaceTab {
             Column() {
               Text('暂无问答记录')
                 .fontSize(16)
-                .fontColor('#999999')
+                .fontColor($r('app.color.app_text_muted'))
                 .margin({ top: 80 })
             }
             .width('100%')
@@ -772,19 +788,19 @@ export struct WorkspaceTab {
                       .fontSize(15)
 
                     Text('A: ' + (record.status === 'processing' ? '分析中...' : (record.answer ? record.answer : record.status)))
-                      .fontColor(record.status === 'processing' ? '#007DFF' : '#666666')
+                      .fontColor(record.status === 'processing' ? $r('app.color.app_primary') : $r('app.color.app_text_secondary'))
                       .fontSize(14)
 
                     Text('创建时间: ' + record.created_at)
                       .fontSize(12)
-                      .fontColor('#AAAAAA')
+                      .fontColor($r('app.color.app_text_muted'))
                   }
                   .alignItems(HorizontalAlign.Start)
                   .width('100%')
                   .padding(15)
-                  .backgroundColor(Color.White)
-                  .borderRadius(8)
-                  .shadow({ radius: 4, color: '#1A000000' })
+                  .backgroundColor($r('app.color.app_card_bg'))
+                  .borderRadius(10)
+                  .shadow({ radius: 5, color: $r('app.color.app_shadow') })
                   .onClick((): void => {
                     this.activeTaskId = record.id;
                     this.activeTaskQuestion = record.question;
@@ -808,6 +824,8 @@ export struct WorkspaceTab {
           Button('+ 新建问答')
             .width('90%')
             .height(48)
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
             .margin({ top: 15, bottom: 20 })
             .onClick((): void => {
               this.loadExampleVideos();
@@ -821,9 +839,12 @@ export struct WorkspaceTab {
           Text('所有工作区')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
             .layoutWeight(1)
 
           Button('创建工作区')
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
             .onClick((): void => {
               this.createDialogController.open();
             })
@@ -835,7 +856,7 @@ export struct WorkspaceTab {
           Column() {
             Text('暂无工作区，请点击上方按钮创建')
               .fontSize(16)
-              .fontColor('#999999')
+              .fontColor($r('app.color.app_text_muted'))
               .margin({ top: 80 })
           }
           .width('100%')
@@ -851,10 +872,11 @@ export struct WorkspaceTab {
                     Text(ws.name)
                       .fontSize(18)
                       .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_text_primary'))
 
                     Text('问答数: ' + ws.qa_count.toString())
                       .fontSize(14)
-                      .fontColor(Color.Gray)
+                      .fontColor($r('app.color.app_text_secondary'))
                   }
                   .alignItems(HorizontalAlign.Start)
                   .layoutWeight(1)
@@ -865,9 +887,9 @@ export struct WorkspaceTab {
                 }
                 .width('100%')
                 .padding(20)
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 4, color: '#1A000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .borderRadius(10)
+                .shadow({ radius: 5, color: $r('app.color.app_shadow') })
                 .onClick((): void => {
                   this.selectedWorkspaceId = ws.id;
                   this.selectedWorkspaceName = ws.name;
@@ -886,7 +908,7 @@ export struct WorkspaceTab {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }
 
@@ -934,18 +956,19 @@ struct VideoSelectCard {
         Text(this.name)
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         if (this.isSelected) {
           Text(`已选: ${this.startOffset.toFixed(1)}s-${this.endOffset.toFixed(1)}s`)
             .fontSize(11)
-            .fontColor('#007DFF')
+            .fontColor($r('app.color.app_primary'))
             .margin({ top: 3 })
         } else {
           Text('未选择')
             .fontSize(11)
-            .fontColor('#999999')
+            .fontColor($r('app.color.app_text_muted'))
             .margin({ top: 3 })
         }
       }
@@ -954,13 +977,13 @@ struct VideoSelectCard {
       .width('100%')
     }
     .width('100%')
-    .backgroundColor(Color.White)
-    .borderRadius(8)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(10)
     .border({
       width: this.isSelected ? 2 : 0,
-      color: '#007DFF'
+      color: $r('app.color.app_primary')
     })
-    .shadow({ radius: 3, color: '#1A000000' })
+    .shadow({ radius: 3, color: $r('app.color.app_shadow') })
     .onClick((): void => {
       this.onCardClick();
     })
@@ -972,3 +995,5 @@ struct VideoSelectCard {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 }
+
+
