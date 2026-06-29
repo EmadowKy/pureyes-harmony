@@ -4,7 +4,7 @@ from datetime import datetime
 from flask import request, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.core.db import db
-from app.models.workspace import Workspace
+from app.models.workspace import Workspace, WorkspaceVideoSegment
 from app.models.group import GroupMember
 from app.models.qa_record import QARecord, QAVideoSelection
 from app.core.response import success, fail
@@ -55,80 +55,22 @@ from flask import current_app
 # Global in-memory running tasks registry
 running_tasks = {}
 
-def process_qa_thread(app, task_id, question, selections):
+def process_qa_thread(app, task_id, question, video_paths):
     with app.app_context():
         try:
             # Stage 1: Video Slicing
             init_msg = {
                 "stage": "slicing",
                 "status": "started",
-                "message": "大模型后台推理服务就绪，开始对选择的视频时间段进行高精度物理裁剪..."
+                "message": "检测到预剪切视频片段，准备模型推理"
             }
             running_tasks[task_id]['progress'].append(init_msg)
             running_tasks[task_id]['progress_queue'].put(init_msg)
 
-            from app.monitors.slicer import SLICE_OUTPUT_BASE
-            from app.core.config import get_ffmpeg_path
-            import subprocess
-            
-            BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
-            os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
-            
-            video_paths = []
-            for sel in selections:
-                video_name = sel.get("video_name")
-                if not video_name:
-                    continue
-                    
-                start_offset = float(sel.get("start_time_offset", 0.0))
-                end_offset = float(sel.get("end_time_offset", 0.0))
-                duration = max(1.0, end_offset - start_offset)
-                
-                example_video_path = os.path.join(example_dir, video_name)
-                if not os.path.exists(example_video_path):
-                    err_msg = f"未找到示例视频文件 {video_name}"
-                    raise RuntimeError(err_msg)
-                
-                sim_filename = f"sim_{video_name.replace('.', '_')}_{uuid.uuid4().hex[:8]}.mp4"
-                sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
-                
-                slice_log = {
-                    "stage": "slicing",
-                    "status": "running",
-                    "message": f"正在裁剪视频 {video_name} 的时间范围 [{start_offset:.1f}s - {end_offset:.1f}s]..."
-                }
-                running_tasks[task_id]['progress'].append(slice_log)
-                running_tasks[task_id]['progress_queue'].put(slice_log)
-                
-                try:
-                    ffmpeg_bin = get_ffmpeg_path("ffmpeg")
-                    cmd = [
-                        ffmpeg_bin, "-y",
-                        "-ss", f"{start_offset:.3f}",
-                        "-t", f"{duration:.3f}",
-                        "-i", example_video_path,
-                        "-c:v", "copy",
-                        "-c:a", "aac",
-                        "-map", "0:v",
-                        "-map", "0:a?",
-                        sim_output_path
-                    ]
-                    print(f"[Workspace QA Background Thread] Slicing video (copy video, transcode audio): {' '.join(cmd)}")
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-                    if result.returncode == 0 and os.path.exists(sim_output_path) and os.path.getsize(sim_output_path) > 1000:
-                        video_paths.append(f"storage/slices/{sim_filename}")
-                    else:
-                        print(f"[Workspace QA Background Thread ERROR] FFmpeg exit code {result.returncode}. Stderr:\n{result.stderr}")
-                        raise RuntimeError("FFmpeg 裁剪命令返回异常。")
-                except Exception as slice_err:
-                    print(f"[Workspace QA Background Thread ERROR] Slicing failed: {slice_err}. Falling back to direct path.")
-                    video_paths.append(f"../example/{video_name}")
-
             slice_completed = {
                 "stage": "slicing",
                 "status": "completed",
-                "message": "视频时间段高精度物理裁剪完成，切片已就绪。"
+                "message": "视频时间段高精度物理裁剪完成，切片已就绪"
             }
             running_tasks[task_id]['progress'].append(slice_completed)
             running_tasks[task_id]['progress_queue'].put(slice_completed)
@@ -281,42 +223,31 @@ def submit_qa(workspace_id):
         
     data = request.get_json() or {}
     question = data.get("question")
-    selections = data.get("selections", []) # list of {video_name, start_time_offset, end_time_offset}
+    segment_ids = data.get("segment_ids", [])
     
-    if not question or not selections:
-        return fail(message="question and selections are required", code=5004, http_status=400)
+    if not question or not segment_ids:
+        return fail(message="question and segment_ids are required", code=5004, http_status=400)
         
     task_id = uuid.uuid4().hex
     record = QARecord(id=task_id, workspace_id=workspace_id, creator_id=emp_id, question=question, status="processing")
     db.session.add(record)
     
-    # Process selections and map to video files
-    from app.monitors.slicer import SLICE_OUTPUT_BASE
-    from app.core.config import get_ffmpeg_path
-    import subprocess
-    
-    # Define example directory at the same level as backend
-    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
-    os.makedirs(example_dir, exist_ok=True)
-    os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
-    
+    video_paths = []
     from datetime import timedelta
     base_time = datetime(2026, 6, 27, 0, 0, 0)
-    for sel in selections:
-        video_name = sel.get("video_name")
-        if not video_name:
-            continue
-            
-        start_offset = float(sel.get("start_time_offset", 0.0))
-        end_offset = float(sel.get("end_time_offset", 0.0))
+    for seg_id in segment_ids:
+        segment = WorkspaceVideoSegment.query.filter_by(id=seg_id, workspace_id=workspace_id).first()
+        if not segment:
+            return fail(message=f"segment {seg_id} not found in this workspace", code=5011, http_status=404)
+        
+        video_paths.append(segment.filepath)
         
         # Add selection row in DB
         qvs = QAVideoSelection(
             record_id=task_id,
-            monitor_id=0, # mock monitor ID
-            start_time=base_time + timedelta(seconds=start_offset),
-            end_time=base_time + timedelta(seconds=end_offset)
+            monitor_id=0,
+            start_time=base_time + timedelta(seconds=segment.start_offset),
+            end_time=base_time + timedelta(seconds=segment.end_offset)
         )
         db.session.add(qvs)
             
@@ -331,9 +262,9 @@ def submit_qa(workspace_id):
         "error": None
     }
     
-    # Start thread (perform video slicing asynchronously in background)
+    # Start thread
     app = current_app._get_current_object()
-    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, selections))
+    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, video_paths))
     t.daemon = True
     t.start()
     
@@ -459,3 +390,150 @@ def delete_qa_record(task_id):
         del running_tasks[task_id]
         
     return success(message="record deleted")
+
+
+@workspaces_bp.post("/<int:workspace_id>/segments")
+@jwt_required()
+def create_video_segment(workspace_id):
+    emp_id = get_jwt_identity()
+    workspace = Workspace.query.get(workspace_id)
+    if not workspace:
+        return fail(message="workspace not found", code=5003, http_status=404)
+        
+    member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
+    if not member:
+        return fail(message="not a group member", code=5001, http_status=403)
+
+    data = request.get_json() or {}
+    video_name = data.get("video_name")
+    start_offset = data.get("start_offset")
+    end_offset = data.get("end_offset")
+    remark = data.get("remark") or ""
+
+    if not video_name or start_offset is None or end_offset is None:
+        return fail(message="video_name, start_offset, and end_offset are required", code=5006, http_status=400)
+
+    start_offset = float(start_offset)
+    end_offset = float(end_offset)
+    duration = max(0.1, end_offset - start_offset)
+
+    from app.monitors.slicer import SLICE_OUTPUT_BASE
+    from app.core.config import get_ffmpeg_path
+    import subprocess
+
+    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+    os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
+
+    example_video_path = os.path.join(example_dir, video_name)
+    if not os.path.exists(example_video_path):
+        return fail(message=f"example video file {video_name} not found", code=5007, http_status=404)
+
+    sim_filename = f"slice_{workspace_id}_{uuid.uuid4().hex[:8]}.mp4"
+    sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
+
+    try:
+        ffmpeg_bin = get_ffmpeg_path("ffmpeg")
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-ss", f"{start_offset:.3f}",
+            "-t", f"{duration:.3f}",
+            "-i", example_video_path,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-map", "0:v",
+            "-map", "0:a?",
+            sim_output_path
+        ]
+        print(f"[Workspace API Slicing Segment] command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0 or not os.path.exists(sim_output_path) or os.path.getsize(sim_output_path) <= 1000:
+            print(f"[Workspace API Slicing ERROR] exit code {result.returncode}. Stderr:\n{result.stderr}")
+            return fail(message="FFmpeg slicing failed", code=5008, http_status=500)
+
+        # Save to database
+        segment = WorkspaceVideoSegment(
+            workspace_id=workspace_id,
+            video_name=video_name,
+            start_offset=start_offset,
+            end_offset=end_offset,
+            duration=duration,
+            remark=remark,
+            filepath=f"storage/slices/{sim_filename}"
+        )
+        db.session.add(segment)
+        db.session.commit()
+
+        return success(message="segment created", data=segment.to_dict(), http_status=201)
+
+    except Exception as e:
+        print(f"[Workspace API Slicing EXCEPTION] {e}")
+        return fail(message=f"slicing exception: {str(e)}", code=5009, http_status=500)
+
+
+@workspaces_bp.get("/<int:workspace_id>/segments")
+@jwt_required()
+def list_video_segments(workspace_id):
+    emp_id = get_jwt_identity()
+    workspace = Workspace.query.get(workspace_id)
+    if not workspace:
+        return fail(message="workspace not found", code=5003, http_status=404)
+        
+    member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
+    if not member:
+        return fail(message="not a group member", code=5001, http_status=403)
+
+    segments = WorkspaceVideoSegment.query.filter_by(workspace_id=workspace_id).order_by(WorkspaceVideoSegment.created_at.desc()).all()
+    return success(data=[s.to_dict() for s in segments])
+
+
+@workspaces_bp.put("/segments/<int:segment_id>")
+@jwt_required()
+def edit_video_segment(segment_id):
+    emp_id = get_jwt_identity()
+    segment = WorkspaceVideoSegment.query.get(segment_id)
+    if not segment:
+        return fail(message="segment not found", code=5010, http_status=404)
+
+    workspace = Workspace.query.get(segment.workspace_id)
+    member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
+    if not member:
+        return fail(message="not a group member", code=5001, http_status=403)
+
+    data = request.get_json() or {}
+    remark = data.get("remark")
+    if remark is not None:
+        segment.remark = remark
+        db.session.commit()
+
+    return success(message="segment updated", data=segment.to_dict())
+
+
+@workspaces_bp.delete("/segments/<int:segment_id>")
+@jwt_required()
+def delete_video_segment(segment_id):
+    emp_id = get_jwt_identity()
+    segment = WorkspaceVideoSegment.query.get(segment_id)
+    if not segment:
+        return fail(message="segment not found", code=5010, http_status=404)
+
+    workspace = Workspace.query.get(segment.workspace_id)
+    member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
+    if not member:
+        return fail(message="not a group member", code=5001, http_status=403)
+
+    # Delete physical file if exists
+    from app.monitors.slicer import SLICE_OUTPUT_BASE
+    if segment.filepath:
+        filename = os.path.basename(segment.filepath)
+        file_path = os.path.join(SLICE_OUTPUT_BASE, filename)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"[Segment Delete] Failed to remove physical file {file_path}: {e}")
+
+    db.session.delete(segment)
+    db.session.commit()
+
+    return success(message="segment deleted")
