@@ -103,16 +103,46 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
     payload = {
         "model": req_model,
         "messages": openai_messages,
-        "max_tokens": max_tokens
+        "max_tokens": max_tokens,
+        "stream": True
     }
     
     print(f"[MVA Cloud API] Sending request to {url} with model {req_model}")
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=60, stream=True)
         if response.status_code == 200:
-            res_json = response.json()
-            content = res_json['choices'][0]['message']['content']
-            print(f"[MVA Cloud API] Answer: {content}")
+            import json
+            collected_chunks = []
+            
+            # Retrieve task_id from thread local to update running_tasks registry
+            task_id = getattr(api_config, 'task_id', None)
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith("data:"):
+                        data_str = decoded_line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk_json = json.loads(data_str)
+                            delta = chunk_json['choices'][0]['delta']
+                            chunk_text = delta.get('content')
+                            if chunk_text is None:
+                                chunk_text = ''
+                            collected_chunks.append(chunk_text)
+                            partial_text = "".join(collected_chunks)
+                            
+                            # Update running tasks dict dynamically for streaming/typewriter feedback
+                            if task_id and getattr(api_config, 'is_final_answer', False):
+                                from app.workspaces.routes import running_tasks
+                                if task_id in running_tasks:
+                                    running_tasks[task_id]['answer'] = partial_text
+                        except:
+                            pass
+                            
+            content = "".join(collected_chunks)
+            print(f"[MVA Cloud API] Answer (stream complete): {content}")
             return content
         else:
             print(f"[MVA Cloud API ERROR] Status {response.status_code}: {response.text}")
@@ -216,10 +246,13 @@ def answer(video_frames, question, options, prompt_template=None, device_id=None
     # print(f"messages: {messages}")
     
     try:
+        setattr(api_config, 'is_final_answer', True)
         output_text = Qwen_VL(messages, device_id=device_id, model_path=model_path, max_tokens=512)
     except Exception as e:
         print(f"Error in answer generation: {e}")
         output_text = "Error generating answer."
+    finally:
+        setattr(api_config, 'is_final_answer', False)
 
     if print_data:
         print("======Model output========\n", output_text)

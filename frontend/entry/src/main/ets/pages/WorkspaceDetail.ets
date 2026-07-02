@@ -25,6 +25,15 @@ export class ExampleVideoInfo {
   endOffset: number = 0;
 }
 
+export class ProgressGroup {
+  id: string = '';
+  title: string = '';
+  isCompleted: boolean = false;
+  isFailed: boolean = false;
+  isCollapsed: boolean = false;
+  details: Array<string> = [];
+}
+
 @CustomDialog
 struct VideoRangeDialog {
   controller: CustomDialogController
@@ -267,6 +276,9 @@ struct WorkspaceDetail {
   @State activeTaskAnswer: string = '';
   @State activeTaskStatus: string = '';
   @State activeTaskProgress: Array<Record<string, Object>> = [];
+  @State progressGroups: Array<ProgressGroup> = [];
+  @State manualCollapsedState: Record<string, boolean> = {};
+  scroller: Scroller = new Scroller();
 
   // Active segment for detail view
   @State selectedSegment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
@@ -451,8 +463,205 @@ struct WorkspaceDetail {
     if (res.code === 0 && res.data) {
       const statusObj = JSON.parse(res.data) as Record<string, Object>;
       const progressList = statusObj['progress'] as Array<Record<string, Object>>;
-      this.activeTaskProgress = progressList || [];
+      this.updateProgress(progressList);
     }
+  }
+
+  updateProgress(progressList: Array<Record<string, Object>>): void {
+    this.activeTaskProgress = progressList || [];
+    this.progressGroups = this.parseProgressToGroups(this.activeTaskProgress);
+    // Smoothly scroll to bottom
+    setTimeout(() => {
+      this.scroller.scrollEdge(Edge.Bottom);
+    }, 100);
+  }
+
+  parseProgressToGroups(progressList: Array<Record<string, Object>>): Array<ProgressGroup> {
+    const groups: Array<ProgressGroup> = [];
+    
+    for (let i = 0; i < progressList.length; i++) {
+      const item = progressList[i];
+      const stage = (item['stage'] as string) || '';
+      const status = (item['status'] as string) || '';
+      const msg = (item['message'] as string) || '';
+      const data = (item['data'] as Record<string, Object>) || {};
+
+      if (stage === 'model_initialization') {
+        let g = groups.find(x => x.id === 'model_init');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'model_init';
+          g.title = '初始化推理服务';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'question_analysis') {
+        let g = groups.find(x => x.id === 'question_analysis');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'question_analysis';
+          g.title = '模型决策';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (data['analysis']) {
+          g.details = [`分析策略: ${data['analysis']}`];
+        } else if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'initialization' && status === 'running') {
+        const video = (data['video'] as string) || '';
+        const id = 'init_desc_' + video;
+        let g = groups.find(x => x.id === id);
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = id;
+          g.title = `初始化视频: ${video}`;
+          groups.push(g);
+        }
+        g.isCompleted = false;
+        if (msg) {
+          g.details = [msg];
+        }
+      }
+      else if (stage === 'slicing') {
+        let g = groups.find(x => x.id === 'slicing');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'slicing';
+          g.title = '视频片段加载';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'sampling' && status === 'failed') {
+        const video = (data['video'] as string) || '';
+        const iter = data['iteration'] !== undefined ? ` (循环 ${data['iteration']})` : '';
+        const id = 'sample_fail_' + video + '_' + (data['iteration'] || 'init');
+        const g = new ProgressGroup();
+        g.id = id;
+        g.title = `采样失败: ${video}${iter}`;
+        g.isFailed = true;
+        g.details.push(msg);
+        groups.push(g);
+      }
+      else if (stage === 'description_scoring' && status === 'completed') {
+        const video = (data['video'] as string) || '';
+        const iteration = data['iteration'] as number;
+        
+        if (iteration === undefined) {
+          // Initialization phase description
+          const id = 'init_desc_' + video;
+          let g = groups.find(x => x.id === id);
+          if (!g) {
+            g = new ProgressGroup();
+            g.id = id;
+            g.title = `初始化视频: ${video}`;
+            groups.push(g);
+          }
+          g.isCompleted = true;
+          g.details = [
+            `初始评分: ${data['score'] !== undefined ? data['score'] : '0.50'}`,
+            `初始描述: ${data['description'] || ''}`,
+            `当前优先级: ${data['priority'] !== undefined ? data['priority'] : '0.50'}`
+          ];
+        } else {
+          // Iteration phase description
+          const id = `iter_desc_${video}_${iteration}`;
+          let g = groups.find(x => x.id === id);
+          if (!g) {
+            g = new ProgressGroup();
+            g.id = id;
+            g.title = `搜索视频: ${video} (第 ${iteration} 次循环)`;
+            groups.push(g);
+          }
+          g.isCompleted = true;
+          
+          const priority = data['iteration_data'] ? (data['iteration_data'] as Record<string, Object>)['priority'] : undefined;
+          
+          g.details = [
+            `帧评分: ${data['new_score'] !== undefined ? data['new_score'] : '0.50'}`,
+            `新增描述: ${data['description_snippet'] || ''}`,
+            `视频评分: ${data['new_score'] !== undefined ? data['new_score'] : '0.50'}`,
+            `加速度: ${data['acceleration'] !== undefined ? data['acceleration'] : '1'}`,
+            `优先级: ${priority !== undefined ? priority : '0.50'}`
+          ];
+        }
+      }
+      else if (stage === 'iteration' && status === 'tool_decided') {
+        const iter = data['iteration'] as number;
+        const id = `decision_${iter}`;
+        let g = groups.find(x => x.id === id);
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = id;
+          g.title = `制定决策 (第 ${iter} 次循环)`;
+          groups.push(g);
+        }
+        g.isCompleted = true;
+        
+        const option = data['option'] !== undefined ? data['option'] : '5';
+        const start = data['target_start'] !== undefined ? (data['target_start'] as number).toFixed(2) + 's' : '0.00s';
+        const end = data['target_end'] !== undefined ? (data['target_end'] as number).toFixed(2) + 's' : '0.00s';
+        
+        g.details = [
+          `目标视频: ${data['selected_video'] || ''}`,
+          `行动选项: 选项 ${option}`,
+          `目标区间: ${start} - ${end}`,
+          `候选得分: ${data['candidate_scores'] !== undefined ? JSON.stringify(data['candidate_scores']) : '[]'}`
+        ];
+      }
+      else if (stage === 'answering') {
+        let g = groups.find(x => x.id === 'answering');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'answering';
+          g.title = '生成最终回答';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'system') {
+        const id = 'sys_error';
+        let g = groups.find(x => x.id === id);
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = id;
+          g.title = '系统执行错误';
+          groups.push(g);
+        }
+        g.isFailed = true;
+        g.details.push(msg);
+      }
+    }
+
+    const isFinished = (this.activeTaskStatus === 'completed' || this.activeTaskStatus === 'failed');
+    
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (this.manualCollapsedState[g.id] !== undefined) {
+        g.isCollapsed = this.manualCollapsedState[g.id];
+      } else {
+        if (isFinished) {
+          g.isCollapsed = true;
+        } else {
+          g.isCollapsed = (g.isCompleted && i < groups.length - 1);
+        }
+      }
+    }
+
+    return groups;
   }
 
   startPollingStatus(taskId: string): void {
@@ -471,7 +680,7 @@ struct WorkspaceDetail {
         
         this.activeTaskStatus = status;
         this.activeTaskAnswer = answer ? answer : (error ? '错误: ' + error : '');
-        this.activeTaskProgress = progressList || [];
+        this.updateProgress(progressList);
         
         if (progressList && progressList.length > 0) {
           const latestItem = progressList[progressList.length - 1];
@@ -496,7 +705,7 @@ struct WorkspaceDetail {
         this.pollIntervalId = 0;
         this.aiProgressText = '获取分析进度失败: ' + (res.message || '网络连接异常');
       }
-    }, 1500);
+    }, 400);
   }
 
   async submitQA(): Promise<void> {
@@ -537,6 +746,7 @@ struct WorkspaceDetail {
       this.activeTaskAnswer = '';
       this.activeTaskStatus = 'processing';
       this.activeTaskProgress = [];
+      this.progressGroups = [];
       this.showCreateQA = false;
       this.questionText = '';
       
@@ -609,7 +819,7 @@ struct WorkspaceDetail {
           .width('90%')
           .margin({ top: 5 })
 
-          Scroll() {
+          Scroll(this.scroller) {
             Column({ space: 15 }) {
               Column({ space: 8 }) {
                 Text('问题')
@@ -630,85 +840,108 @@ struct WorkspaceDetail {
               .borderRadius(8)
               .shadow({ radius: 3, color: '#0D000000' })
 
-              Column({ space: 8 }) {
-                Text('AI 回答')
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#9CA3AF')
-                  .alignSelf(ItemAlign.Start)
+              if (this.progressGroups.length > 0) {
+                ForEach(this.progressGroups, (group: ProgressGroup, idx: number): void => {
+                  Column() {
+                    Row() {
+                      Circle({ width: 10, height: 10 })
+                        .fill(group.isFailed ? '#EF4444' : (group.isCompleted ? '#10B981' : '#3B82F6'))
+                        .margin({ right: 10 })
 
-                if (this.activeTaskStatus === 'processing' && !this.activeTaskAnswer) {
-                  Row({ space: 8 }) {
-                    Text('AI 正在分析中，请稍候...')
-                      .fontSize(14)
-                      .fontColor('#6B7280')
+                      Text(group.title)
+                        .fontSize(14)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor('#374151')
+                        .layoutWeight(1)
+
+                      if (group.isFailed) {
+                        Text('失败')
+                          .fontSize(12)
+                          .fontColor('#EF4444')
+                          .margin({ right: 10 })
+                      } else if (group.isCompleted) {
+                        Text('已完成')
+                          .fontSize(12)
+                          .fontColor('#10B981')
+                          .margin({ right: 10 })
+                      } else {
+                        Text('运行中')
+                          .fontSize(12)
+                          .fontColor('#3B82F6')
+                          .margin({ right: 10 })
+                      }
+
+                      Text(group.isCollapsed ? '▼' : '▲')
+                        .fontSize(12)
+                        .fontColor('#9CA3AF')
+                    }
+                    .width('100%')
+                    .padding({ top: 12, bottom: 12, left: 15, right: 15 })
+                    .backgroundColor('#F3F4F6')
+                    .borderRadius(8)
+                    .onClick((): void => {
+                      const newState = !group.isCollapsed;
+                      this.manualCollapsedState[group.id] = newState;
+                      this.progressGroups = this.parseProgressToGroups(this.activeTaskProgress);
+                    })
+
+                    if (!group.isCollapsed) {
+                      Column({ space: 8 }) {
+                        ForEach(group.details, (detail: string): void => {
+                          Row() {
+                            Text('•')
+                              .fontSize(14)
+                              .fontColor('#4B5563')
+                              .margin({ right: 8 })
+                            Text(detail)
+                              .fontSize(13)
+                              .fontColor('#4B5563')
+                              .lineHeight(18)
+                              .layoutWeight(1)
+                          }
+                          .width('100%')
+                          .alignItems(VerticalAlign.Top)
+                        })
+                      }
+                      .width('100%')
+                      .padding({ left: 30, right: 15, top: 10, bottom: 10 })
+                      .backgroundColor(Color.White)
+                      .borderWidth({ left: 2, right: 0, top: 0, bottom: 0 })
+                      .borderColor('#E5E7EB')
+                    }
                   }
-                  .padding({ top: 10, bottom: 10 })
-                } else {
-                  Text(this.activeTaskAnswer ? this.activeTaskAnswer : '分析中...')
+                  .width('100%')
+                  .borderRadius(8)
+                  .clip(true)
+                  .shadow({ radius: 2, color: '#05000000' })
+                })
+              } else {
+                Text('等待分析任务启动...')
+                  .fontSize(13)
+                  .fontColor('#9CA3AF')
+                  .padding(15)
+              }
+
+              if (this.activeTaskAnswer || this.activeTaskStatus === 'completed' || this.activeTaskStatus === 'failed') {
+                Column({ space: 8 }) {
+                  Text('AI 回答')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#9CA3AF')
+                    .alignSelf(ItemAlign.Start)
+
+                  Text(this.activeTaskAnswer ? this.activeTaskAnswer : '思考中...')
                     .fontSize(14)
                     .fontColor(this.activeTaskStatus === 'failed' ? '#EF4444' : '#1F2937')
                     .width('100%')
+                    .lineHeight(20)
                 }
+                .width('100%')
+                .padding(15)
+                .backgroundColor(Color.White)
+                .borderRadius(8)
+                .shadow({ radius: 3, color: '#0D000000' })
               }
-              .width('100%')
-              .padding(15)
-              .backgroundColor(Color.White)
-              .borderRadius(8)
-              .shadow({ radius: 3, color: '#0D000000' })
-
-              Column({ space: 10 }) {
-                Text('分析过程日志')
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#9CA3AF')
-                  .alignSelf(ItemAlign.Start)
-
-                if (this.activeTaskProgress.length > 0) {
-                  ForEach(this.activeTaskProgress, (item: Record<string, Object>, idx: number): void => {
-                    Row() {
-                      Column() {
-                        Circle({ width: 8, height: 8 })
-                          .fill(idx === this.activeTaskProgress.length - 1 && this.activeTaskStatus === 'processing' ? '#3B82F6' : '#9CA3AF')
-                        
-                        if (idx < this.activeTaskProgress.length - 1) {
-                          Column()
-                            .width(2)
-                            .height(30)
-                            .backgroundColor('#E5E7EB')
-                            .margin({ top: 4 })
-                        }
-                      }
-                      .width(20)
-                      .justifyContent(FlexAlign.Start)
-                      .alignItems(HorizontalAlign.Center)
-
-                      Column() {
-                        Text(item['message'] as string)
-                          .fontSize(13)
-                          .fontColor('#4B5563')
-                          .width('100%')
-                          .lineHeight(18)
-                      }
-                      .layoutWeight(1)
-                      .margin({ left: 8 })
-                      .padding({ bottom: idx < this.activeTaskProgress.length - 1 ? 15 : 0 })
-                    }
-                    .alignItems(VerticalAlign.Top)
-                    .width('100%')
-                  })
-                } else {
-                  Text('等待分析任务启动...')
-                    .fontSize(13)
-                    .fontColor('#9CA3AF')
-                    .padding(15)
-                }
-              }
-              .width('100%')
-              .padding(15)
-              .backgroundColor(Color.White)
-              .borderRadius(8)
-              .shadow({ radius: 3, color: '#0D000000' })
             }
             .width('100%')
           }
@@ -1015,6 +1248,8 @@ struct WorkspaceDetail {
                           this.activeTaskAnswer = record.answer;
                           this.activeTaskStatus = record.status;
                           this.activeTaskProgress = [];
+                          this.progressGroups = [];
+                          this.manualCollapsedState = {};
                           if (record.status === 'processing') {
                             this.startPollingStatus(record.id);
                           } else {
@@ -1035,13 +1270,16 @@ struct WorkspaceDetail {
                   .fontColor(Color.White)
                   .margin({ top: 15, bottom: 20 })
                   .onClick((): void => {
-                    // Reset selections first
                     for (let i = 0; i < this.segments.length; i++) {
                       this.segments[i].isSelected = false;
                     }
                     this.segments = [...this.segments];
                     this.questionText = '';
                     this.aiProgressText = '';
+                    this.activeTaskId = '';
+                    this.activeTaskProgress = [];
+                    this.progressGroups = [];
+                    this.manualCollapsedState = {};
                     this.showCreateQA = true;
                   })
               }

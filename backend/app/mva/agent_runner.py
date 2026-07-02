@@ -200,6 +200,7 @@ class AgentRunner:
             
             TextBank['question_analysis'] = analysis_result
             process_logs['question_analysis'] = analysis_result
+            _emit_progress('question_analysis', 'completed', '问题策略分析完成', {'analysis': analysis_result})
             
             if self.config['parameters'].get('print_output', False):
                 print(f"Analysis Strategy: {analysis_result}\n---------------------------------------")
@@ -239,6 +240,8 @@ class AgentRunner:
             else:
                 v_name = f"Video {chr(ord('A') + idx - 1)}"
                 
+            _emit_progress('initialization', 'running', f"正在初始化视频: {v_name}", {'video': v_name})
+            
             # Pre-calculate duration
             v_duration = self._get_video_duration(v_path)
 

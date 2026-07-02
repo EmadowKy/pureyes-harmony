@@ -102,7 +102,8 @@ def process_qa_thread(app, task_id, question, video_paths):
             api_config.api_key = creator.llm_api_key
             api_config.base_url = creator.llm_base_url
             api_config.model = creator.llm_model
-
+            api_config.task_id = task_id
+            
             # Attempt to import ask_model
             try:
                 from app.qa.run_model import ask_model
@@ -115,15 +116,18 @@ def process_qa_thread(app, task_id, question, video_paths):
                 msg = item
                 stage = "processing"
                 status = "running"
+                data_val = {}
                 if isinstance(item, dict):
                     msg = item.get("message") or item.get("data", {}).get("message") or str(item)
                     stage = item.get("stage", "processing")
                     status = item.get("status", "running")
+                    data_val = item.get("data") or {}
                 
                 prog_entry = {
                     "stage": stage,
                     "status": status,
-                    "message": msg
+                    "message": msg,
+                    "data": data_val
                 }
                 running_tasks[task_id]['progress'].append(prog_entry)
                 running_tasks[task_id]['progress_queue'].put(prog_entry)
@@ -144,47 +148,54 @@ def process_qa_thread(app, task_id, question, video_paths):
                      (result.get('answer_generation') or {}).get('raw_output') or \
                      '模型未输出回答'
 
+            complete_entry = {
+                "stage": "answering",
+                "status": "completed",
+                "message": "生成最终回答完成",
+                "data": {}
+            }
+            running_tasks[task_id]['progress'].append(complete_entry)
+            running_tasks[task_id]['progress_queue'].put(complete_entry)
+
             # Save to Database
             record = QARecord.query.get(task_id)
             if record:
                 record.status = "completed"
                 record.answer = answer
+                import json
+                record.progress_json = json.dumps(running_tasks[task_id]['progress'])
                 db.session.commit()
 
             running_tasks[task_id]['status'] = "completed"
             running_tasks[task_id]['answer'] = answer
-
-            complete_entry = {
-                "stage": "answering",
-                "status": "completed",
-                "message": f"分析完成：{answer}"
-            }
-            running_tasks[task_id]['progress'].append(complete_entry)
-            running_tasks[task_id]['progress_queue'].put(complete_entry)
 
         except Exception as e:
             import traceback
             tb_str = traceback.format_exc()
             print(f"[QA THREAD ERROR] {tb_str}")
 
+            error_entry = {
+                "stage": "system",
+                "status": "failed",
+                "message": f"分析发生错误：{str(e)}\n{tb_str}",
+                "data": {}
+            }
+            running_tasks[task_id]['progress'].append(error_entry)
+            running_tasks[task_id]['progress_queue'].put(error_entry)
+
             # Save failure to Database
             record = QARecord.query.get(task_id)
             if record:
                 record.status = "failed"
                 record.answer = f"分析发生错误：{str(e)}\n{tb_str}"
+                import json
+                record.progress_json = json.dumps(running_tasks[task_id]['progress'])
                 db.session.commit()
 
             running_tasks[task_id]['status'] = "failed"
             running_tasks[task_id]['error'] = str(e)
             running_tasks[task_id]['traceback'] = tb_str
 
-            error_entry = {
-                "stage": "system",
-                "status": "failed",
-                "message": f"分析发生错误：{str(e)}\n{tb_str}"
-            }
-            running_tasks[task_id]['progress'].append(error_entry)
-            running_tasks[task_id]['progress_queue'].put(error_entry)
 
 
 @workspaces_bp.get("/example-videos")
@@ -329,13 +340,24 @@ def get_qa_status(task_id):
         if not record:
             return fail(message="task not found", code=5005, http_status=404)
             
-        return success(data={
-            "status": record.status,
-            "progress": [{
+        progress_data = []
+        if record.progress_json:
+            try:
+                import json
+                progress_data = json.loads(record.progress_json)
+            except:
+                pass
+        
+        if not progress_data:
+            progress_data = [{
                 "stage": "answering",
                 "status": record.status,
                 "message": record.answer or ("已完成" if record.status == "completed" else "任务失败")
-            }],
+            }]
+            
+        return success(data={
+            "status": record.status,
+            "progress": progress_data,
             "answer": record.answer if record.status == "completed" else None,
             "error": record.answer if record.status == "failed" else None
         })
