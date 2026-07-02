@@ -1,11 +1,4 @@
-# AutoDL / remote GPU backend dependencies.
-# Install the CUDA PyTorch wheel first, then install this file:
-#   pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu126
-#   pip install -r backend/requirements-autodl.txt
-#
-# Keep torch/torchvision out of this file to avoid accidentally replacing
-# a working CUDA wheel with a CPU/default-index wheel.
-
+# AutoDL / remote backend dependencies.
 # Web framework
 Flask==2.3.3
 Flask-CORS==4.0.0
@@ -15,11 +8,6 @@ Flask-JWT-Extended==4.6.0
 # Authentication and security
 PyJWT==2.8.0
 Werkzeug==3.0.6
-
-# Model runtime
-transformers==4.57.6
-accelerate==1.10.1
-qwen-vl-utils==0.0.14
 
 # Video and image processing
 opencv-python==4.8.1.78

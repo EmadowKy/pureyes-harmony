@@ -1,6 +1,5 @@
 import os
 import sys
-import torch
 import gc
 
 current_file = os.path.abspath(__file__)
@@ -8,17 +7,12 @@ qa_dir = os.path.dirname(current_file)
 project_root = os.path.dirname(qa_dir)
 sys.path.append(project_root)
 
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:512'
-
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
-
 from typing import List, Dict, Any
 from mva.agent_runner import AgentRunner
 
 def ask_model(question: str, video_paths: List[str], config_path: str, 
-                                  enable_memory_optimization: bool = True, 
-                                  progress_callback=None) -> Dict[str, Any]:
+              enable_memory_optimization: bool = True, 
+              progress_callback=None) -> Dict[str, Any]:
     """
     使用多视频理解模型分析多个视频。
     将所有视频一次性传递给模型进行真正的多视频联合分析和对比。
@@ -27,7 +21,7 @@ def ask_model(question: str, video_paths: List[str], config_path: str,
         question (str): 要分析的问题。
         video_paths (List[str]): 视频文件的相对路径列表（例如 'example/1.mp4'）。
         config_path (str): 模型配置文件的路径。
-        enable_memory_optimization (bool): 启用 GPU 内存优化（默认为 True）。
+        enable_memory_optimization (bool): 是否启用垃圾回收优化。
 
     Returns:
         Dict[str, Any]: 模型的原始 JSON 响应。
@@ -51,8 +45,6 @@ def ask_model(question: str, video_paths: List[str], config_path: str,
             print(f"[ERROR] 多视频分析失败: {result.get('error', '未知错误')}")
 
         if enable_memory_optimization:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             gc.collect()
 
         return result

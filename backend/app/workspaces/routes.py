@@ -79,13 +79,31 @@ def process_qa_thread(app, task_id, question, video_paths):
             model_init = {
                 "stage": "model_initialization",
                 "status": "started",
-                "message": "大模型后台推理服务启动中..."
+                "message": "获取大模型 API 配置并启动服务中..."
             }
             running_tasks[task_id]['progress'].append(model_init)
             running_tasks[task_id]['progress_queue'].put(model_init)
 
-            # Attempt to import ask_model (and its underlying torch dependencies)
-            # This is done inside the thread to avoid crashing Flask startup if imports fail.
+            record = QARecord.query.get(task_id)
+            if not record:
+                raise RuntimeError("QA 记录未找到。")
+            
+            from app.models.user import User
+            creator = User.query.filter_by(emp_id=record.creator_id).first()
+            if not creator or not creator.llm_api_key or not creator.llm_base_url:
+                raise RuntimeError("未配置大模型 API 参数，请先到‘我的’页面配置 API KEY 和 BASE URL。")
+            
+            import sys
+            import importlib
+            mva_utils = importlib.import_module("app.mva.utils")
+            sys.modules['utils'] = mva_utils
+            
+            api_config = mva_utils.api_config
+            api_config.api_key = creator.llm_api_key
+            api_config.base_url = creator.llm_base_url
+            api_config.model = creator.llm_model
+
+            # Attempt to import ask_model
             try:
                 from app.qa.run_model import ask_model
             except Exception as import_err:

@@ -7,7 +7,7 @@ from app.user_center.permissions import active_user_required, can_view_user, cur
 from app.user_center.serializers import user_to_dict
 from . import users_bp
 
-USER_MUTABLE_FIELDS = {"name", "phone", "avatar"}
+USER_MUTABLE_FIELDS = {"name", "phone", "avatar", "llm_api_key", "llm_base_url", "llm_model"}
 
 
 def _clean(value):

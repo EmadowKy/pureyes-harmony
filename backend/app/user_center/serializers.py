@@ -14,6 +14,9 @@ def user_to_dict(user, include_private=True):
         "avatar": user.avatar,
         "role": user.role,
         "is_active": user.is_active,
+        "llm_api_key": user.llm_api_key,
+        "llm_base_url": user.llm_base_url,
+        "llm_model": user.llm_model,
         "created_at": iso_z(user.created_at),
         "updated_at": iso_z(user.updated_at),
     }

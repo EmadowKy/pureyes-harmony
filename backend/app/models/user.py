@@ -13,6 +13,10 @@ class User(db.Model):
     role = db.Column(db.String(20), nullable=False, default="user")  # super_admin, admin, user
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     
+    llm_api_key = db.Column(db.String(255), nullable=True)
+    llm_base_url = db.Column(db.String(255), nullable=True)
+    llm_model = db.Column(db.String(64), nullable=True)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -30,6 +34,9 @@ class User(db.Model):
             "avatar": self.avatar,
             "role": self.role,
             "is_active": self.is_active,
+            "llm_api_key": self.llm_api_key,
+            "llm_base_url": self.llm_base_url,
+            "llm_model": self.llm_model,
             "created_at": self.created_at.isoformat() + "Z",
             "updated_at": self.updated_at.isoformat() + "Z"
         }

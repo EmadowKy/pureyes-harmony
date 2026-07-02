@@ -1,4 +1,4 @@
-﻿import { HttpUtil } from '../../utils/http'
+import { HttpUtil } from '../../utils/http'
 import promptAction from '@ohos.promptAction'
 import router from '@ohos.router'
 
@@ -9,6 +9,9 @@ export class UserInfo {
   avatar: string = '';
   role: string = '';
   is_active: boolean = true;
+  llm_api_key: string = '';
+  llm_base_url: string = '';
+  llm_model: string = '';
 }
 
 export class InviteInfo {
@@ -198,6 +201,9 @@ export struct ProfileTab {
   @State searchKeyword: string = '';
   @State adminUsers: Array<UserInfo> = [];
   @State selectedUser: UserInfo = new UserInfo();
+  @State llmApiKey: string = '';
+  @State llmBaseUrl: string = '';
+  @State llmModel: string = '';
 
   editDialogController: CustomDialogController = new CustomDialogController({
     builder: EditProfileDialog({
@@ -240,6 +246,9 @@ export struct ProfileTab {
     u.avatar = (dataObj['avatar'] as string) || '';
     u.role = (dataObj['role'] as string) || '';
     u.is_active = (dataObj['is_active'] as boolean) !== false;
+    u.llm_api_key = (dataObj['llm_api_key'] as string) || '';
+    u.llm_base_url = (dataObj['llm_base_url'] as string) || '';
+    u.llm_model = (dataObj['llm_model'] as string) || '';
     return u;
   }
 
@@ -248,6 +257,9 @@ export struct ProfileTab {
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       this.user = this.parseUser(dataObj);
+      this.llmApiKey = this.user.llm_api_key || '';
+      this.llmBaseUrl = this.user.llm_base_url || '';
+      this.llmModel = this.user.llm_model || '';
       if (this.user.role === 'admin' || this.user.role === 'super_admin') {
         this.searchUsers();
       }
@@ -314,6 +326,26 @@ export struct ProfileTab {
       this.loadProfile();
     } else {
       promptAction.showToast({ message: res.message || '资料修改失败', duration: 2000 });
+    }
+  }
+
+  async submitSaveApiConfig(): Promise<void> {
+    class ApiConfigPayload {
+      llm_api_key: string = '';
+      llm_base_url: string = '';
+      llm_model: string = '';
+    }
+    const payload = new ApiConfigPayload();
+    payload.llm_api_key = this.llmApiKey.trim();
+    payload.llm_base_url = this.llmBaseUrl.trim();
+    payload.llm_model = this.llmModel.trim();
+
+    const res = await HttpUtil.put('/users/me', payload);
+    if (res.code === 0) {
+      promptAction.showToast({ message: 'API 配置保存成功', duration: 2000 });
+      this.loadProfile();
+    } else {
+      promptAction.showToast({ message: res.message || 'API 配置保存失败', duration: 2000 });
     }
   }
 
@@ -428,6 +460,59 @@ export struct ProfileTab {
           .onClick((): void => {
             this.editDialogController.open();
           })
+
+        Column({ space: 10 }) {
+          Text('大模型 API 配置')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .width('100%')
+
+          Text('配置保存在当前用户下，用于云端视频分析。若没有配置环境变量，可以使用阿里云百炼API Key。')
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+
+          TextInput({ placeholder: 'API KEY (如: sk-xxx)', text: this.llmApiKey })
+            .width('100%')
+            .height(40)
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_input_bg'))
+            .onChange((val: string): void => {
+              this.llmApiKey = val;
+            })
+
+          TextInput({ placeholder: 'BASE URL (如: https://.../compatible-mode/v1)', text: this.llmBaseUrl })
+            .width('100%')
+            .height(40)
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_input_bg'))
+            .onChange((val: string): void => {
+              this.llmBaseUrl = val;
+            })
+
+          TextInput({ placeholder: 'MODEL (如: qwen3.7-plus)', text: this.llmModel })
+            .width('100%')
+            .height(40)
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_input_bg'))
+            .onChange((val: string): void => {
+              this.llmModel = val;
+            })
+
+          Button('保存 API 配置')
+            .width('100%')
+            .height(40)
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
+            .onClick((): void => {
+              this.submitSaveApiConfig();
+            })
+        }
+        .width('90%')
+        .padding(16)
+        .backgroundColor($r('app.color.app_card_bg'))
+        .borderRadius(10)
 
         Column({ space: 10 }) {
           Text('新建小组')

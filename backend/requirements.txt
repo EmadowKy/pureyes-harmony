@@ -8,13 +8,6 @@ Flask-JWT-Extended==4.6.0
 PyJWT==2.8.0
 werkzeug>=3.0.0
 
-# AI Model Dependencies
-torch>=2.0.0
-torchvision>=0.15.0
-transformers>=4.35.0
-accelerate>=0.24.0
-qwen-vl-utils>=0.0.8
-
 # Video Processing
 opencv-python==4.8.1.78
 numpy<2.0.0
