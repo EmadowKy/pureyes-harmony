@@ -285,10 +285,18 @@ def submit_qa(workspace_id):
     # Initialize in-memory task tracker
     running_tasks[task_id] = {
         "status": "processing",
-        "progress": [],
+        "progress": [
+            {
+                "stage": "metadata",
+                "status": "completed",
+                "message": "Metadata initialization",
+                "data": {"video_paths": video_paths}
+            }
+        ],
         "progress_queue": Queue(),
         "answer": None,
-        "error": None
+        "error": None,
+        "video_paths": video_paths
     }
     
     # Start thread
@@ -333,7 +341,8 @@ def get_qa_status(task_id):
             "status": task_info["status"],
             "progress": task_info["progress"],
             "answer": task_info["answer"],
-            "error": task_info["error"]
+            "error": task_info["error"],
+            "video_paths": task_info.get("video_paths", [])
         })
     else:
         record = QARecord.query.get(task_id)
@@ -355,11 +364,18 @@ def get_qa_status(task_id):
                 "message": record.answer or ("已完成" if record.status == "completed" else "任务失败")
             }]
             
+        video_paths = []
+        for entry in progress_data:
+            if entry.get("stage") == "metadata":
+                video_paths = entry.get("data", {}).get("video_paths", [])
+                break
+                
         return success(data={
             "status": record.status,
             "progress": progress_data,
             "answer": record.answer if record.status == "completed" else None,
-            "error": record.answer if record.status == "failed" else None
+            "error": record.answer if record.status == "failed" else None,
+            "video_paths": video_paths
         })
 
 

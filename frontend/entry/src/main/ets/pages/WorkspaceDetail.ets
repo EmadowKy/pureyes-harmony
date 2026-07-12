@@ -16,6 +16,188 @@ export class WorkspaceVideoSegment {
   isSelected: boolean = false; // UI selection state
 }
 
+export class TextChunk {
+  content: string = '';
+  isBold: boolean = false;
+  isTimestamp: boolean = false;
+  videoNum: number = 0;
+  timeStr: string = '';
+}
+
+export function timeToSeconds(timeStr: string): number {
+  if (!timeStr) {
+    return 0;
+  }
+  const parts = timeStr.split(':').map(x => parseInt(x) || 0);
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return 0;
+}
+
+export function parseAnswerToChunks(answerText: string): Array<Array<TextChunk>> {
+  if (!answerText) {
+    return [];
+  }
+  const paragraphs = answerText.split('\n');
+  const result: Array<Array<TextChunk>> = [];
+  const tsRegex = /\[video:\s*["']?([^"',\]]+)["']?\s*,\s*time:\s*["']?([^"',\s\]\*]+)["']?\]?/g;
+  const boldRegex = /\*\*([^*]+)\*\*/g;
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    let paraText = paragraphs[i];
+    if (!paraText) {
+      const emptyChunk = new TextChunk();
+      emptyChunk.content = '';
+      result.push([emptyChunk]);
+      continue;
+    }
+
+    let isBullet = false;
+    const bulletMatch = paraText.match(/^(\s*[*•-]\s+)/);
+    if (bulletMatch) {
+      isBullet = true;
+      paraText = paraText.substring(bulletMatch[0].length);
+    }
+
+    const paraChunks: Array<TextChunk> = [];
+    
+    // Phase 1: Parse bold first
+    const boldChunks: Array<Record<string, Object>> = [];
+    let lastIdx = 0;
+    let boldMatch: RegExpExecArray | null = null;
+    boldRegex.lastIndex = 0;
+
+    while ((boldMatch = boldRegex.exec(paraText)) !== null) {
+      if (boldMatch.index > lastIdx) {
+        boldChunks.push({
+          "content": paraText.substring(lastIdx, boldMatch.index),
+          "isBold": false
+        });
+      }
+      boldChunks.push({
+        "content": boldMatch[1],
+        "isBold": true
+      });
+      lastIdx = boldRegex.lastIndex;
+    }
+
+    if (lastIdx < paraText.length) {
+      boldChunks.push({
+        "content": paraText.substring(lastIdx),
+        "isBold": false
+      });
+    }
+
+    if (boldChunks.length === 0) {
+      boldChunks.push({ "content": paraText, "isBold": false });
+    }
+
+    // Phase 2: For each bold chunk, parse timestamps
+    let isFirst = true;
+    for (let j = 0; j < boldChunks.length; j++) {
+      const bc = boldChunks[j];
+      const isBold = bc["isBold"] as boolean;
+      const textToParse = bc["content"] as string;
+
+      tsRegex.lastIndex = 0;
+      let tsLastIdx = 0;
+      let tsMatch: RegExpExecArray | null = null;
+
+      while ((tsMatch = tsRegex.exec(textToParse)) !== null) {
+        if (tsMatch.index > tsLastIdx) {
+          let contentStr = textToParse.substring(tsLastIdx, tsMatch.index);
+          if (isFirst && isBullet) {
+            contentStr = "•  " + contentStr;
+            isFirst = false;
+          }
+          const chunk = new TextChunk();
+          chunk.content = contentStr;
+          chunk.isBold = isBold;
+          paraChunks.push(chunk);
+        }
+
+        const vNumStr = tsMatch[1].trim();
+        const tStr = tsMatch[2].trim();
+        
+        let videoNum = parseInt(vNumStr);
+        if (isNaN(videoNum)) {
+          const code = vNumStr.toUpperCase().charCodeAt(0);
+          if (code >= 65 && code <= 90) {
+            videoNum = code - 65 + 1;
+          } else {
+            videoNum = 1;
+          }
+        }
+
+        let contentStr = `视频${videoNum}(${tStr})`;
+        if (isFirst && isBullet) {
+          contentStr = "•  " + contentStr;
+          isFirst = false;
+        }
+
+        const chunk = new TextChunk();
+        chunk.content = contentStr;
+        chunk.isBold = isBold;
+        chunk.isTimestamp = true;
+        chunk.videoNum = videoNum;
+        chunk.timeStr = tStr;
+        paraChunks.push(chunk);
+
+        tsLastIdx = tsRegex.lastIndex;
+      }
+
+      if (tsLastIdx < textToParse.length) {
+        let contentStr = textToParse.substring(tsLastIdx);
+        if (isFirst && isBullet) {
+          contentStr = "•  " + contentStr;
+          isFirst = false;
+        }
+        const chunk = new TextChunk();
+        chunk.content = contentStr;
+        chunk.isBold = isBold;
+        paraChunks.push(chunk);
+      }
+    }
+
+    result.push(paraChunks);
+  }
+
+  return result;
+}
+
+export function formatAnswerToPlainText(answerText: string): string {
+  if (!answerText) {
+    return '';
+  }
+  const tsRegex = /\[video:\s*["']?([^"',\]]+)["']?\s*,\s*time:\s*["']?([^"',\s\]\*]+)["']?\]?/g;
+  let formatted = answerText.replace(tsRegex, (match: string, vNumStr: string, tStr: string): string => {
+    let videoNum = parseInt(vNumStr.trim());
+    if (isNaN(videoNum)) {
+      const code = vNumStr.trim().toUpperCase().charCodeAt(0);
+      if (code >= 65 && code <= 90) {
+        videoNum = code - 65 + 1;
+      } else {
+        videoNum = 1;
+      }
+    }
+    return `视频${videoNum}(${tStr.trim()})`;
+  });
+  
+  const lines = formatted.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const bulletMatch = lines[i].match(/^(\s*[*•-]\s+)/);
+    if (bulletMatch) {
+      lines[i] = "•  " + lines[i].substring(bulletMatch[0].length);
+    }
+  }
+  formatted = lines.join('\n');
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '$1');
+  return formatted;
+}
+
 export class ExampleVideoInfo {
   name: string = '';
   url: string = '';
@@ -173,6 +355,7 @@ struct SegmentDetailDialog {
   segment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
   @State remarkText: string = '';
   showSelectionActions: boolean = false;
+  @Prop jumpSeconds: number = 0;
   onUpdate: (remark: string) => void = (_remark: string): void => {};
   onDelete: () => void = (): void => {};
   onConfirmSelection: () => void = (): void => {};
@@ -205,6 +388,11 @@ struct SegmentDetailDialog {
         .autoPlay(true)
         .controls(true)
         .borderRadius(8)
+        .onPrepared((event) => {
+          if (this.jumpSeconds > 0) {
+            this.videoController.setCurrentTime(this.jumpSeconds);
+          }
+        })
 
       if (!this.showSelectionActions) {
         TextInput({ placeholder: '修改片段备注', text: this.remarkText })
@@ -308,6 +496,12 @@ struct WorkspaceDetail {
   // Active segment for detail view
   @State selectedSegment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
   @State selectedSegmentIndex: number = 0;
+  @State activeTaskVideoPaths: Array<string> = [];
+  @State @Watch('onJumpSecondsChange') jumpSeconds: number = 0;
+
+  onJumpSecondsChange(): void {
+    // Watcher to force recreate or pass value if needed, but in ArkTS @Prop will handle it
+  }
 
   rangeDialogController: CustomDialogController = new CustomDialogController({
     builder: VideoRangeDialog({
@@ -339,6 +533,15 @@ struct WorkspaceDetail {
       onConfirmSelection: (): void => {
         this.toggleSegmentSelection(this.selectedSegmentIndex, true);
       }
+    }),
+    autoCancel: true
+  })
+
+  timestampPreviewDialogController: CustomDialogController = new CustomDialogController({
+    builder: SegmentDetailDialog({
+      segment: this.selectedSegment,
+      showSelectionActions: false,
+      jumpSeconds: this.jumpSeconds
     }),
     autoCancel: true
   })
@@ -454,6 +657,27 @@ struct WorkspaceDetail {
     this.qaSegmentPreviewDialogController.open();
   }
 
+  handleTimestampClick(videoNumber: number, timeStr: string): void {
+    if (!this.activeTaskVideoPaths || this.activeTaskVideoPaths.length < videoNumber) {
+      promptAction.showToast({ message: '找不到对应的视频文件', duration: 1500 });
+      return;
+    }
+    const filepath = this.activeTaskVideoPaths[videoNumber - 1];
+    
+    const dummySeg = new WorkspaceVideoSegment();
+    dummySeg.video_name = `视频 ${videoNumber}`;
+    dummySeg.filepath = filepath;
+    dummySeg.start_offset = 0;
+    dummySeg.end_offset = 3600;
+    
+    this.selectedSegment = dummySeg;
+    this.selectedSegmentIndex = videoNumber - 1;
+    this.jumpSeconds = timeToSeconds(timeStr);
+    
+    this.timestampPreviewDialogController.open();
+    promptAction.showToast({ message: `已跳转到视频 ${videoNumber} 的 ${timeStr}`, duration: 1500 });
+  }
+
   async submitUpdateSegment(segmentId: number, remark: string): Promise<void> {
     class UpdatePayload {
       remark: string = '';
@@ -506,6 +730,8 @@ struct WorkspaceDetail {
     if (res.code === 0 && res.data) {
       const statusObj = JSON.parse(res.data) as Record<string, Object>;
       const progressList = statusObj['progress'] as Array<Record<string, Object>>;
+      const videoPaths = (statusObj['video_paths'] as Array<string>) || [];
+      this.activeTaskVideoPaths = videoPaths;
       this.updateProgress(progressList);
     }
   }
@@ -726,9 +952,11 @@ struct WorkspaceDetail {
         const answer = (statusObj['answer'] as string) || '';
         const error = (statusObj['error'] as string) || '';
         const progressList = statusObj['progress'] as Array<Record<string, Object>>;
+        const videoPaths = (statusObj['video_paths'] as Array<string>) || [];
         
         this.activeTaskStatus = status;
         this.activeTaskAnswer = answer ? answer : (error ? '错误: ' + error : '');
+        this.activeTaskVideoPaths = videoPaths;
         this.updateProgress(progressList);
         
         if (progressList && progressList.length > 0) {
@@ -987,11 +1215,37 @@ struct WorkspaceDetail {
                     .fontColor('#9CA3AF')
                     .alignSelf(ItemAlign.Start)
 
-                  Text(this.activeTaskAnswer ? this.activeTaskAnswer : '思考中...')
-                    .fontSize(14)
-                    .fontColor(this.activeTaskStatus === 'failed' ? '#EF4444' : '#1F2937')
+                  if (this.activeTaskAnswer) {
+                    Column({ space: 6 }) {
+                      ForEach(parseAnswerToChunks(this.activeTaskAnswer), (paraChunks: Array<TextChunk>): void => {
+                        Text() {
+                          ForEach(paraChunks, (chunk: TextChunk): void => {
+                            Span(chunk.content)
+                              .fontWeight(chunk.isBold ? FontWeight.Bold : FontWeight.Normal)
+                              .fontColor(chunk.isTimestamp ? '#3B82F6' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#1F2937'))
+                              .decoration(chunk.isTimestamp ? { type: TextDecorationType.Underline, color: '#3B82F6' } : { type: TextDecorationType.None })
+                              .onClick((): void => {
+                                if (chunk.isTimestamp) {
+                                  this.handleTimestampClick(chunk.videoNum, chunk.timeStr);
+                                }
+                              })
+                          }, (chunk: TextChunk, idx: number): string => idx.toString())
+                        }
+                        .width('100%')
+                        .fontSize(14)
+                        .lineHeight(20)
+                        .padding({ left: (paraChunks.length > 0 && paraChunks[0].content.startsWith('•  ')) ? 16 : 0 })
+                      }, (paraChunks: Array<TextChunk>, idx: number): string => idx.toString())
+                    }
                     .width('100%')
-                    .lineHeight(20)
+                    .alignItems(HorizontalAlign.Start)
+                  } else {
+                    Text('思考中...')
+                      .fontSize(14)
+                      .fontColor('#9CA3AF')
+                      .width('100%')
+                      .lineHeight(20)
+                  }
                 }
                 .width('100%')
                 .padding(15)
@@ -1306,7 +1560,7 @@ struct WorkspaceDetail {
                             .fontSize(15)
                             .fontColor($r('app.color.app_text_primary'))
 
-                          Text('A: ' + (record.status === 'processing' ? '分析中...' : (record.answer ? record.answer : record.status)))
+                          Text('A: ' + (record.status === 'processing' ? '分析中...' : (record.answer ? formatAnswerToPlainText(record.answer) : record.status)))
                             .fontColor(record.status === 'processing' ? '#007DFF' : $r('app.color.app_text_secondary'))
                             .fontSize(14)
 
