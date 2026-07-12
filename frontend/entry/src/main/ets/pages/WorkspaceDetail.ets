@@ -486,20 +486,7 @@ struct WorkspaceDetail {
       const msg = (item['message'] as string) || '';
       const data = (item['data'] as Record<string, Object>) || {};
 
-      if (stage === 'model_initialization') {
-        let g = groups.find(x => x.id === 'model_init');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'model_init';
-          g.title = '初始化推理服务';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
-      else if (stage === 'question_analysis') {
+      if (stage === 'question_analysis') {
         let g = groups.find(x => x.id === 'question_analysis');
         if (!g) {
           g = new ProgressGroup();
@@ -529,19 +516,6 @@ struct WorkspaceDetail {
           g.details = [msg];
         }
       }
-      else if (stage === 'slicing') {
-        let g = groups.find(x => x.id === 'slicing');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'slicing';
-          g.title = '视频片段加载';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
       else if (stage === 'sampling' && status === 'failed') {
         const video = (data['video'] as string) || '';
         const iter = data['iteration'] !== undefined ? ` (循环 ${data['iteration']})` : '';
@@ -568,10 +542,20 @@ struct WorkspaceDetail {
             groups.push(g);
           }
           g.isCompleted = true;
+          
+          const vTerm = data['v_term'] as boolean;
+          const vStatus = (data['status'] as string) || '';
+          let statusText = '继续探索';
+          if (vTerm || vStatus === 'desc_terminated') {
+            statusText = '已终止探索';
+          }
+          
           g.details = [
             `初始评分: ${data['score'] !== undefined ? data['score'] : '0.50'}`,
             `初始描述: ${data['description'] || ''}`,
-            `当前优先级: ${data['priority'] !== undefined ? data['priority'] : '0.50'}`
+            `当前优先级: ${data['priority'] !== undefined ? data['priority'] : '0.50'}`,
+            `视频终止探索: ${vTerm ? '是 (已锁定目标特征)' : '否'}`,
+            `探索状态: ${statusText}`
           ];
         } else {
           // Iteration phase description
@@ -586,13 +570,17 @@ struct WorkspaceDetail {
           g.isCompleted = true;
           
           const priority = data['iteration_data'] ? (data['iteration_data'] as Record<string, Object>)['priority'] : undefined;
+          const vTerm = data['v_term'] as boolean;
+          const gTerm = data['g_term'] as boolean;
           
           g.details = [
             `帧评分: ${data['new_score'] !== undefined ? data['new_score'] : '0.50'}`,
             `新增描述: ${data['description_snippet'] || ''}`,
             `视频评分: ${data['new_score'] !== undefined ? data['new_score'] : '0.50'}`,
             `加速度: ${data['acceleration'] !== undefined ? data['acceleration'] : '1'}`,
-            `优先级: ${priority !== undefined ? priority : '0.50'}`
+            `优先级: ${priority !== undefined ? priority : '0.50'}`,
+            `单视频终止探索: ${vTerm ? '是' : '否'}`,
+            `全局终止探索: ${gTerm ? '是' : '否'}`
           ];
         }
       }
@@ -619,6 +607,26 @@ struct WorkspaceDetail {
           `候选得分: ${data['candidate_scores'] !== undefined ? JSON.stringify(data['candidate_scores']) : '[]'}`
         ];
       }
+      else if (stage === 'finalization') {
+        let g = groups.find(x => x.id === 'finalization');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'finalization';
+          g.title = '分析探索总结';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        
+        const termReason = (data['term_reason'] as string) || '';
+        const iterCount = data['iteration_count'] !== undefined ? data['iteration_count'] as number : 0;
+        const numVideos = data['num_videos'] !== undefined ? data['num_videos'] as number : 1;
+        
+        g.details = [
+          `终止原因: ${termReason || msg || '探索完成'}`,
+          `分析视频数: ${numVideos}`,
+          `探索迭代次数: ${iterCount}`
+        ];
+      }
       else if (stage === 'answering') {
         let g = groups.find(x => x.id === 'answering');
         if (!g) {
@@ -628,9 +636,7 @@ struct WorkspaceDetail {
           groups.push(g);
         }
         g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
+        g.details = [];
       }
       else if (stage === 'system') {
         const id = 'sys_error';
@@ -871,21 +877,25 @@ struct WorkspaceDetail {
                           .margin({ right: 10 })
                       }
 
-                      Text(group.isCollapsed ? '▼' : '▲')
-                        .fontSize(12)
-                        .fontColor('#9CA3AF')
+                      if (group.id !== 'answering') {
+                        Text(group.isCollapsed ? '▼' : '▲')
+                          .fontSize(12)
+                          .fontColor('#9CA3AF')
+                      }
                     }
                     .width('100%')
                     .padding({ top: 12, bottom: 12, left: 15, right: 15 })
                     .backgroundColor('#F3F4F6')
                     .borderRadius(8)
                     .onClick((): void => {
-                      const newState = !group.isCollapsed;
-                      this.manualCollapsedState[group.id] = newState;
-                      this.progressGroups = this.parseProgressToGroups(this.activeTaskProgress);
+                      if (group.id !== 'answering') {
+                        const newState = !group.isCollapsed;
+                        this.manualCollapsedState[group.id] = newState;
+                        this.progressGroups = this.parseProgressToGroups(this.activeTaskProgress);
+                      }
                     })
 
-                    if (!group.isCollapsed) {
+                    if (!group.isCollapsed && group.id !== 'answering') {
                       Column({ space: 8 }) {
                         ForEach(group.details, (detail: string): void => {
                           Row() {

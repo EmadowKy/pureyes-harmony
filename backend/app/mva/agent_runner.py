@@ -367,7 +367,10 @@ class AgentRunner:
                 'video': v_name,
                 'description': initial_desc,
                 'score': score_new,
-                'priority': TextBank['videos'][v_name].get('priority', 0.0)
+                'priority': TextBank['videos'][v_name].get('priority', 0.0),
+                'v_term': v_term,
+                'g_term': g_term,
+                'status': TextBank['videos'][v_name].get('status', 'active')
             })
             
             process_logs['initialization'].append({
@@ -724,11 +727,22 @@ class AgentRunner:
             final_descriptions_list.append(f"{v_label}: {desc_text}")
         
         final_descriptions_str = "\n".join(final_descriptions_list)
+        
+        # Determine the termination reason to enrich progress timeline logs
+        term_reason = "探索完成：所有监控视频均已终止搜索探索"
+        if skip_iteration:
+            term_reason = "模型决策：判定此问题为常规对话，直接跳过视频搜索探索"
+        elif global_terminated:
+            term_reason = "探索完成：大模型策略触发全局终止信号，已锁定目标帧"
+        elif iteration_count >= max_iterations:
+            term_reason = "探索完成：已达到最大迭代探索次数限制"
             
         _emit_progress('finalization', 'completed', '已生成视频描述和最终候选帧', {
             'final_descriptions': final_descriptions_str,
             'num_videos': len(TextBank['videos']),
-            'frame_handler': 'final_frame_paths'
+            'frame_handler': 'final_frame_paths',
+            'term_reason': term_reason,
+            'iteration_count': iteration_count
         })
             
         if not final_frame_paths:
