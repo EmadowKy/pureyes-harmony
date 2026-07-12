@@ -172,8 +172,10 @@ struct SegmentDetailDialog {
   controller: CustomDialogController
   segment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
   @State remarkText: string = '';
+  showSelectionActions: boolean = false;
   onUpdate: (remark: string) => void = (_remark: string): void => {};
   onDelete: () => void = (): void => {};
+  onConfirmSelection: () => void = (): void => {};
 
   videoController: VideoController = new VideoController();
 
@@ -195,7 +197,7 @@ struct SegmentDetailDialog {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Video({
-        src: BASE_HOST + '/' + this.segment.filepath,
+        src: BASE_HOST + '/api/video/' + this.segment.filepath,
         controller: this.videoController
       })
         .width('100%')
@@ -204,44 +206,67 @@ struct SegmentDetailDialog {
         .controls(true)
         .borderRadius(8)
 
-      TextInput({ placeholder: '修改片段备注', text: this.remarkText })
-        .width('100%')
-        .height(45)
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_input_bg'))
-        .onChange((value: string): void => {
-          this.remarkText = value;
-        })
+      if (!this.showSelectionActions) {
+        TextInput({ placeholder: '修改片段备注', text: this.remarkText })
+          .width('100%')
+          .height(45)
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_input_bg'))
+          .onChange((value: string): void => {
+            this.remarkText = value;
+          })
+      }
 
       Row({ space: 10 }) {
-        Button('删除片段')
-          .backgroundColor('#EF4444')
-          .fontColor(Color.White)
-          .layoutWeight(1)
-          .height(40)
-          .onClick((): void => {
-            this.onDelete();
-            this.controller.close();
-          })
+        if (this.showSelectionActions) {
+          Button('确认选择')
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .height(40)
+            .onClick((): void => {
+              this.onConfirmSelection();
+              this.controller.close();
+            })
 
-        Button('修改备注')
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
-          .layoutWeight(1)
-          .height(40)
-          .onClick((): void => {
-            this.onUpdate(this.remarkText);
-            this.controller.close();
-          })
+          Button('取消')
+            .backgroundColor('#999999')
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .height(40)
+            .onClick((): void => {
+              this.controller.close();
+            })
+        } else {
+          Button('删除片段')
+            .backgroundColor('#EF4444')
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .height(40)
+            .onClick((): void => {
+              this.onDelete();
+              this.controller.close();
+            })
 
-        Button('关闭')
-          .backgroundColor('#999999')
-          .fontColor(Color.White)
-          .layoutWeight(1)
-          .height(40)
-          .onClick((): void => {
-            this.controller.close();
-          })
+          Button('修改备注')
+            .backgroundColor($r('app.color.app_primary'))
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .height(40)
+            .onClick((): void => {
+              this.onUpdate(this.remarkText);
+              this.controller.close();
+            })
+
+          Button('关闭')
+            .backgroundColor('#999999')
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .height(40)
+            .onClick((): void => {
+              this.controller.close();
+            })
+        }
       }
       .width('100%')
     }
@@ -282,6 +307,7 @@ struct WorkspaceDetail {
 
   // Active segment for detail view
   @State selectedSegment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
+  @State selectedSegmentIndex: number = 0;
 
   rangeDialogController: CustomDialogController = new CustomDialogController({
     builder: VideoRangeDialog({
@@ -301,6 +327,17 @@ struct WorkspaceDetail {
       },
       onDelete: (): void => {
         this.submitDeleteSegment(this.selectedSegment.id);
+      }
+    }),
+    autoCancel: true
+  })
+
+  qaSegmentPreviewDialogController: CustomDialogController = new CustomDialogController({
+    builder: SegmentDetailDialog({
+      segment: this.selectedSegment,
+      showSelectionActions: true,
+      onConfirmSelection: (): void => {
+        this.toggleSegmentSelection(this.selectedSegmentIndex, true);
       }
     }),
     autoCancel: true
@@ -409,6 +446,12 @@ struct WorkspaceDetail {
   showSegmentDetail(seg: WorkspaceVideoSegment): void {
     this.selectedSegment = seg;
     this.detailDialogController.open();
+  }
+
+  showQASegmentPreview(seg: WorkspaceVideoSegment, index: number): void {
+    this.selectedSegment = seg;
+    this.selectedSegmentIndex = index;
+    this.qaSegmentPreviewDialogController.open();
   }
 
   async submitUpdateSegment(segmentId: number, remark: string): Promise<void> {
@@ -763,9 +806,13 @@ struct WorkspaceDetail {
     }
   }
 
-  toggleSegmentSelection(index: number): void {
+  toggleSegmentSelection(index: number, forceSelect?: boolean): void {
     const s = this.segments[index];
-    s.isSelected = !s.isSelected;
+    if (forceSelect !== undefined) {
+      s.isSelected = forceSelect;
+    } else {
+      s.isSelected = !s.isSelected;
+    }
     this.segments = [...this.segments];
   }
 
@@ -1049,25 +1096,35 @@ struct WorkspaceDetail {
                     ForEach(this.segments, (seg: WorkspaceVideoSegment): void => {
                       ListItem() {
                         Row() {
-                          Column({ space: 5 }) {
-                            Text(seg.remark ? `${seg.video_name} (${seg.remark})` : seg.video_name)
-                              .fontSize(16)
+                          Image(BASE_HOST + '/api/video/thumbnail/' + seg.filepath)
+                            .width(100)
+                            .height(60)
+                            .borderRadius(6)
+                            .objectFit(ImageFit.Cover)
+                            .margin({ right: 12 })
+
+                          Column({ space: 4 }) {
+                            Text(seg.remark ? seg.remark : '未命名片段')
+                              .fontSize(15)
                               .fontWeight(FontWeight.Bold)
                               .fontColor($r('app.color.app_text_primary'))
-                              .maxLines(2)
+                              .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                            Text(`时间段: ${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s (时长: ${seg.duration.toFixed(1)}s)`)
-                              .fontSize(13)
-                              .fontColor($r('app.color.app_text_secondary'))
+                            Text('来自监控：' + seg.video_name)
+                              .fontSize(12)
+                              .fontColor('#9CA3AF')
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                            Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
+                              .fontSize(12)
+                              .fontColor('#9CA3AF')
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
                           }
                           .alignItems(HorizontalAlign.Start)
                           .layoutWeight(1)
-
-                          Image($r('app.media.startIcon'))
-                            .width(24)
-                            .height(24)
-                            .opacity(0.8)
                         }
                         .width('100%')
                         .padding(15)
@@ -1113,41 +1170,52 @@ struct WorkspaceDetail {
                 if (this.segments.length > 0) {
                   List({ space: 10 }) {
                     ForEach(this.segments, (seg: WorkspaceVideoSegment, index: number): void => {
-                      ListItem() {
+                       ListItem() {
                         Row() {
-                          Checkbox()
-                            .select(seg.isSelected)
-                            .selectedColor($r('app.color.app_primary'))
-                            .onChange((_val: boolean): void => {
-                              this.toggleSegmentSelection(index);
-                            })
+                          Image(BASE_HOST + '/api/video/thumbnail/' + seg.filepath)
+                            .width(100)
+                            .height(60)
+                            .borderRadius(6)
+                            .objectFit(ImageFit.Cover)
+                            .margin({ right: 12 })
 
                           Column({ space: 4 }) {
-                            Text(seg.remark ? `${seg.video_name} | ${seg.remark}` : seg.video_name)
-                              .fontSize(14)
+                            Text(seg.remark ? seg.remark : '未命名片段')
+                              .fontSize(15)
                               .fontWeight(FontWeight.Bold)
-                              .fontColor(seg.isSelected ? $r('app.color.app_primary') : $r('app.color.app_text_primary'))
+                              .fontColor(seg.isSelected ? '#3B82F6' : $r('app.color.app_text_primary'))
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                            Text(`时长: ${seg.duration.toFixed(1)}s [${seg.start_offset.toFixed(1)}s-${seg.end_offset.toFixed(1)}s]`)
+                            Text('来自监控：' + seg.video_name)
                               .fontSize(12)
-                              .fontColor($r('app.color.app_text_secondary'))
+                              .fontColor('#9CA3AF')
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                            Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
+                              .fontSize(12)
+                              .fontColor('#9CA3AF')
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
                           }
-                          .margin({ left: 10 })
                           .alignItems(HorizontalAlign.Start)
                           .layoutWeight(1)
                         }
                         .width('100%')
                         .padding(10)
-                        .backgroundColor(seg.isSelected ? '#F0F9FF' : $r('app.color.app_card_bg'))
+                        .backgroundColor(seg.isSelected ? '#EFF6FF' : $r('app.color.app_card_bg'))
                         .borderRadius(8)
                         .border({
-                          width: seg.isSelected ? 1.5 : 0,
-                          color: $r('app.color.app_primary')
+                          width: 1.5,
+                          color: seg.isSelected ? '#3B82F6' : Color.Transparent
                         })
                         .onClick((): void => {
-                          this.toggleSegmentSelection(index);
+                          if (seg.isSelected) {
+                            this.toggleSegmentSelection(index, false);
+                          } else {
+                            this.showQASegmentPreview(seg, index);
+                          }
                         })
                       }
                     })

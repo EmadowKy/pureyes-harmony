@@ -377,3 +377,46 @@ def live_stream_segment(monitor_id, filename):
     if filename.endswith(".ts"):
         response.headers["Cache-Control"] = "public, max-age=86400"
     return response
+
+
+@video_stream_bp.route('/thumbnail/<path:video_path>')
+def serve_thumbnail(video_path):
+    """
+    Generate or serve a thumbnail image for a video file.
+    GET /api/video/thumbnail/<path>
+    """
+    try:
+        safe_video_path = _normalize_video_path(video_path)
+        full_path = os.path.abspath(os.path.join(BACKEND_DIR, safe_video_path))
+
+        if not full_path.startswith(BACKEND_DIR + os.sep) and full_path != BACKEND_DIR:
+            abort(403, description="Access denied")
+
+        if not os.path.exists(full_path):
+            abort(404, description=f"Video not found: {safe_video_path}")
+
+        # The thumbnail will be stored alongside the video, changing extension to _thumb.jpg
+        thumb_path = os.path.splitext(full_path)[0] + "_thumb.jpg"
+
+        if not os.path.exists(thumb_path):
+            # Generate thumbnail on the fly using FFmpeg
+            ffmpeg_bin = get_ffmpeg_path("ffmpeg")
+            cmd = [
+                ffmpeg_bin, "-y",
+                "-ss", "0.000",
+                "-i", full_path,
+                "-vframes", "1",
+                "-q:v", "2",
+                "-f", "image2",
+                thumb_path
+            ]
+            print(f"[Thumbnail Generation] command: {' '.join(cmd)}")
+            subprocess.run(cmd, capture_output=True, timeout=5)
+
+        if os.path.exists(thumb_path):
+            return send_file(thumb_path, mimetype='image/jpeg')
+        else:
+            abort(500, description="Failed to generate thumbnail")
+    except Exception as e:
+        print(f"[Thumbnail Exception] {e}")
+        abort(500, description=str(e))
