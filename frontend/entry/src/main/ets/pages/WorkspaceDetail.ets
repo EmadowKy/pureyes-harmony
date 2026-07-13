@@ -1064,36 +1064,17 @@ struct WorkspaceDetail {
     Column() {
       // ===== Top Bar =====
       Row() {
-        Button('← 返回')
-          .backgroundColor('#666666')
-          .fontColor(Color.White)
-          .onClick((): void => {
-            if (this.pollIntervalId) {
-              clearInterval(this.pollIntervalId);
-              this.pollIntervalId = 0;
-            }
-            router.back();
-          })
-
-        Text(this.workspaceName)
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
-          .margin({ left: 12 })
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding(15)
-
-      if (this.activeTaskId !== '') {
-        // ===== Q&A Analysis Process / Detail View =====
-        Column({ space: 15 }) {
-          Row() {
-            Button('← 返回列表')
-              .fontSize(14)
-              .backgroundColor('#E5E7EB')
-              .fontColor('#374151')
-              .height(36)
+        if (this.activeTaskId !== '') {
+          // Inside Q&A detail view: show Back arrow and Home icon
+          Row({ space: 14 }) {
+            // Back Arrow Button (Polyline)
+            Polyline({ width: 18, height: 18 })
+              .points([[14, 2], [5, 9], [14, 16]])
+              .fill(Color.Transparent)
+              .stroke('#3B82F6')
+              .strokeWidth(2.5)
+              .strokeLineCap(LineCapStyle.Round)
+              .strokeLineJoin(LineJoinStyle.Round)
               .onClick((): void => {
                 if (this.pollIntervalId) {
                   clearInterval(this.pollIntervalId);
@@ -1104,17 +1085,87 @@ struct WorkspaceDetail {
                 this.questionText = '';
                 this.loadQARecords();
               })
-            Blank()
-            Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
-              .fontSize(12)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
-              .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
-              .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-              .borderRadius(12)
+
+            // Home Button (Polyline + Rect)
+            Column() {
+              Polyline({ width: 22, height: 10 })
+                .points([[0, 10], [11, 0], [22, 10]])
+                .fill(Color.Transparent)
+                .stroke('#3B82F6')
+                .strokeWidth(2.5)
+                .strokeLineCap(LineCapStyle.Round)
+                .strokeLineJoin(LineJoinStyle.Round)
+              Rect({ width: 16, height: 10 })
+                .fill(Color.Transparent)
+                .stroke('#3B82F6')
+                .strokeWidth(2.5)
+                .strokeLineJoin(LineJoinStyle.Round)
+                .margin({ top: -2.5 })
+            }
+            .alignItems(HorizontalAlign.Center)
+            .onClick((): void => {
+              if (this.pollIntervalId) {
+                clearInterval(this.pollIntervalId);
+                this.pollIntervalId = 0;
+              }
+              router.back();
+            })
           }
-          .width('90%')
-          .margin({ top: 5 })
+          .alignItems(VerticalAlign.Center)
+          .margin({ right: 14 })
+        } else {
+          // Inside Q&A list view: show Home button only
+          Column() {
+            Polyline({ width: 22, height: 10 })
+              .points([[0, 10], [11, 0], [22, 10]])
+              .fill(Color.Transparent)
+              .stroke('#3B82F6')
+              .strokeWidth(2.5)
+              .strokeLineCap(LineCapStyle.Round)
+              .strokeLineJoin(LineJoinStyle.Round)
+            Rect({ width: 16, height: 10 })
+              .fill(Color.Transparent)
+              .stroke('#3B82F6')
+              .strokeWidth(2.5)
+              .strokeLineJoin(LineJoinStyle.Round)
+              .margin({ top: -2.5 })
+          }
+          .alignItems(HorizontalAlign.Center)
+          .margin({ right: 14 })
+          .onClick((): void => {
+            if (this.pollIntervalId) {
+              clearInterval(this.pollIntervalId);
+              this.pollIntervalId = 0;
+            }
+            router.back();
+          })
+        }
+
+        // Title: "问答详情" or workspaceName
+        Text(this.activeTaskId !== '' ? '问答详情' : this.workspaceName)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+
+        if (this.activeTaskId !== '') {
+          // Status Badge on the right
+          Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
+            .fontSize(12)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
+            .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .borderRadius(12)
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+
+      if (this.activeTaskId !== '') {
+        // ===== Q&A Analysis Process / Detail View =====
+        Column({ space: 15 }) {
 
           Scroll(this.scroller) {
             Column({ space: 15 }) {
@@ -1742,13 +1793,27 @@ struct WorkspaceDetail {
           // ===== Bottom Tab Bar =====
           Row() {
             Column() {
-              Image(this.currentSubTab === 0 ? $r('app.media.startIcon') : $r('app.media.foreground'))
-                .width(22)
-                .height(22)
+              // Custom Video/Segment outline icon (1:1 aspect ratio)
+              Stack() {
+                Rect({ width: 22, height: 16 })
+                  .fill(Color.Transparent)
+                  .stroke(this.currentSubTab === 0 ? '#3B82F6' : '#9CA3AF')
+                  .strokeWidth(2)
+                  .strokeLineJoin(LineJoinStyle.Round)
+                Polygon({ width: 6, height: 8 })
+                  .points([[0, 0], [0, 8], [6, 4]])
+                  .fill(this.currentSubTab === 0 ? '#3B82F6' : '#9CA3AF')
+                  .margin({ left: 2 })
+              }
+              .width(22)
+              .height(22)
+              .margin({ bottom: 4 })
+
               Text('片段')
                 .fontSize(11)
                 .fontColor(this.currentSubTab === 0 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
             }
+            .alignItems(HorizontalAlign.Center)
             .layoutWeight(1)
             .onClick((): void => {
               this.currentSubTab = 0;
@@ -1758,13 +1823,28 @@ struct WorkspaceDetail {
             })
 
             Column() {
-              Image(this.currentSubTab === 1 ? $r('app.media.startIcon') : $r('app.media.foreground'))
-                .width(22)
-                .height(22)
+              // Custom Chat/Q&A outline icon (1:1 aspect ratio)
+              Stack() {
+                Rect({ width: 20, height: 14 })
+                  .fill(Color.Transparent)
+                  .stroke(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
+                  .strokeWidth(2)
+                  .strokeLineJoin(LineJoinStyle.Round)
+                  .borderRadius(2)
+                Polygon({ width: 5, height: 5 })
+                  .points([[5, 0], [0, 5], [5, 5]])
+                  .fill(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
+                  .offset({ x: -5, y: 7 })
+              }
+              .width(22)
+              .height(22)
+              .margin({ bottom: 4 })
+
               Text('问答')
                 .fontSize(11)
                 .fontColor(this.currentSubTab === 1 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
             }
+            .alignItems(HorizontalAlign.Center)
             .layoutWeight(1)
             .onClick((): void => {
               this.currentSubTab = 1;

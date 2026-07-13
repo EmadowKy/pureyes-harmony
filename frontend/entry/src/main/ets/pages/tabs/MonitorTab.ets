@@ -21,11 +21,23 @@ class AddMonitorPayload {
   stream_url: string = '';
 }
 
-const GRANULARITIES = [
-  { key: 'day', label: '天', stepSeconds: 86400 },
-  { key: 'hour', label: '时', stepSeconds: 3600 },
-  { key: 'minute', label: '分', stepSeconds: 60 },
-  { key: 'second', label: '秒', stepSeconds: 1 }
+class GranularityItem {
+  key: string = '';
+  label: string = '';
+  stepSeconds: number = 0;
+
+  constructor(key: string, label: string, stepSeconds: number) {
+    this.key = key;
+    this.label = label;
+    this.stepSeconds = stepSeconds;
+  }
+}
+
+const GRANULARITIES: Array<GranularityItem> = [
+  new GranularityItem('day', '天', 86400),
+  new GranularityItem('hour', '时', 3600),
+  new GranularityItem('minute', '分', 60),
+  new GranularityItem('second', '秒', 1)
 ];
 
 @CustomDialog
@@ -394,16 +406,14 @@ export struct MonitorTab {
                 this.loadTimeline(this.selectedTimeText, true);
               }
             })
-          ForEach(GRANULARITIES, (item: Record<string, Object>): void => {
-            const key = item['key'] as string;
-            const label = item['label'] as string;
-            Button(label)
-              .backgroundColor(this.granularity === key ? $r('app.color.app_primary') : $r('app.color.app_card_bg'))
-              .fontColor(this.granularity === key ? Color.White : $r('app.color.app_text_primary'))
+          ForEach(GRANULARITIES, (item: GranularityItem): void => {
+            Button(item.label)
+              .backgroundColor(this.granularity === item.key ? $r('app.color.app_primary') : $r('app.color.app_card_bg'))
+              .fontColor(this.granularity === item.key ? Color.White : $r('app.color.app_text_primary'))
               .onClick((): void => {
-                this.switchGranularity(key);
+                this.switchGranularity(item.key);
               })
-          })
+          }, (item: GranularityItem, idx: number): string => idx.toString())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16 })
