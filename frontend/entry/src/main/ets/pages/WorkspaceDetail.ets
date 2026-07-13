@@ -497,6 +497,7 @@ struct WorkspaceDetail {
   @State selectedSegment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
   @State selectedSegmentIndex: number = 0;
   @State activeTaskVideoPaths: Array<string> = [];
+  @State isVideosCollapsed: boolean = false;
   @State @Watch('onJumpSecondsChange') jumpSeconds: number = 0;
 
   onJumpSecondsChange(): void {
@@ -657,20 +658,28 @@ struct WorkspaceDetail {
     this.qaSegmentPreviewDialogController.open();
   }
 
+  findSegmentByFilepath(filepath: string): WorkspaceVideoSegment | null {
+    for (let i = 0; i < this.segments.length; i++) {
+      if (this.segments[i].filepath === filepath) {
+        return this.segments[i];
+      }
+    }
+    return null;
+  }
+
   handleTimestampClick(videoNumber: number, timeStr: string): void {
     if (!this.activeTaskVideoPaths || this.activeTaskVideoPaths.length < videoNumber) {
       promptAction.showToast({ message: '找不到对应的视频文件', duration: 1500 });
       return;
     }
     const filepath = this.activeTaskVideoPaths[videoNumber - 1];
+    const realSeg = this.findSegmentByFilepath(filepath);
+    if (realSeg === null) {
+      promptAction.showToast({ message: '该视频片段已删除，无法跳转播放', duration: 1500 });
+      return;
+    }
     
-    const dummySeg = new WorkspaceVideoSegment();
-    dummySeg.video_name = `视频 ${videoNumber}`;
-    dummySeg.filepath = filepath;
-    dummySeg.start_offset = 0;
-    dummySeg.end_offset = 3600;
-    
-    this.selectedSegment = dummySeg;
+    this.selectedSegment = realSeg;
     this.selectedSegmentIndex = videoNumber - 1;
     this.jumpSeconds = timeToSeconds(timeStr);
     
@@ -1027,6 +1036,13 @@ struct WorkspaceDetail {
       this.showCreateQA = false;
       this.questionText = '';
       
+      const paths: Array<string> = [];
+      for (let i = 0; i < selectedList.length; i++) {
+        paths.push(selectedList[i].filepath);
+      }
+      this.activeTaskVideoPaths = paths;
+      this.isVideosCollapsed = false;
+      
       this.loadQARecords();
       this.startPollingStatus(taskId);
     } else {
@@ -1120,6 +1136,109 @@ struct WorkspaceDetail {
               .backgroundColor(Color.White)
               .borderRadius(8)
               .shadow({ radius: 3, color: '#0D000000' })
+
+              // ===== Selected Videos Panel (collapsible) =====
+              if (this.activeTaskVideoPaths && this.activeTaskVideoPaths.length > 0) {
+                Column() {
+                  Row() {
+                    Text(`关联视频片段 (${this.activeTaskVideoPaths.length})`)
+                      .fontSize(13)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor('#9CA3AF')
+                      .layoutWeight(1)
+                    Text(this.isVideosCollapsed ? '展开 ▼' : '收起 ▲')
+                      .fontSize(12)
+                      .fontColor('#9CA3AF')
+                  }
+                  .width('100%')
+                  .padding({ top: 5, bottom: 5 })
+                  .onClick((): void => {
+                    this.isVideosCollapsed = !this.isVideosCollapsed;
+                  })
+
+                  if (!this.isVideosCollapsed) {
+                    Column() {
+                      ForEach(this.activeTaskVideoPaths, (filepath: string, index: number): void => {
+                        Stack({ alignContent: Alignment.TopEnd }) {
+                          Row() {
+                            if (this.findSegmentByFilepath(filepath) !== null) {
+                              Image(BASE_HOST + '/api/video/thumbnail/' + filepath)
+                                .width(100)
+                                .height(60)
+                                .borderRadius(6)
+                                .objectFit(ImageFit.Cover)
+                                .margin({ right: 12 })
+
+                              Column({ space: 4 }) {
+                                Text(this.findSegmentByFilepath(filepath)!.remark ? this.findSegmentByFilepath(filepath)!.remark : '未命名片段')
+                                  .fontSize(15)
+                                  .fontWeight(FontWeight.Bold)
+                                  .fontColor($r('app.color.app_text_primary'))
+                                  .maxLines(1)
+                                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                                Text('来自监控：' + this.findSegmentByFilepath(filepath)!.video_name)
+                                  .fontSize(12)
+                                  .fontColor('#9CA3AF')
+                                  .maxLines(1)
+                                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                                Text(`时间段：${this.findSegmentByFilepath(filepath)!.start_offset.toFixed(1)}s - ${this.findSegmentByFilepath(filepath)!.end_offset.toFixed(1)}s`)
+                                  .fontSize(12)
+                                  .fontColor('#9CA3AF')
+                                  .maxLines(1)
+                                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                              }
+                              .alignItems(HorizontalAlign.Start)
+                              .layoutWeight(1)
+                            } else {
+                              Column({ space: 5 }) {
+                                Text('该片段已删除')
+                                  .fontSize(15)
+                                  .fontWeight(FontWeight.Bold)
+                                  .fontColor('#EF4444')
+                              }
+                              .alignItems(HorizontalAlign.Start)
+                              .layoutWeight(1)
+                              .padding({ left: 10, right: 10, top: 15, bottom: 15 })
+                            }
+                          }
+                          .width('100%')
+                          .padding(12)
+                          .backgroundColor($r('app.color.app_card_bg'))
+                          .borderRadius(10)
+                          .shadow({ radius: 3, color: $r('app.color.app_shadow') })
+                          .onClick((): void => {
+                            const seg = this.findSegmentByFilepath(filepath);
+                            if (seg !== null) {
+                              this.showSegmentDetail(seg);
+                            } else {
+                              promptAction.showToast({ message: '该片段已删除，无法查看', duration: 1500 });
+                            }
+                          })
+
+                          Text(`视频 ${index + 1}`)
+                            .fontSize(10)
+                            .fontWeight(FontWeight.Bold)
+                            .fontColor(Color.White)
+                            .backgroundColor('#3B82F6')
+                            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                            .borderRadius({ bottomLeft: 8, topRight: 8 })
+                        }
+                        .width('100%')
+                        .margin({ bottom: 8 })
+                      }, (filepath: string, idx: number): string => idx.toString())
+                    }
+                    .width('100%')
+                    .margin({ top: 10 })
+                  }
+                }
+                .width('100%')
+                .padding(10)
+                .backgroundColor(Color.White)
+                .borderRadius(8)
+                .shadow({ radius: 3, color: '#0D000000' })
+              }
 
               if (this.progressGroups.length > 0) {
                 ForEach(this.progressGroups, (group: ProgressGroup, idx: number): void => {

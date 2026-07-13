@@ -370,6 +370,28 @@ def get_qa_status(task_id):
                 video_paths = entry.get("data", {}).get("video_paths", [])
                 break
                 
+        # Database Fallback for older historical records
+        if not video_paths:
+            from app.models.qa_record import QAVideoSelection
+            from app.models.workspace import WorkspaceVideoSegment
+            from datetime import datetime
+            base_time = datetime(2026, 6, 27, 0, 0, 0)
+            sels = QAVideoSelection.query.filter_by(record_id=task_id).all()
+            for s in sels:
+                start_offset = (s.start_time - base_time).total_seconds()
+                end_offset = (s.end_time - base_time).total_seconds()
+                seg = WorkspaceVideoSegment.query.filter(
+                    WorkspaceVideoSegment.workspace_id == record.workspace_id,
+                    WorkspaceVideoSegment.start_offset >= start_offset - 0.5,
+                    WorkspaceVideoSegment.start_offset <= start_offset + 0.5,
+                    WorkspaceVideoSegment.end_offset >= end_offset - 0.5,
+                    WorkspaceVideoSegment.end_offset <= end_offset + 0.5
+                ).first()
+                if seg:
+                    video_paths.append(seg.filepath)
+                else:
+                    video_paths.append(f"deleted_placeholder_{s.id}")
+                    
         return success(data={
             "status": record.status,
             "progress": progress_data,
