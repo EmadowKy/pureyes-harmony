@@ -24,12 +24,21 @@ class UserGroupApiTest(unittest.TestCase):
         cls.app.config["TESTING"] = True
         cls.client = cls.app.test_client()
 
+        from app.monitors import routes as monitor_routes
+        cls.recordings_base = Path(_tmpdir.name) / "recordings"
+        monitor_routes.RECORDINGS_BASE = str(cls.recordings_base)
+        monitor_routes.start_recording = lambda monitor_id, stream_url: True
+
     @classmethod
     def tearDownClass(cls):
         with cls.app.app_context():
             db.session.remove()
+            db.engine.dispose()
             db.drop_all()
-        _tmpdir.cleanup()
+        try:
+            _tmpdir.cleanup()
+        except PermissionError:
+            pass
 
     def auth_headers(self, emp_id, password):
         response = self.client.post(
@@ -158,6 +167,70 @@ class UserGroupApiTest(unittest.TestCase):
 
         visible_profile = self.client.get("/api/users/leader", headers=member_headers)
         self.assertEqual(visible_profile.status_code, 200, visible_profile.get_json())
+
+    def test_monitor_creation_is_creator_only_and_history_uses_recordings(self):
+        self.create_user("monitor_leader", "Monitor Leader")
+        self.create_user("monitor_member", "Monitor Member")
+        leader_headers = self.auth_headers("monitor_leader", "pass1234")
+        member_headers = self.auth_headers("monitor_member", "pass1234")
+
+        group_response = self.client.post(
+            "/api/groups/",
+            headers=leader_headers,
+            json={"name": "Camera Team"},
+        )
+        self.assertEqual(group_response.status_code, 201, group_response.get_json())
+        group_id = group_response.get_json()["data"]["id"]
+
+        invite_response = self.client.post(
+            f"/api/groups/{group_id}/invite",
+            headers=leader_headers,
+            json={"emp_id": "monitor_member"},
+        )
+        self.assertEqual(invite_response.status_code, 201, invite_response.get_json())
+
+        accept_response = self.client.post(
+            f"/api/groups/{group_id}/respond",
+            headers=member_headers,
+            json={"action": "accept"},
+        )
+        self.assertEqual(accept_response.status_code, 200, accept_response.get_json())
+
+        forbidden_create = self.client.post(
+            f"/api/monitors/{group_id}",
+            headers=member_headers,
+            json={"name": "Gate Camera", "stream_url": "rtsp://example/live"},
+        )
+        self.assertEqual(forbidden_create.status_code, 403, forbidden_create.get_json())
+
+        allowed_create = self.client.post(
+            f"/api/monitors/{group_id}",
+            headers=leader_headers,
+            json={"name": "Gate Camera", "stream_url": "rtsp://example/live"},
+        )
+        self.assertEqual(allowed_create.status_code, 201, allowed_create.get_json())
+        monitor_id = allowed_create.get_json()["data"]["id"]
+
+        recordings_dir = self.recordings_base / str(monitor_id)
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+        recording_name = "20260712_120000.mp4"
+        (recordings_dir / recording_name).write_bytes(b"")
+
+        history = self.client.get(
+            f"/api/monitors/{monitor_id}/history?anchor=2026-07-12T12:00:30&granularity=minute&window=2",
+            headers=member_headers,
+        )
+        self.assertEqual(history.status_code, 200, history.get_json())
+        payload = history.get_json()["data"]
+        self.assertEqual(payload["selected_record"]["filename"], recording_name)
+        self.assertTrue(payload["records"])
+
+        playback = self.client.get(
+            f"/api/monitors/{monitor_id}/playback?time=2026-07-12T12:00:30",
+            headers=member_headers,
+        )
+        self.assertEqual(playback.status_code, 200, playback.get_json())
+        self.assertEqual(playback.get_json()["data"]["record"]["filename"], recording_name)
 
 
 if __name__ == "__main__":
