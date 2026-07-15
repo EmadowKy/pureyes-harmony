@@ -14,6 +14,9 @@ export class WorkspaceVideoSegment {
   filepath: string = '';
   created_at: string = '';
   isSelected: boolean = false; // UI selection state
+  status: string = 'pending';
+  progress: number = 0;
+  error_msg: string = '';
 }
 
 export class TextChunk {
@@ -568,6 +571,16 @@ struct WorkspaceDetail {
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const mapped: Array<WorkspaceVideoSegment> = [];
+      let hasProcessing = false;
+      
+      // 记录用户当前已经在 UI 中勾选了哪些片段
+      const selectedIds = new Set<number>();
+      for (let i = 0; i < this.segments.length; i++) {
+        if (this.segments[i].isSelected) {
+          selectedIds.add(this.segments[i].id);
+        }
+      }
+
       for (let i = 0; i < listObj.length; i++) {
         const item = listObj[i];
         const s = new WorkspaceVideoSegment();
@@ -580,9 +593,28 @@ struct WorkspaceDetail {
         s.remark = (item['remark'] as string) || '';
         s.filepath = item['filepath'] as string;
         s.created_at = item['created_at'] as string;
+        s.status = (item['status'] as string) || 'pending';
+        s.progress = (item['progress'] as number) || 0;
+        s.error_msg = (item['error_msg'] as string) || '';
+        
+        // 恢复之前已被勾选的状态
+        if (selectedIds.has(s.id)) {
+          s.isSelected = true;
+        }
+
+        if (s.status === 'processing' || s.status === 'pending') {
+          hasProcessing = true;
+        }
         mapped.push(s);
       }
       this.segments = mapped;
+      
+      // 如果存在尚未处理完毕的片段，则进行每 2 秒一次的自动轮询
+      if (hasProcessing) {
+        setTimeout(() => {
+          this.loadSegments();
+        }, 2000);
+      }
     } else {
       this.segments = [];
     }
@@ -764,7 +796,78 @@ struct WorkspaceDetail {
       const msg = (item['message'] as string) || '';
       const data = (item['data'] as Record<string, Object>) || {};
 
-      if (stage === 'question_analysis') {
+      // ==========================================
+      // MVA V2 算法引擎阶段匹配
+      // ==========================================
+      if (stage === 'metadata') {
+        let g = groups.find(x => x.id === 'metadata');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'metadata';
+          g.title = '任务初始化';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'slicing') {
+        let g = groups.find(x => x.id === 'slicing');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'slicing';
+          g.title = '视频片段物理裁剪';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'model_initialization') {
+        let g = groups.find(x => x.id === 'model_initialization');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'model_initialization';
+          g.title = '按需分析引擎就绪';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'jit_ingestion') {
+        let g = groups.find(x => x.id === 'jit_ingestion');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'jit_ingestion';
+          g.title = '时空特征提取';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      else if (stage === 'reasoning') {
+        let g = groups.find(x => x.id === 'reasoning');
+        if (!g) {
+          g = new ProgressGroup();
+          g.id = 'reasoning';
+          g.title = '多模态推演与闭环纠错';
+          groups.push(g);
+        }
+        g.isCompleted = (status === 'completed');
+        if (msg) {
+          g.details.push(msg);
+        }
+      }
+      // ==========================================
+      // 旧版 V1 算法阶段兼容匹配
+      // ==========================================
+      else if (stage === 'question_analysis') {
         let g = groups.find(x => x.id === 'question_analysis');
         if (!g) {
           g = new ProgressGroup();
@@ -1541,11 +1644,32 @@ struct WorkspaceDetail {
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                            Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
-                              .fontSize(12)
-                              .fontColor('#9CA3AF')
-                              .maxLines(1)
-                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            if (seg.status === 'processing' || seg.status === 'pending') {
+                              Row() {
+                                Progress({ value: seg.progress, total: 100, type: ProgressType.Linear })
+                                  .width('60%')
+                                  .height(6)
+                                  .color($r('app.color.app_primary'))
+                                  .margin({ right: 8 })
+                                Text(`预分析中 ${seg.progress}%`)
+                                  .fontSize(10)
+                                  .fontColor($r('app.color.app_primary'))
+                              }
+                              .width('100%')
+                              .alignItems(VerticalAlign.Center)
+                            } else if (seg.status === 'failed') {
+                              Text('预分析失败: ' + seg.error_msg)
+                                .fontSize(11)
+                                .fontColor(Color.Red)
+                                .maxLines(1)
+                                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            } else {
+                              Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
+                                .fontSize(12)
+                                .fontColor('#9CA3AF')
+                                .maxLines(1)
+                                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            }
                           }
                           .alignItems(HorizontalAlign.Start)
                           .layoutWeight(1)
@@ -1617,11 +1741,21 @@ struct WorkspaceDetail {
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                            Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
-                              .fontSize(12)
-                              .fontColor('#9CA3AF')
-                              .maxLines(1)
-                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            if (seg.status === 'processing' || seg.status === 'pending') {
+                              Text(`预分析中 (${seg.progress}%)`)
+                                .fontSize(11)
+                                .fontColor($r('app.color.app_primary'))
+                            } else if (seg.status === 'failed') {
+                              Text('预分析失败')
+                                .fontSize(11)
+                                .fontColor(Color.Red)
+                            } else {
+                              Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
+                                .fontSize(12)
+                                .fontColor('#9CA3AF')
+                                .maxLines(1)
+                                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            }
                           }
                           .alignItems(HorizontalAlign.Start)
                           .layoutWeight(1)
@@ -1630,11 +1764,16 @@ struct WorkspaceDetail {
                         .padding(10)
                         .backgroundColor(seg.isSelected ? '#EFF6FF' : $r('app.color.app_card_bg'))
                         .borderRadius(8)
+                        .opacity(seg.status === 'completed' ? 1.0 : 0.5) // 未分析完置灰
                         .border({
                           width: 1.5,
                           color: seg.isSelected ? '#3B82F6' : Color.Transparent
                         })
                         .onClick((): void => {
+                          if (seg.status !== 'completed') {
+                            promptAction.showToast({ message: '该片段仍在分析预处理中，暂不可选择提问' });
+                            return;
+                          }
                           if (seg.isSelected) {
                             this.toggleSegmentSelection(index, false);
                           } else {

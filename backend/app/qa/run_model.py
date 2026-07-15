@@ -8,19 +8,24 @@ project_root = os.path.dirname(qa_dir)
 sys.path.append(project_root)
 
 from typing import List, Dict, Any
-from mva.agent_runner import AgentRunner
+
+# ==========================================
+# MVA V2: 按需即时处理引擎 (替换旧版 AgentRunner)
+# ==========================================
+from app.mva_v2.runner import MVA2Runner
 
 def ask_model(question: str, video_paths: List[str], config_path: str, 
               enable_memory_optimization: bool = True, 
               progress_callback=None) -> Dict[str, Any]:
     """
-    使用多视频理解模型分析多个视频。
-    将所有视频一次性传递给模型进行真正的多视频联合分析和对比。
+    使用 MVA V2 按需即时处理引擎分析多个视频片段。
+    
+    接口契约与旧版完全一致，前端和路由层无需任何修改。
     
     Args:
         question (str): 要分析的问题。
-        video_paths (List[str]): 视频文件的相对路径列表（例如 'example/1.mp4'）。
-        config_path (str): 模型配置文件的路径。
+        video_paths (List[str]): 视频文件的相对路径列表（例如 'storage/slices/xxx.mp4'）。
+        config_path (str): 模型配置文件的路径（保留兼容，MVA V2 暂不使用）。
         enable_memory_optimization (bool): 是否启用垃圾回收优化。
 
     Returns:
@@ -38,18 +43,18 @@ def ask_model(question: str, video_paths: List[str], config_path: str,
     }
 
     try:
-        agent_runner = AgentRunner(config_path=config_path, device_id=0)
-        result = agent_runner.run_on_sample(sample, video_base_dir=backend_dir, progress_callback=progress_callback)
+        runner = MVA2Runner()
+        result = runner.run_on_sample(sample, video_base_dir=backend_dir, progress_callback=progress_callback)
 
         if result.get("success", True) is False:
-            print(f"[ERROR] 多视频分析失败: {result.get('error', '未知错误')}")
+            print(f"[ERROR] MVA V2 分析失败: {result.get('error', '未知错误')}")
 
         if enable_memory_optimization:
             gc.collect()
 
         return result
     except Exception as e:
-        print(f"[ERROR] 处理视频时出错: {e}")
+        print(f"[ERROR] MVA V2 处理视频时出错: {e}")
         import traceback
         traceback.print_exc()
         return {"error": str(e), "success": False}

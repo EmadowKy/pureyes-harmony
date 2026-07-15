@@ -19,3 +19,25 @@ PyYAML>=6.0.1
 # Utilities
 requests>=2.31.0
 python-dotenv==1.0.1
+
+# ==========================================
+# MVA V2 - 按需即时处理引擎 (JIT Pipeline)
+# ==========================================
+
+# 目标检测 (YOLOv8-Nano, 首次运行自动下载权重)
+ultralytics>=8.2.0
+
+# 多目标追踪 (内置 ByteTrack 算法)
+supervision>=0.21.0
+
+# ONNX 推理引擎 (加载 OSNet ReID 模型, 纯 CPU 极速推理)
+onnxruntime>=1.17.0
+
+# 语义嵌入 (CLIP 文本/图像向量提取)
+transformers>=4.40.0
+
+# 本地嵌入式向量数据库 (时空特征存储与检索)
+lancedb>=0.6.0
+
+# 结构化输出约束 (Agent 路由策略与反馈格式)
+pydantic>=2.0.0

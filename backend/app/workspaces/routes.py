@@ -55,6 +55,51 @@ from flask import current_app
 # Global in-memory running tasks registry
 running_tasks = {}
 
+def extract_segment_features_bg(app, filepath, video_id, duration):
+    with app.app_context():
+        # 获取对应的数据库记录，设置状态为 processing
+        seg = WorkspaceVideoSegment.query.filter_by(filepath=filepath).first()
+        if seg:
+            seg.status = "processing"
+            seg.progress = 0
+            db.session.commit()
+            
+        try:
+            import asyncio
+            from app.mva_v2.database import SpatiotemporalDB
+            from app.mva_v2.pipeline import JITVideoPipeline
+            
+            db_client = SpatiotemporalDB()
+            
+            # 定义更新数据库进度的回调函数
+            def progress_callback(pct):
+                db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({"progress": pct})
+                db.session.commit()
+
+            print(f"[BG FEATURE EXTRACTION] Starting JIT feature extraction for {video_id}...")
+            pipeline = JITVideoPipeline(db_client)
+            
+            BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            abs_filepath = os.path.join(BACKEND_DIR, filepath)
+            
+            asyncio.run(pipeline.process_clip(abs_filepath, video_id, 0.0, duration, progress_callback=progress_callback))
+            
+            # 更新状态为 completed
+            db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({
+                "status": "completed",
+                "progress": 100
+            })
+            db.session.commit()
+            print(f"[BG FEATURE EXTRACTION] Successfully processed {video_id}.")
+            
+        except Exception as e:
+            print(f"[BG FEATURE EXTRACTION ERROR] Failed to extract features for {video_id}: {e}")
+            db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({
+                "status": "failed",
+                "error_msg": str(e)
+            })
+            db.session.commit()
+
 def process_qa_thread(app, task_id, question, video_paths):
     with app.app_context():
         try:
@@ -75,11 +120,11 @@ def process_qa_thread(app, task_id, question, video_paths):
             running_tasks[task_id]['progress'].append(slice_completed)
             running_tasks[task_id]['progress_queue'].put(slice_completed)
 
-            # Stage 2: Model Initialization
+            # Stage 2: MVA V2 Engine Initialization
             model_init = {
                 "stage": "model_initialization",
                 "status": "started",
-                "message": "获取大模型 API 配置并启动服务中..."
+                "message": "MVA V2 按需分析引擎初始化中..."
             }
             running_tasks[task_id]['progress'].append(model_init)
             running_tasks[task_id]['progress_queue'].put(model_init)
@@ -87,12 +132,13 @@ def process_qa_thread(app, task_id, question, video_paths):
             record = QARecord.query.get(task_id)
             if not record:
                 raise RuntimeError("QA 记录未找到。")
-            
+
             from app.models.user import User
             creator = User.query.filter_by(emp_id=record.creator_id).first()
             if not creator or not creator.llm_api_key or not creator.llm_base_url:
                 raise RuntimeError("未配置大模型 API 参数，请先到‘我的’页面配置 API KEY 和 BASE URL。")
-            
+
+            # 配置 api_config 供后端的 Qwen_VL 调用
             import sys
             import importlib
             mva_utils = importlib.import_module("app.mva.utils")
@@ -103,12 +149,13 @@ def process_qa_thread(app, task_id, question, video_paths):
             api_config.base_url = creator.llm_base_url
             api_config.model = creator.llm_model
             api_config.task_id = task_id
-            
-            # Attempt to import ask_model
+            api_config.is_final_answer = True
+
+            # Import MVA V2 ask_model (interface contract identical to old version)
             try:
                 from app.qa.run_model import ask_model
             except Exception as import_err:
-                raise RuntimeError(f"大模型环境或依赖库导入失败。底层错误: {str(import_err)}")
+                raise RuntimeError(f"MVA V2 引擎依赖库导入失败: {str(import_err)}")
 
             config_path = os.path.join(app.root_path, "../configs/model.yaml")
             
@@ -132,7 +179,7 @@ def process_qa_thread(app, task_id, question, video_paths):
                 running_tasks[task_id]['progress'].append(prog_entry)
                 running_tasks[task_id]['progress_queue'].put(prog_entry)
 
-            # Call real ask_model from mva runner
+            # Call MVA V2 ask_model
             result = ask_model(
                 question=question,
                 video_paths=video_paths,
@@ -268,6 +315,10 @@ def submit_qa(workspace_id):
         segment = WorkspaceVideoSegment.query.filter_by(id=seg_id, workspace_id=workspace_id).first()
         if not segment:
             return fail(message=f"segment {seg_id} not found in this workspace", code=5011, http_status=404)
+        
+        # 校验分析状态：提问时不可选择未分析完的片段
+        if segment.status != "completed":
+            return fail(message=f"片段 '{segment.video_name}' (ID: {seg_id}) 仍在分析预处理中 ({segment.progress}%)，请稍候再提问", code=5012, http_status=400)
         
         video_paths.append(segment.filepath)
         
@@ -541,6 +592,15 @@ def create_video_segment(workspace_id):
         )
         db.session.add(segment)
         db.session.commit()
+
+        # Trigger background JIT feature extraction immediately after slicing
+        app = current_app._get_current_object()
+        t_analysis = threading.Thread(
+            target=extract_segment_features_bg,
+            args=(app, segment.filepath, os.path.basename(segment.filepath), segment.duration)
+        )
+        t_analysis.daemon = True
+        t_analysis.start()
 
         return success(message="segment created", data=segment.to_dict(), http_status=201)
 

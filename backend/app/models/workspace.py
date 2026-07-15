@@ -32,6 +32,11 @@ class WorkspaceVideoSegment(db.Model):
     remark = db.Column(db.String(256), nullable=True)
     filepath = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # 新增特征提取状态与进度字段
+    status = db.Column(db.String(32), default="pending", nullable=False)  # pending, processing, completed, failed
+    progress = db.Column(db.Integer, default=0, nullable=False)            # 0 - 100
+    error_msg = db.Column(db.String(512), nullable=True)
 
     def to_dict(self):
         return {
@@ -43,5 +48,8 @@ class WorkspaceVideoSegment(db.Model):
             "duration": self.duration,
             "remark": self.remark,
             "filepath": self.filepath,
-            "created_at": self.created_at.isoformat() + "Z"
+            "created_at": self.created_at.isoformat() + "Z",
+            "status": self.status,
+            "progress": self.progress,
+            "error_msg": self.error_msg
         }
