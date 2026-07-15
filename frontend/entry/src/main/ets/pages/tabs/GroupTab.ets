@@ -1,4 +1,4 @@
-﻿import { HttpUtil } from '../../utils/http'
+import { HttpUtil } from '../../utils/http'
 import promptAction from '@ohos.promptAction'
 
 export class MemberInfo {
@@ -26,49 +26,6 @@ class InvitePayload {
 
 class GroupNamePayload {
   name: string = '';
-}
-
-@CustomDialog
-export struct InviteMemberDialog {
-  controller: CustomDialogController
-  @State empId: string = '';
-  confirm: (empId: string) => void = (_empId: string): void => {};
-
-  build() {
-    Column({ space: 15 }) {
-      Text('邀请新成员')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
-
-      TextInput({ placeholder: '输入对方工号', text: this.empId })
-        .onChange((val: string): void => {
-          this.empId = val;
-        })
-        .height(40)
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_input_bg'))
-
-      Row({ space: 20 }) {
-        Button('取消')
-          .onClick((): void => {
-            this.controller.close();
-          })
-          .backgroundColor(Color.Gray)
-
-        Button('发送邀请')
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
-          .onClick((): void => {
-            this.confirm(this.empId);
-            this.controller.close();
-          })
-      }
-      .margin({ top: 10 })
-    }
-    .padding(20)
-    .width('90%')
-  }
 }
 
 @CustomDialog
@@ -119,16 +76,12 @@ export struct GroupTab {
   @Prop @Watch('onGroupChange') groupId: number = 0;
   @State group: GroupDetail = new GroupDetail();
   @State members: Array<MemberInfo> = [];
+  @State inviteCandidates: Array<MemberInfo> = [];
+  @State selectedMember: MemberInfo = new MemberInfo();
+  @State inviteKeyword: string = '';
+  @State selectedInviteEmpId: string = '';
+  @State showMemberDetail: boolean = false;
   @State isLoading: boolean = false;
-
-  inviteDialogController: CustomDialogController = new CustomDialogController({
-    builder: InviteMemberDialog({
-      confirm: (empId: string): void => {
-        this.submitInvite(empId);
-      }
-    }),
-    autoCancel: true
-  })
 
   renameDialogController: CustomDialogController = new CustomDialogController({
     builder: RenameGroupDialog({
@@ -144,7 +97,35 @@ export struct GroupTab {
   }
 
   onGroupChange(): void {
+    this.resetInviteState();
+    this.closeMemberDetail();
     this.loadGroup();
+  }
+
+  resetInviteState(): void {
+    this.inviteKeyword = '';
+    this.selectedInviteEmpId = '';
+    this.inviteCandidates = [];
+  }
+
+  roleLabel(role: string): string {
+    if (role === 'super_admin') {
+      return '超级管理员';
+    }
+    if (role === 'admin') {
+      return '管理员';
+    }
+    return '普通用户';
+  }
+
+  statusLabel(member: MemberInfo): string {
+    if (member.is_creator) {
+      return '组长';
+    }
+    if (member.status === 'pending') {
+      return '待确认';
+    }
+    return '成员';
   }
 
   parseMember(item: Record<string, Object>): MemberInfo {
@@ -159,10 +140,20 @@ export struct GroupTab {
     return m;
   }
 
+  isKnownMember(empId: string): boolean {
+    for (let i = 0; i < this.members.length; i++) {
+      if (this.members[i].emp_id === empId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async loadGroup(): Promise<void> {
     if (!this.groupId) {
       this.group = new GroupDetail();
       this.members = [];
+      this.resetInviteState();
       return;
     }
 
@@ -206,8 +197,49 @@ export struct GroupTab {
     }
   }
 
-  async submitInvite(empId: string): Promise<void> {
-    const targetEmpId = empId.trim();
+  async searchInviteCandidates(keyword: string): Promise<void> {
+    this.inviteKeyword = keyword;
+    this.selectedInviteEmpId = '';
+
+    const nextKeyword = keyword.trim();
+    if (!this.group.is_creator || !nextKeyword) {
+      this.inviteCandidates = [];
+      return;
+    }
+
+    const res = await HttpUtil.get(`/users/search?keyword=${encodeURIComponent(nextKeyword)}`);
+    if (this.inviteKeyword.trim() !== nextKeyword) {
+      return;
+    }
+
+    if (res.code === 0 && res.data) {
+      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      const candidates: Array<MemberInfo> = [];
+      for (let i = 0; i < listObj.length && candidates.length < 5; i++) {
+        const candidate = this.parseMember(listObj[i]);
+        if (candidate.emp_id && !this.isKnownMember(candidate.emp_id)) {
+          candidates.push(candidate);
+        }
+      }
+      this.inviteCandidates = candidates;
+    } else {
+      this.inviteCandidates = [];
+    }
+  }
+
+  selectInviteCandidate(candidate: MemberInfo): void {
+    this.selectedInviteEmpId = candidate.emp_id;
+    this.inviteKeyword = candidate.emp_id;
+    this.inviteCandidates = [candidate];
+  }
+
+  async submitInvite(empId?: string): Promise<void> {
+    if (!this.group.is_creator) {
+      promptAction.showToast({ message: '只有组长可以邀请成员', duration: 2000 });
+      return;
+    }
+
+    const targetEmpId = (empId || this.selectedInviteEmpId || this.inviteKeyword).trim();
     if (!targetEmpId) {
       promptAction.showToast({ message: '请输入工号', duration: 2000 });
       return;
@@ -218,6 +250,7 @@ export struct GroupTab {
     const res = await HttpUtil.post(`/groups/${this.groupId}/invite`, payload);
     if (res.code === 0) {
       promptAction.showToast({ message: '邀请已发送', duration: 2000 });
+      this.resetInviteState();
       this.loadGroup();
     } else {
       promptAction.showToast({ message: res.message || '邀请失败', duration: 2000 });
@@ -265,98 +298,242 @@ export struct GroupTab {
     }
   }
 
-  build() {
-    Column() {
+  openMemberDetail(member: MemberInfo): void {
+    this.selectedMember = member;
+    this.showMemberDetail = true;
+  }
+
+  closeMemberDetail(): void {
+    this.selectedMember = new MemberInfo();
+    this.showMemberDetail = false;
+  }
+
+  @Builder DetailRow(label: string, value: string) {
+    Row({ space: 12 }) {
+      Text(label)
+        .width(70)
+        .fontSize(13)
+        .fontColor($r('app.color.app_text_secondary'))
+
+      Text(value.length > 0 ? value : '未填写')
+        .fontSize(14)
+        .fontColor($r('app.color.app_text_primary'))
+        .layoutWeight(1)
+        .textAlign(TextAlign.End)
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor($r('app.color.app_card_subtle_bg'))
+    .borderRadius(8)
+  }
+
+  @Builder MemberDetailOverlay() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#66000000')
+        .onClick((): void => {
+          this.closeMemberDetail();
+        })
+
+      Column({ space: 14 }) {
+        Row({ space: 12 }) {
+          Image(this.selectedMember.avatar ? this.selectedMember.avatar : $r('app.media.foreground'))
+            .width(58)
+            .height(58)
+            .borderRadius(29)
+            .backgroundColor($r('app.color.app_card_subtle_bg'))
+
+          Column({ space: 4 }) {
+            Text(this.selectedMember.name || this.selectedMember.emp_id)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+            Text(this.statusLabel(this.selectedMember))
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Button('关闭')
+            .height(34)
+            .backgroundColor($r('app.color.app_card_subtle_bg'))
+            .fontColor($r('app.color.app_text_primary'))
+            .onClick((): void => {
+              this.closeMemberDetail();
+            })
+        }
+        .width('100%')
+
+        Column({ space: 8 }) {
+          this.DetailRow('工号', this.selectedMember.emp_id)
+          this.DetailRow('姓名', this.selectedMember.name)
+          this.DetailRow('手机号', this.selectedMember.phone)
+          this.DetailRow('头像', this.selectedMember.avatar ? '已上传' : '未设置')
+        }
+        .width('100%')
+      }
+      .width('88%')
+      .padding(16)
+      .backgroundColor($r('app.color.app_card_bg'))
+      .borderRadius(12)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder InvitePanel() {
+    Column({ space: 12 }) {
       Row() {
-        Column({ space: 4 }) {
-          Text(this.group.name || '小组成员')
-            .fontSize(20)
+        Column({ space: 3 }) {
+          Text('邀请成员')
+            .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
-          Text(`${this.group.member_count} 位成员 · ${this.group.pending_count} 个待确认邀请`)
+          Text('输入工号时会显示候选用户')
             .fontSize(12)
             .fontColor($r('app.color.app_text_secondary'))
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        if (this.group.is_creator) {
-          Button('改名')
-            .height(36)
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .margin({ right: 8 })
-            .onClick((): void => {
-              this.renameDialogController.open();
-            })
-
-          Button('邀请')
-            .height(36)
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.inviteDialogController.open();
-            })
-        } else if (this.group.id !== 0) {
-          Button('退出')
-            .height(36)
-            .backgroundColor($r('app.color.app_danger'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.leaveGroup();
-            })
-        }
+        Button('发送')
+          .height(36)
+          .backgroundColor($r('app.color.app_primary'))
+          .fontColor(Color.White)
+          .onClick((): void => {
+            this.submitInvite();
+          })
       }
-      .width('90%')
-      .padding({ top: 20, bottom: 10 })
+      .width('100%')
 
-      if (this.members.length === 0 && !this.isLoading) {
-        Column() {
-          Text(this.groupId ? '暂无成员' : '请先创建或选择小组')
-            .fontSize(16)
-            .fontColor($r('app.color.app_text_secondary'))
-            .margin({ top: 80 })
+      TextInput({ placeholder: '输入工号、姓名或手机号', text: this.inviteKeyword })
+        .width('100%')
+        .height(40)
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_input_bg'))
+        .onChange((val: string): void => {
+          this.searchInviteCandidates(val);
+        })
+
+      if (this.inviteKeyword.trim().length > 0 && this.inviteCandidates.length === 0) {
+        Text('暂无可邀请候选人')
+          .width('100%')
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_secondary'))
+          .padding({ top: 4, bottom: 4 })
+      }
+
+      ForEach(this.inviteCandidates, (candidate: MemberInfo): void => {
+        Row({ space: 10 }) {
+          Image(candidate.avatar ? candidate.avatar : $r('app.media.foreground'))
+            .width(38)
+            .height(38)
+            .borderRadius(19)
+            .backgroundColor($r('app.color.app_card_subtle_bg'))
+
+          Column({ space: 2 }) {
+            Text(candidate.name || candidate.emp_id)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+            Text(`工号: ${candidate.emp_id}`)
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Button(this.selectedInviteEmpId === candidate.emp_id ? '已选择' : '选择')
+            .height(32)
+            .backgroundColor(this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary_soft') : $r('app.color.app_primary'))
+            .fontColor(this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary') : Color.White)
+            .onClick((): void => {
+              this.selectInviteCandidate(candidate);
+            })
         }
         .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Start)
-      } else {
-        List({ space: 10 }) {
-          ForEach(this.members, (member: MemberInfo): void => {
-            ListItem() {
-              Row({ space: 12 }) {
-                Image(member.avatar ? member.avatar : $r('app.media.foreground'))
-                  .width(50)
-                  .height(50)
-                  .borderRadius(25)
-                  .backgroundColor(Color.Gray)
+        .padding(10)
+        .backgroundColor($r('app.color.app_card_subtle_bg'))
+        .borderRadius(8)
+      })
+    }
+    .width('90%')
+    .padding(14)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(10)
+  }
 
-                Column({ space: 4 }) {
-                  Row({ space: 6 }) {
-                    Text(member.name || member.emp_id)
-                      .fontSize(16)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor($r('app.color.app_text_primary'))
-                    if (member.is_creator) {
-                      Text('组长')
-                        .fontSize(12)
-                        .fontColor($r('app.color.app_primary'))
-                    } else if (member.status === 'pending') {
-                      Text('待确认')
-                        .fontSize(12)
-                        .fontColor('#B45309')
-                    }
-                  }
+  @Builder MemberList() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('成员通讯录')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
 
-                  Text(`工号: ${member.emp_id}`)
-                    .fontSize(13)
-                    .fontColor($r('app.color.app_text_secondary'))
-                  Text(member.phone ? `手机: ${member.phone}` : `角色: ${member.role}`)
-                    .fontSize(13)
-                    .fontColor($r('app.color.app_text_secondary'))
+        Button('刷新')
+          .height(32)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_text_primary'))
+          .onClick((): void => {
+            this.loadGroup();
+          })
+      }
+      .width('90%')
+
+      List({ space: 10 }) {
+        ForEach(this.members, (member: MemberInfo): void => {
+          ListItem() {
+            Row({ space: 12 }) {
+              Image(member.avatar ? member.avatar : $r('app.media.foreground'))
+                .width(50)
+                .height(50)
+                .borderRadius(25)
+                .backgroundColor($r('app.color.app_card_subtle_bg'))
+                .onClick((): void => {
+                  this.openMemberDetail(member);
+                })
+
+              Column({ space: 4 }) {
+                Row({ space: 6 }) {
+                  Text(member.name || member.emp_id)
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.app_text_primary'))
+
+                  Text(this.statusLabel(member))
+                    .fontSize(12)
+                    .fontColor(member.status === 'pending' ? '#B45309' : $r('app.color.app_primary'))
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+                    .borderRadius(8)
                 }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
+
+                Text(`工号: ${member.emp_id}`)
+                  .fontSize(13)
+                  .fontColor($r('app.color.app_text_secondary'))
+                Text(member.phone ? `手机: ${member.phone}` : `身份: ${this.roleLabel(member.role)}`)
+                  .fontSize(13)
+                  .fontColor($r('app.color.app_text_secondary'))
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              .onClick((): void => {
+                this.openMemberDetail(member);
+              })
+
+              Column({ space: 8 }) {
+                Button('查看')
+                  .height(32)
+                  .backgroundColor($r('app.color.app_primary'))
+                  .fontColor(Color.White)
+                  .onClick((): void => {
+                    this.openMemberDetail(member);
+                  })
 
                 if (this.group.is_creator && !member.is_creator) {
                   Button(member.status === 'pending' ? '撤回' : '移除')
@@ -368,21 +545,87 @@ export struct GroupTab {
                     })
                 }
               }
-              .width('100%')
-              .padding(15)
-              .backgroundColor($r('app.color.app_card_bg'))
-              .borderRadius(10)
             }
-          })
+            .width('100%')
+            .padding(15)
+            .backgroundColor($r('app.color.app_card_bg'))
+            .borderRadius(10)
+          }
+        })
+      }
+      .width('90%')
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column({ space: 12 }) {
+        Row() {
+          Column({ space: 4 }) {
+            Text(this.group.name || '小组成员')
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+            Text(`${this.group.member_count} 位成员 · ${this.group.pending_count} 个待确认邀请`)
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          if (this.group.is_creator) {
+            Button('改名')
+              .height(36)
+              .backgroundColor($r('app.color.app_primary'))
+              .fontColor(Color.White)
+              .onClick((): void => {
+                this.renameDialogController.open();
+              })
+          } else if (this.group.id !== 0) {
+            Button('退出')
+              .height(36)
+              .backgroundColor($r('app.color.app_danger'))
+              .fontColor(Color.White)
+              .onClick((): void => {
+                this.leaveGroup();
+              })
+          }
         }
         .width('90%')
-        .layoutWeight(1)
+        .padding({ top: 20, bottom: 4 })
+
+        if (this.group.is_creator && this.group.id !== 0) {
+          this.InvitePanel()
+        }
+
+        if (this.members.length === 0 && !this.isLoading) {
+          Column() {
+            Text(this.groupId ? '暂无成员' : '请先创建或选择小组')
+              .fontSize(16)
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ top: 80 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Start)
+        } else {
+          this.MemberList()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('app.color.app_page_bg'))
+
+      if (this.showMemberDetail) {
+        this.MemberDetailOverlay()
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_page_bg'))
   }
 }
-
-

@@ -124,6 +124,113 @@ class UserGroupApiTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403, response.get_json())
 
+    def test_admin_can_reset_and_delete_user_but_not_super_admin(self):
+        self.create_user("managed_case", "Managed Case")
+        self.create_user("admin_actor", "Admin Actor")
+        role_update = self.client.put(
+            "/api/users/admin_actor/role",
+            headers=self.super_headers,
+            json={"role": "admin"},
+        )
+        self.assertEqual(role_update.status_code, 200, role_update.get_json())
+
+        admin_headers = self.auth_headers("admin_actor", "pass1234")
+        reset = self.client.put(
+            "/api/users/managed_case/password",
+            headers=admin_headers,
+            json={"password": "newpass123"},
+        )
+        self.assertEqual(reset.status_code, 200, reset.get_json())
+        self.auth_headers("managed_case", "newpass123")
+
+        blocked_reset = self.client.put(
+            "/api/users/admin/password",
+            headers=admin_headers,
+            json={"password": "newpass123"},
+        )
+        self.assertEqual(blocked_reset.status_code, 403, blocked_reset.get_json())
+
+        delete = self.client.delete(
+            "/api/users/managed_case",
+            headers=admin_headers,
+        )
+        self.assertEqual(delete.status_code, 200, delete.get_json())
+
+        missing = self.client.get("/api/users/managed_case", headers=self.super_headers)
+        self.assertEqual(missing.status_code, 404, missing.get_json())
+
+        blocked_delete = self.client.delete("/api/users/admin", headers=admin_headers)
+        self.assertEqual(blocked_delete.status_code, 403, blocked_delete.get_json())
+
+    def test_delete_user_transfers_owned_groups_to_actor(self):
+        self.create_user("group_owner_delete", "Group Owner Delete")
+        self.create_user("delete_actor", "Delete Actor")
+        role_update = self.client.put(
+            "/api/users/delete_actor/role",
+            headers=self.super_headers,
+            json={"role": "admin"},
+        )
+        self.assertEqual(role_update.status_code, 200, role_update.get_json())
+
+        owner_headers = self.auth_headers("group_owner_delete", "pass1234")
+        group_response = self.client.post(
+            "/api/groups/",
+            headers=owner_headers,
+            json={"name": "Transferred Group"},
+        )
+        self.assertEqual(group_response.status_code, 201, group_response.get_json())
+        group_id = group_response.get_json()["data"]["id"]
+
+        actor_headers = self.auth_headers("delete_actor", "pass1234")
+        delete = self.client.delete(
+            "/api/users/group_owner_delete",
+            headers=actor_headers,
+        )
+        self.assertEqual(delete.status_code, 200, delete.get_json())
+
+        with self.app.app_context():
+            from app.models.group import Group, GroupMember
+            from app.models.user import User
+
+            group = Group.query.get(group_id)
+            self.assertEqual(group.creator_id, "delete_actor")
+            self.assertIsNone(User.query.filter_by(emp_id="group_owner_delete").first())
+            actor_member = GroupMember.query.filter_by(
+                group_id=group_id,
+                emp_id="delete_actor",
+                status="accepted",
+            ).first()
+            self.assertIsNotNone(actor_member)
+
+    def test_regular_user_can_search_users_read_only(self):
+        self.create_user("public_actor", "Public Actor")
+        self.create_user("public_target", "Public Target")
+        actor_headers = self.auth_headers("public_actor", "pass1234")
+
+        search = self.client.get(
+            "/api/users/search?keyword=public_target",
+            headers=actor_headers,
+        )
+        self.assertEqual(search.status_code, 200, search.get_json())
+        users = search.get_json()["data"]
+        self.assertEqual([u["emp_id"] for u in users], ["public_target"])
+        self.assertIn("phone", users[0])
+        self.assertNotIn("llm_api_key", users[0])
+        self.assertNotIn("llm_base_url", users[0])
+        self.assertNotIn("llm_model", users[0])
+
+        admin_search = self.client.get(
+            "/api/users/?keyword=public_target",
+            headers=actor_headers,
+        )
+        self.assertEqual(admin_search.status_code, 403, admin_search.get_json())
+
+        forbidden_delete = self.client.delete(
+            "/api/users/public_target",
+            headers=actor_headers,
+        )
+        self.assertEqual(forbidden_delete.status_code, 403, forbidden_delete.get_json())
+
     def test_group_invitation_acceptance_and_membership_visibility(self):
         self.create_user("leader", "Group Leader")
         self.create_user("member", "Group Member")

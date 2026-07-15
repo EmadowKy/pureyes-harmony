@@ -1,7 +1,10 @@
 from flask import request
 from flask_jwt_extended import get_jwt_identity
 from app.core.db import db
+from app.models.group import Group, GroupMember
+from app.models.qa_record import QARecord
 from app.models.user import User
+from app.models.workspace import Workspace
 from app.core.response import success, fail
 from app.user_center.permissions import active_user_required, can_view_user, current_user, role_required
 from app.user_center.serializers import user_to_dict
@@ -26,6 +29,60 @@ def _apply_user_updates(user, data):
         user.set_password(password)
     return None
 
+
+def _ensure_can_operate_target(actor, user):
+    if not actor:
+        return fail(message="permission denied", code=2001, http_status=403)
+    if user.role == "super_admin":
+        return fail(message="cannot operate super_admin", code=2008, http_status=403)
+    if actor.emp_id == user.emp_id:
+        return fail(message="cannot operate yourself here", code=2010, http_status=403)
+    return None
+
+
+def _transfer_user_owned_data(emp_id, actor_emp_id):
+    owned_groups = Group.query.filter_by(creator_id=emp_id).all()
+    for group in owned_groups:
+        group.creator_id = actor_emp_id
+        actor_member = GroupMember.query.filter_by(
+            group_id=group.id,
+            emp_id=actor_emp_id,
+        ).first()
+        if actor_member:
+            actor_member.status = "accepted"
+        else:
+            db.session.add(GroupMember(
+                group_id=group.id,
+                emp_id=actor_emp_id,
+                status="accepted",
+            ))
+
+    transferred_workspaces = Workspace.query.filter_by(creator_id=emp_id).update(
+        {"creator_id": actor_emp_id},
+        synchronize_session=False,
+    )
+    transferred_records = QARecord.query.filter_by(creator_id=emp_id).update(
+        {"creator_id": actor_emp_id},
+        synchronize_session=False,
+    )
+
+    return {
+        "groups": len(owned_groups),
+        "workspaces": transferred_workspaces,
+        "qa_records": transferred_records,
+    }
+
+
+def _user_search_to_dict(user):
+    return {
+        "emp_id": user.emp_id,
+        "name": user.name,
+        "phone": user.phone,
+        "avatar": user.avatar,
+        "role": user.role,
+        "is_active": user.is_active,
+    }
+
 @users_bp.get("/me")
 @active_user_required()
 def me():
@@ -49,6 +106,24 @@ def update_me():
 
     db.session.commit()
     return success(message="user updated", data=user_to_dict(user))
+
+
+@users_bp.get("/search")
+@active_user_required()
+def search_users():
+    keyword = _clean(request.args.get("keyword") or request.args.get("q") or "")
+    if not keyword:
+        return success(data=[])
+
+    like_pattern = f"%{keyword}%"
+    users = User.query.filter(
+        User.is_active.is_(True),
+        (User.emp_id.ilike(like_pattern))
+        | (User.name.ilike(like_pattern))
+        | (User.phone.ilike(like_pattern)),
+    ).order_by(User.created_at.desc()).limit(50).all()
+
+    return success(data=[_user_search_to_dict(u) for u in users])
 
 
 @users_bp.get("/<emp_id>")
@@ -156,6 +231,51 @@ def update_user_status(emp_id):
     user.is_active = is_active
     db.session.commit()
     return success(message="user status updated", data=user_to_dict(user))
+
+
+@users_bp.put("/<emp_id>/password")
+@role_required("admin", "super_admin")
+def reset_user_password(emp_id):
+    actor = current_user()
+    user = User.query.filter_by(emp_id=emp_id).first()
+    if not user:
+        return fail(message="user not found", code=2002, http_status=404)
+
+    error = _ensure_can_operate_target(actor, user)
+    if error:
+        return error
+
+    data = request.get_json() or {}
+    password = str(data.get("password") or "")
+    if len(password) < 6:
+        return fail(message="password must be at least 6 chars", code=2004, http_status=400)
+
+    user.set_password(password)
+    db.session.commit()
+    return success(message="password reset", data=user_to_dict(user))
+
+
+@users_bp.delete("/<emp_id>")
+@role_required("admin", "super_admin")
+def delete_user(emp_id):
+    actor = current_user()
+    user = User.query.filter_by(emp_id=emp_id).first()
+    if not user:
+        return fail(message="user not found", code=2002, http_status=404)
+
+    error = _ensure_can_operate_target(actor, user)
+    if error:
+        return error
+
+    transfer_counts = _transfer_user_owned_data(emp_id, actor.emp_id)
+    GroupMember.query.filter_by(emp_id=emp_id).delete(synchronize_session=False)
+    db.session.delete(user)
+    db.session.commit()
+
+    return success(message="user deleted", data={
+        "deleted_emp_id": emp_id,
+        "transferred": transfer_counts,
+    })
 
 
 @users_bp.put("/<emp_id>")

@@ -1,72 +1,102 @@
 # 用户与小组模块说明
 
-更新时间：2026-06-27 19:07:33 +08:00
+更新时间：2026-07-16 02:40:00 +08:00
 
-本文说明当前由 `用户（包含小组管理）` 分工负责的功能范围、接口合同和对接注意事项。实现尽量独立在 `backend/app/users`、`backend/app/groups`、`backend/app/user_center` 与前端 `ProfileTab`、`GroupTab` 内，不改变监控与工作区模块的调用方式。
+本文说明当前 `用户（包含小组管理）` 分工负责的功能范围、页面结构、接口合同和对接注意事项。实现尽量独立在 `backend/app/users`、`backend/app/groups`、`backend/app/user_center` 与前端 `ProfileTab`、`GroupTab` 内，不改变监控、工作区、视频分析等其他模块的调用方式。
 
 ## 功能边界
 
 已实现：
 
-- 用户登录沿用 `/api/auth/login`，初始化超级管理员为 `admin/admin`。
-- 用户可以查看和修改自己的姓名、手机号、头像和密码，工号不可修改。
-- 管理员和超级管理员可以创建用户、按姓名或工号搜索用户、查看所有用户信息、启用或停用普通用户账号。
-- 超级管理员可以把普通用户设置为管理员，也可以把管理员降为普通用户。
-- 已停用用户不能登录；如果停用前已经拿到 token，也不能继续访问用户与小组管理接口。
-- 所有用户可以创建小组，并自动成为该小组组长。
-- 用户可以加入多个小组，前端通过左上角全局下拉切换当前小组。
-- 组长可以按工号邀请其他用户入组，邀请以 `pending` 成员状态保存。
-- 被邀请用户可以在“我的消息”中同意或拒绝入组邀请。
-- 小组成员可以查看组内成员基本信息。
-- 组长可以查看待确认邀请、撤回邀请、移除普通成员、修改小组名称。
+- 用户登录沿用 `/api/auth/login`，服务初始化时自动创建超级管理员 `admin/admin`。
+- “我的”首页展示头像、姓名、工号、身份，并提供清晰的功能入口，退出登录固定在底部。
+- 用户可从相册选择头像；个人信息、账号安全、我的消息、新建小组拆分为独立页面，每页都有返回入口。
+- 个人信息页可修改姓名、手机号、头像；账号安全页单独修改当前用户密码。
+- 我的消息页展示收到的入组邀请，以及自己发出的邀请状态。
+- 普通用户在“我的”页拥有“用户搜索”入口，可按姓名、工号、手机号搜索用户并只读查看基础资料。
+- 管理员和超级管理员在“我的”页拥有“用户管理”入口，可查询所有用户、创建用户、查看用户详情、初始化密码、删除用户。
+- 超级管理员可以将普通用户设为管理员，也可以将管理员设回普通用户。
+- 管理员不能操作超级管理员，也不能在用户管理中操作自己。
+- 删除用户是物理删除账号；若被删除用户创建过小组、工作区或问答记录，归属会转交给当前操作管理员，避免破坏其他模块数据。
+- 所有用户都可以创建小组，创建者自动成为组长。
+- 用户可以加入多个小组，前端通过全局小组选择切换当前小组。
+- 小组成员可以查看同组所有正式成员的基础信息，包括工号、姓名、手机号、头像。
+- 小组页展示成员通讯录，点击成员可弹出基础信息详情。
+- 只有组长可以邀请其他用户入组；输入工号、姓名或手机号时，页面会显示候选用户的头像、工号、姓名。
+- 组长可以查看待确认邀请、撤回邀请、移除成员、修改小组名称。
 - 非组长成员可以主动退出小组；组长不能直接退出自己创建的小组，避免无人管理。
 
 暂不负责：
 
-- 监控录制、切片和直播转码。
-- 工作区问答、模型推理和问答记录。
+- 监控录制、切片、直播转码。
+- 工作区问答、模型推理和问答记录页面。
 - 人脸识别、目标检测等后续视觉能力。
 
-## 后端文件
+## 主要文件
+
+后端：
 
 - `backend/app/user_center/permissions.py`：当前用户、角色权限、小组成员权限、组长权限。
 - `backend/app/user_center/serializers.py`：用户、小组、成员关系统一序列化。
-- `backend/app/users/routes.py`：个人资料、管理员用户管理、超级管理员角色管理。
+- `backend/app/users/routes.py`：个人资料、只读用户搜索、管理员用户管理、超级管理员角色管理、密码初始化、删除用户。
 - `backend/app/groups/routes.py`：小组、邀请、成员管理。
 - `backend/tests/test_user_group_api.py`：用户/小组核心接口测试。
 
-## 前端文件
+前端：
 
 - `frontend/entry/src/main/ets/pages/tabs/ProfileTab.ets`
-  - 个人资料展示与修改。
-  - 创建小组。
-  - 入组邀请消息处理。
-  - 管理员搜索/创建用户。
-  - 超级管理员调整用户角色。
+  - “我的”首页。
+  - 个人信息、账号安全、我的消息、新建小组。
+  - 普通用户只读用户搜索。
+  - 管理员/超级管理员用户管理。
+  - 头像相册选择、大模型 API 配置、退出登录。
 - `frontend/entry/src/main/ets/pages/tabs/GroupTab.ets`
-  - 当前小组详情。
-  - 成员列表。
-  - 组长邀请、撤回邀请、移除成员、修改组名。
+  - 当前小组信息。
+  - 成员通讯录。
+  - 成员基础信息弹层。
+  - 组长邀请面板、候选用户预览、撤回邀请、移除成员、修改组名。
   - 非组长退出小组。
 - `frontend/entry/src/main/ets/utils/http.ets`
-  - 新增 `HttpUtil.del()`，用于成员移除接口。
+  - 统一 HTTP 请求封装，包含 `GET`、`POST`、`PUT`、`DELETE`。
 
 ## 权限模型
 
 角色：
 
-- `super_admin`：唯一超级管理员，服务器初始化时创建，工号 `admin`，密码 `admin`。
-- `admin`：管理员，可以查询和创建用户。
-- `user`：普通用户。
+- `super_admin`：超级管理员，服务初始化时创建，默认工号 `admin`，密码 `admin`。
+- `admin`：管理员，可查询、创建、删除用户，可初始化密码。
+- `user`：普通用户，可维护个人资料、搜索用户、创建小组、参与小组。
+
+用户管理权限：
+
+- 普通用户只能使用 `/api/users/search` 做只读用户搜索。
+- 管理员/超级管理员可使用 `/api/users/` 查询所有用户并创建用户。
+- 管理员/超级管理员可初始化普通用户或管理员的密码。
+- 管理员/超级管理员可删除普通用户或管理员。
+- 管理员不能操作超级管理员。
+- 任何管理员都不能在用户管理中删除或初始化自己的账号。
+- 只有超级管理员可调用角色调整接口。
 
 小组权限：
 
-- `Group.creator_id` 是组长，只有组长可以邀请、撤回邀请、移除成员、修改组名。
+- `Group.creator_id` 是组长。
+- 只有组长可以邀请、撤回邀请、移除成员、修改组名。
 - `GroupMember.status="pending"` 表示已邀请但未接受。
 - `GroupMember.status="accepted"` 表示正式成员。
+- 普通小组成员只能看到正式成员列表，不会看到待处理邀请。
 - 监控和工作区模块继续只需要判断 `GroupMember(status="accepted")`，不会被待处理邀请影响。
 
 ## 主要接口
+
+接口统一使用项目原有响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {}
+}
+```
 
 ### 用户
 
@@ -76,20 +106,27 @@
 
 `PUT /api/users/me`
 
-请求体：
+修改当前用户资料、头像、密码或大模型 API 配置。
 
 ```json
 {
   "name": "张三",
   "phone": "13800000000",
-  "avatar": "https://example.com/avatar.png",
-  "password": "optional-new-password"
+  "avatar": "file://media/Photo/1/IMG.jpg",
+  "password": "optional-new-password",
+  "llm_api_key": "sk-xxx",
+  "llm_base_url": "https://example.com/v1",
+  "llm_model": "qwen-plus"
 }
 ```
 
+`GET /api/users/search?keyword=张三`
+
+普通登录用户可用的只读搜索接口。支持姓名、工号、手机号模糊搜索，只返回基础资料，不返回 API Key 等私密配置。
+
 `GET /api/users/?keyword=张三`
 
-管理员/超级管理员查询用户。`keyword` 支持姓名和工号模糊搜索。
+管理员/超级管理员查询所有用户。支持姓名和工号模糊搜索。
 
 `POST /api/users/`
 
@@ -106,7 +143,21 @@
 
 `GET /api/users/<emp_id>`
 
-查看用户详情。本人、管理员/超级管理员、同组成员可以访问。
+查看用户详情。本人、管理员/超级管理员、同组正式成员可访问。
+
+`PUT /api/users/<emp_id>/password`
+
+管理员/超级管理员初始化用户密码。不可操作超级管理员或当前操作账号。
+
+```json
+{
+  "password": "newpass123"
+}
+```
+
+`DELETE /api/users/<emp_id>`
+
+管理员/超级管理员删除用户。不可删除超级管理员或当前操作账号。删除前会将该用户创建的小组、工作区和问答记录转交给当前操作管理员。
 
 `PUT /api/users/<emp_id>/role`
 
@@ -120,13 +171,7 @@
 
 `PUT /api/users/<emp_id>/status`
 
-管理员/超级管理员启用或停用用户。
-
-```json
-{
-  "is_active": true
-}
-```
+保留的管理员接口，用于启用/停用账号。当前前端用户管理已改为删除用户，不再把停用账号作为主要操作。
 
 ### 小组
 
@@ -160,7 +205,7 @@
 
 `POST /api/groups/<group_id>/invite`
 
-组长邀请用户。
+组长邀请用户入组。
 
 ```json
 {
@@ -174,7 +219,7 @@
 
 `POST /api/groups/<group_id>/respond`
 
-当前用户处理邀请。
+当前用户处理入组邀请。
 
 ```json
 {
@@ -184,7 +229,7 @@
 
 `GET /api/groups/<group_id>/members`
 
-正式成员列表。
+正式成员列表。所有正式小组成员可访问。
 
 `GET /api/groups/<group_id>/members?include_pending=1`
 
@@ -200,17 +245,7 @@
 
 ## 对接返回结构
 
-接口统一使用项目原有响应格式：
-
-```json
-{
-  "code": 0,
-  "message": "ok",
-  "data": {}
-}
-```
-
-小组成员列表同时保留旧前端依赖的顶层字段：
+小组成员列表保留顶层字段，便于 ArkTS 前端直接渲染，也同时包含 `user` 子对象，方便后续规范化使用。
 
 ```json
 {
@@ -223,60 +258,58 @@
   "is_creator": false,
   "user": {
     "emp_id": "u001",
-    "name": "张三"
+    "name": "张三",
+    "phone": "13800000000",
+    "avatar": "",
+    "role": "user"
   }
 }
 ```
 
-这样既能兼容原来的 `GroupTab`，也方便后续更规范地使用 `user` 子对象。
+普通用户搜索返回基础字段：
 
-## 远程后端检查记录
+```json
+{
+  "emp_id": "u001",
+  "name": "张三",
+  "phone": "13800000000",
+  "avatar": "",
+  "role": "user",
+  "is_active": true
+}
+```
 
-2026-06-27 19:20:30 +08:00：
+## 验证记录
 
-- 通过 Windows SSH 隧道访问远程后端，DevEco 模拟器内搜索测试账号 `ui_status_0627191529`，展开用户详情后完成“停用账号”和“启用账号”回滚实测。
-- 停用后前端状态从“已启用”刷新为“已停用”，操作按钮从“停用账号”切换为“启用账号”；启用回滚后状态恢复为“已启用”。
-- 最终通过远程后端 API 复查测试账号 `is_active: true`，随后确认无小组/工作区/问答依赖并从远程库清理；本地 `http.ets` 调试地址已恢复为仓库默认配置。
+2026-07-16：
 
-2026-06-27 19:07:33 +08:00：
-
-- 设计复查后补齐账号启停用的前端入口，并加强用户/小组接口的 active user 守卫，避免停用账号继续使用旧 token。
-- “修改资料”弹窗中手机号和头像留空时保持原值，避免用户只修改姓名或密码时误清空已有资料。
-- README 已补充 AutoDL 公网直连、SSH 隧道、DevEco 模拟器 `10.0.2.2`、真机局域网 IP 等联调路径。
-
-2026-06-27 18:51:45 +08:00：
-
-- 远程正式仓库 `/root/autodl-tmp/pureyes-harmony` 已放置本地模型目录 `models/Qwen3-VL-2B-Instruct`，模型大小约 4.0 GB。
-- 远程 `backend/configs/model.yaml` 已指向相对路径 `../../models/Qwen3-VL-2B-Instruct`；配合 `deploy/run_backend_autodl.py` 从 `backend/configs` 作为工作目录启动，可解析到仓库内模型目录。
-- 已在远程 `pureyes` Conda 环境设置 `HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1` 后运行 `python deploy/check_env.py --require-local-model`，通过。
-- 已在远程用 `AutoProcessor.from_pretrained(..., local_files_only=True)` 和 `Qwen3VLForConditionalGeneration.from_pretrained(..., local_files_only=True, device_map="cuda:0")` 做实际加载冒烟测试，通过；加载后显存占用约 3.96 GB。
-- 已通过本机 SSH 隧道把模拟器访问转发到远程后端，DevEco 模拟器完成 `admin/admin` 登录、用户页展示、空小组态展示、创建测试小组 `UITest0627`、小组页成员列表刷新测试。测试小组写入远程正式数据库，便于后续继续联调。
-
-2026-06-27 18:22:19 +08:00：
-
-- 已在远程临时目录 `/root/autodl-tmp/pureyes-harmony-codex-test` 同步本次改动。
-- 已在远程 `pureyes` Conda 环境运行 `python -m compileall -q backend`，通过。
-- 已在远程 `pureyes` Conda 环境运行 `python -m unittest discover -s backend/tests -p "test_*.py"`，2 个用户/小组接口用例通过。
-- 已在本机 DevEco/Hvigor 环境运行前端 `assembleApp`，通过。当前项目未配置签名，构建日志提示跳过 HAP/App 签名，这是现有工程配置问题，不影响 ArkTS 编译验证。
-
-2026-06-27 18:16:14 +08:00：
-
-- 远程仓库路径：`/root/autodl-tmp/pureyes-harmony`
-- Python 环境：`/root/miniconda3/envs/pureyes/bin/python`，Python 3.10.12
-- GPU：NVIDIA GeForce RTX 4090，24564 MiB
-- PyTorch：`2.7.0+cu126`，CUDA 可用
-- Transformers：`4.57.6`
-- FFmpeg/FFprobe：可用
-- 当前大模型状态：`backend/configs/model.yaml` 已指向 `../../models/Qwen3-VL-2B-Instruct`，并且远程 `/root/autodl-tmp/pureyes-harmony/models/Qwen3-VL-2B-Instruct` 目录已存在；离线环境检查和实际 CUDA 加载测试已通过。
+- 本地 DevEco/Hvigor 执行 `assembleApp --no-daemon`，前端构建通过。
+- 已安装 HAP 到本机 HarmonyOS 模拟器并启动成功。
+- 远程服务器 `/root/autodl-tmp/pureyes-harmony` 已同步本轮改动。
+- 远程 `pureyes` 环境执行 `python -m unittest tests.test_user_group_api`，用户/小组接口测试通过。
+- 远程实际服务完成普通用户搜索、管理员用户删除和密码初始化冒烟验证。
+- 远程后端健康检查 `/api/health` 正常。
 
 ## 测试方式
 
 后端测试只在远程服务器运行：
 
 ```bash
-cd /root/autodl-tmp/pureyes-harmony
+cd /root/autodl-tmp/pureyes-harmony/backend
 conda activate pureyes
-python -m unittest discover -s backend/tests -p "test_*.py"
+python -m unittest tests.test_user_group_api
 ```
 
 测试使用临时 SQLite 数据库，通过 `DATABASE_URL` 环境变量隔离，不会写入正式 `backend/user.db`。
+
+前端本地构建：
+
+```powershell
+$env:NODE_HOME='D:\Huawei\DevEco Studio\tools\node'
+$env:JAVA_HOME='D:\Huawei\DevEco Studio\jbr'
+$env:DEVECO_SDK_HOME='D:\Huawei\DevEco Studio\sdk'
+$env:PATH="$env:JAVA_HOME\bin;$env:NODE_HOME;$env:PATH"
+
+cd D:\VSCode_MyCode\C4_AI\pureyes-harmony\frontend
+& 'D:\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleApp --no-daemon
+```
