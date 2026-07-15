@@ -94,6 +94,8 @@ export struct CreateUserDialog {
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
 
       TextInput({ placeholder: '姓名，可选', text: this.name })
         .onChange((val: string): void => {
@@ -102,6 +104,8 @@ export struct CreateUserDialog {
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
 
       TextInput({ placeholder: '手机号，可选', text: this.phone })
         .onChange((val: string): void => {
@@ -110,6 +114,8 @@ export struct CreateUserDialog {
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
 
       TextInput({ placeholder: '初始密码，至少6位', text: this.pass })
         .type(InputType.Password)
@@ -119,13 +125,17 @@ export struct CreateUserDialog {
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
 
       Row({ space: 20 }) {
         Button('取消')
           .onClick((): void => {
             this.controller.close();
           })
-          .backgroundColor(Color.Gray)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_text_primary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
 
         Button('创建')
           .backgroundColor($r('app.color.app_primary'))
@@ -139,6 +149,9 @@ export struct CreateUserDialog {
     }
     .padding(20)
     .width('90%')
+    .backgroundColor($r('app.color.app_card_bg'))
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
   }
 }
 
@@ -148,6 +161,7 @@ export struct ProfileTab {
   @State activePage: string = PAGE_HOME;
   @State invites: Array<InviteInfo> = [];
   @State sentInvites: Array<SentInviteInfo> = [];
+  @State messagesCleared: boolean = false;
   @State adminUsers: Array<UserInfo> = [];
   @State selectedUser: UserInfo = new UserInfo();
   @State showUserDetail: boolean = false;
@@ -208,6 +222,10 @@ export struct ProfileTab {
 
   sentInviteStatusLabel(status: string): string {
     return status === 'accepted' ? '已加入' : '等待确认';
+  }
+
+  messageCount(): number {
+    return this.invites.length + this.sentInvites.length;
   }
 
   parseUser(dataObj: Record<string, Object>): UserInfo {
@@ -297,8 +315,21 @@ export struct ProfileTab {
   }
 
   async loadMessages(): Promise<void> {
+    this.messagesCleared = false;
     await this.loadInvites();
     await this.loadSentInvites();
+  }
+
+  clearMessages(): void {
+    if (this.messageCount() === 0) {
+      promptAction.showToast({ message: '暂无可清空消息', duration: 2000 });
+      return;
+    }
+
+    this.invites = [];
+    this.sentInvites = [];
+    this.messagesCleared = true;
+    promptAction.showToast({ message: '消息已清空', duration: 2000 });
   }
 
   openPage(page: string): void {
@@ -630,17 +661,18 @@ export struct ProfileTab {
   }
 
   @Builder ProfileHeader() {
-    Row({ space: 15 }) {
+    Row({ space: 16 }) {
       Image(this.user.avatar ? this.user.avatar : $r('app.media.foreground'))
-        .width(72)
-        .height(72)
-        .borderRadius(36)
+        .width(76)
+        .height(76)
+        .borderRadius(38)
         .backgroundColor($r('app.color.app_card_subtle_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
         .onClick((): void => {
           this.chooseAvatar();
         })
 
-      Column({ space: 5 }) {
+      Column({ space: 7 }) {
         Text(this.user.name || '加载中...')
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
@@ -648,12 +680,25 @@ export struct ProfileTab {
         Text(`工号: ${this.user.emp_id}`)
           .fontColor($r('app.color.app_text_secondary'))
           .fontSize(14)
-        Text(this.roleLabel(this.user.role))
-          .fontColor($r('app.color.app_text_secondary'))
-          .fontSize(14)
+
+        Row({ space: 8 }) {
+          Text(this.roleLabel(this.user.role))
+            .fontSize(12)
+            .fontColor($r('app.color.app_primary'))
+            .backgroundColor($r('app.color.app_primary_soft'))
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .borderRadius(8)
+
+          if (this.user.phone.length > 0) {
+            Text(this.user.phone)
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+        }
 
         Button('更换头像')
           .height(32)
+          .padding({ left: 12, right: 12 })
           .backgroundColor($r('app.color.app_primary_soft'))
           .fontColor($r('app.color.app_primary'))
           .onClick((): void => {
@@ -664,18 +709,21 @@ export struct ProfileTab {
       .layoutWeight(1)
     }
     .width('90%')
-    .padding(18)
+    .padding({ left: 18, right: 18, top: 18, bottom: 18 })
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(10)
-    .margin({ top: 20 })
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
+    .margin({ top: 18 })
   }
 
-  @Builder PageHeader(title: string, subtitle: string) {
+  @Builder PageHeader(title: string) {
     Row({ space: 12 }) {
       Button('返回')
         .height(36)
+        .padding({ left: 12, right: 12 })
         .backgroundColor($r('app.color.app_card_subtle_bg'))
         .fontColor($r('app.color.app_text_primary'))
+        .border({ width: 1, color: $r('app.color.app_border') })
         .onClick((): void => {
           this.backHome();
         })
@@ -685,27 +733,21 @@ export struct ProfileTab {
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.app_text_primary'))
-        Text(subtitle)
-          .fontSize(12)
-          .fontColor($r('app.color.app_text_secondary'))
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
     }
     .width('90%')
-    .padding({ top: 20, bottom: 4 })
+    .padding({ top: 18, bottom: 6 })
   }
 
-  @Builder MenuItem(title: string, subtitle: string, page: string, badge: string) {
+  @Builder MenuItem(title: string, page: string, badge: string) {
     Row() {
       Column({ space: 4 }) {
         Text(title)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_primary'))
-        Text(subtitle)
-          .fontSize(12)
-          .fontColor($r('app.color.app_text_secondary'))
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
@@ -722,44 +764,63 @@ export struct ProfileTab {
 
       Button('进入')
         .height(32)
-        .backgroundColor($r('app.color.app_primary'))
-        .fontColor(Color.White)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor($r('app.color.app_primary_soft'))
+        .fontColor($r('app.color.app_primary'))
         .onClick((): void => {
           this.openPage(page);
         })
     }
     .width('100%')
-    .padding(14)
+    .padding({ left: 16, right: 14, top: 14, bottom: 14 })
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(10)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
   }
 
   @Builder ProfileHome() {
     Scroll() {
-      Column({ space: 12 }) {
+      Column({ space: 14 }) {
         this.ProfileHeader()
 
         Column({ space: 10 }) {
-          this.MenuItem('个人信息', '姓名、手机号、头像', PAGE_INFO, '')
-          this.MenuItem('账号安全', '修改登录密码', PAGE_SECURITY, '')
-          this.MenuItem('我的消息', '入组邀请和发出邀请状态', PAGE_MESSAGES, this.invites.length > 0 ? `${this.invites.length}` : '')
-          this.MenuItem('新建小组', '创建后自动成为组长', PAGE_CREATE_GROUP, '')
+          Text('账户')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .padding({ left: 2, top: 4 })
+          this.MenuItem('个人信息', PAGE_INFO, '')
+          this.MenuItem('账号安全', PAGE_SECURITY, '')
+          this.MenuItem('我的消息', PAGE_MESSAGES, this.invites.length > 0 ? `${this.invites.length}` : '')
+
+          Text('小组')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .padding({ left: 2, top: 8 })
+          this.MenuItem('新建小组', PAGE_CREATE_GROUP, '')
 
           if (this.isAdminUser()) {
-            this.MenuItem('用户管理', '查询、创建和管理用户账号', PAGE_ADMIN, '')
+            this.MenuItem('用户管理', PAGE_ADMIN, '')
           } else {
-            this.MenuItem('用户搜索', '按姓名、工号或手机号查找用户', PAGE_USER_SEARCH, '')
+            this.MenuItem('用户搜索', PAGE_USER_SEARCH, '')
           }
 
-          this.MenuItem('大模型 API 配置', '保存当前用户的模型调用参数', PAGE_API_CONFIG, '')
+          Text('系统')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .padding({ left: 2, top: 8 })
+          this.MenuItem('模型 API', PAGE_API_CONFIG, '')
         }
         .width('90%')
 
         Button('退出登录')
           .width('90%')
           .height(44)
-          .backgroundColor($r('app.color.app_danger'))
-          .fontColor(Color.White)
+          .backgroundColor($r('app.color.app_card_bg'))
+          .fontColor($r('app.color.app_danger'))
+          .border({ width: 1, color: $r('app.color.app_danger') })
           .margin({ top: 8, bottom: 30 })
           .onClick((): void => {
             this.handleLogout();
@@ -777,7 +838,7 @@ export struct ProfileTab {
   @Builder InfoPage() {
     Scroll() {
       Column({ space: 14 }) {
-        this.PageHeader('个人信息', '修改姓名、手机号和头像')
+        this.PageHeader('个人信息')
 
         Column({ space: 14 }) {
           Row({ space: 14 }) {
@@ -810,6 +871,8 @@ export struct ProfileTab {
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.editName = val;
             })
@@ -819,6 +882,8 @@ export struct ProfileTab {
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.editPhone = val;
             })
@@ -835,7 +900,8 @@ export struct ProfileTab {
         .width('90%')
         .padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
-        .borderRadius(10)
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
@@ -848,7 +914,7 @@ export struct ProfileTab {
 
   @Builder SecurityPage() {
     Column({ space: 14 }) {
-      this.PageHeader('账号安全', '修改登录密码')
+      this.PageHeader('账号安全')
 
       Column({ space: 12 }) {
         TextInput({ placeholder: '新密码，至少6位', text: this.newPassword })
@@ -857,6 +923,8 @@ export struct ProfileTab {
           .height(42)
           .fontColor($r('app.color.app_text_primary'))
           .backgroundColor($r('app.color.app_input_bg'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
           .onChange((val: string): void => {
             this.newPassword = val;
           })
@@ -867,6 +935,8 @@ export struct ProfileTab {
           .height(42)
           .fontColor($r('app.color.app_text_primary'))
           .backgroundColor($r('app.color.app_input_bg'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
           .onChange((val: string): void => {
             this.confirmPassword = val;
           })
@@ -883,7 +953,8 @@ export struct ProfileTab {
       .width('90%')
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
-      .borderRadius(10)
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(8)
     }
     .width('100%')
     .height('100%')
@@ -892,37 +963,77 @@ export struct ProfileTab {
   }
 
   @Builder MessagesPage() {
-    Scroll() {
-      Column({ space: 14 }) {
-        this.PageHeader('我的消息', '入组邀请和发出邀请状态')
+    Column({ space: 12 }) {
+      this.PageHeader('我的消息')
+
+      Row({ space: 10 }) {
+        Column({ space: 4 }) {
+          Text(this.messagesCleared ? '已清空' : `${this.messageCount()} 条消息`)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+          Text(`收到 ${this.invites.length} 条 · 发出 ${this.sentInvites.length} 条`)
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
 
         Button('刷新')
-          .width('90%')
-          .height(38)
+          .height(36)
+          .padding({ left: 12, right: 12 })
           .backgroundColor($r('app.color.app_primary_soft'))
           .fontColor($r('app.color.app_primary'))
           .onClick((): void => {
             this.loadMessages();
           })
 
-        Column({ space: 10 }) {
+        Button('清空消息')
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_danger'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .enabled(this.messageCount() > 0)
+          .opacity(this.messageCount() > 0 ? 1 : 0.45)
+          .onClick((): void => {
+            this.clearMessages();
+          })
+      }
+      .width('90%')
+      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+      .backgroundColor($r('app.color.app_card_bg'))
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(8)
+
+      List({ space: 10 }) {
+        ListItem() {
           Text('收到的邀请')
-            .fontSize(18)
+            .fontSize(17)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
             .width('100%')
+            .padding({ top: 4, bottom: 2 })
+        }
 
-          if (this.invites.length === 0) {
-            Text('暂无待处理入组邀请')
+        if (this.invites.length === 0) {
+          ListItem() {
+            Text(this.messagesCleared ? '暂无消息' : '暂无邀请')
               .fontSize(14)
               .fontColor($r('app.color.app_text_secondary'))
               .width('100%')
-              .padding({ top: 8, bottom: 8 })
+              .textAlign(TextAlign.Center)
+              .padding(18)
+              .backgroundColor($r('app.color.app_card_bg'))
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(8)
           }
+        }
 
-          ForEach(this.invites, (invite: InviteInfo): void => {
+        ForEach(this.invites, (invite: InviteInfo): void => {
+          ListItem() {
             Row({ space: 8 }) {
-              Column({ space: 3 }) {
+              Column({ space: 4 }) {
                 Text(invite.group_name)
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
@@ -936,6 +1047,7 @@ export struct ProfileTab {
 
               Button('同意')
                 .height(32)
+                .padding({ left: 10, right: 10 })
                 .backgroundColor($r('app.color.app_success'))
                 .fontColor(Color.White)
                 .onClick((): void => {
@@ -944,6 +1056,7 @@ export struct ProfileTab {
 
               Button('拒绝')
                 .height(32)
+                .padding({ left: 10, right: 10 })
                 .backgroundColor($r('app.color.app_danger'))
                 .fontColor(Color.White)
                 .onClick((): void => {
@@ -951,34 +1064,40 @@ export struct ProfileTab {
                 })
             }
             .width('100%')
-            .padding(12)
-            .backgroundColor($r('app.color.app_card_subtle_bg'))
-            .borderRadius(10)
-          })
-        }
-        .width('90%')
-        .padding(16)
-        .backgroundColor($r('app.color.app_card_bg'))
-        .borderRadius(10)
+            .padding(14)
+            .backgroundColor($r('app.color.app_card_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
+          }
+        })
 
-        Column({ space: 10 }) {
+        ListItem() {
           Text('发出的邀请')
-            .fontSize(18)
+            .fontSize(17)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
             .width('100%')
+            .padding({ top: 12, bottom: 2 })
+        }
 
-          if (this.sentInvites.length === 0) {
-            Text('暂无发出的邀请状态')
+        if (this.sentInvites.length === 0) {
+          ListItem() {
+            Text(this.messagesCleared ? '暂无消息' : '暂无记录')
               .fontSize(14)
               .fontColor($r('app.color.app_text_secondary'))
               .width('100%')
-              .padding({ top: 8, bottom: 8 })
+              .textAlign(TextAlign.Center)
+              .padding(18)
+              .backgroundColor($r('app.color.app_card_bg'))
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(8)
           }
+        }
 
-          ForEach(this.sentInvites, (invite: SentInviteInfo): void => {
-            Row() {
-              Column({ space: 3 }) {
+        ForEach(this.sentInvites, (invite: SentInviteInfo): void => {
+          ListItem() {
+            Row({ space: 8 }) {
+              Column({ space: 4 }) {
                 Text(invite.name || invite.emp_id)
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
@@ -995,32 +1114,33 @@ export struct ProfileTab {
                 .fontColor(invite.status === 'accepted' ? $r('app.color.app_success') : '#B45309')
                 .backgroundColor($r('app.color.app_card_subtle_bg'))
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .borderRadius(10)
+                .borderRadius(8)
             }
             .width('100%')
-            .padding(12)
-            .backgroundColor($r('app.color.app_card_subtle_bg'))
-            .borderRadius(10)
-          })
+            .padding(14)
+            .backgroundColor($r('app.color.app_card_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
+          }
+        })
+
+        ListItem() {
+          Column()
+            .height(14)
         }
-        .width('90%')
-        .padding(16)
-        .backgroundColor($r('app.color.app_card_bg'))
-        .borderRadius(10)
-        .margin({ bottom: 24 })
       }
-      .width('100%')
-      .alignItems(HorizontalAlign.Center)
+      .width('90%')
+      .layoutWeight(1)
     }
     .width('100%')
     .height('100%')
+    .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('app.color.app_page_bg'))
-    .scrollable(ScrollDirection.Vertical)
   }
 
   @Builder CreateGroupPage() {
     Column({ space: 14 }) {
-      this.PageHeader('新建小组', '创建小组后自动成为组长')
+      this.PageHeader('新建小组')
 
       Column({ space: 12 }) {
         TextInput({ placeholder: '请输入小组名称', text: this.newGroupName })
@@ -1028,6 +1148,8 @@ export struct ProfileTab {
           .height(42)
           .fontColor($r('app.color.app_text_primary'))
           .backgroundColor($r('app.color.app_input_bg'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
           .onChange((val: string): void => {
             this.newGroupName = val;
           })
@@ -1044,7 +1166,8 @@ export struct ProfileTab {
       .width('90%')
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
-      .borderRadius(10)
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(8)
     }
     .width('100%')
     .height('100%')
@@ -1055,7 +1178,7 @@ export struct ProfileTab {
   @Builder ApiConfigPage() {
     Scroll() {
       Column({ space: 14 }) {
-        this.PageHeader('大模型 API 配置', '保存当前用户的模型调用参数')
+        this.PageHeader('模型 API')
 
         Column({ space: 12 }) {
           TextInput({ placeholder: 'API KEY (如: sk-xxx)', text: this.llmApiKey })
@@ -1063,6 +1186,8 @@ export struct ProfileTab {
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.llmApiKey = val;
             })
@@ -1072,6 +1197,8 @@ export struct ProfileTab {
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.llmBaseUrl = val;
             })
@@ -1081,6 +1208,8 @@ export struct ProfileTab {
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.llmModel = val;
             })
@@ -1097,7 +1226,8 @@ export struct ProfileTab {
         .width('90%')
         .padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
-        .borderRadius(10)
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
@@ -1124,6 +1254,7 @@ export struct ProfileTab {
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
     .backgroundColor($r('app.color.app_card_subtle_bg'))
+    .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
   }
 
@@ -1183,23 +1314,16 @@ export struct ProfileTab {
             .width('100%')
             .padding({ left: 2, right: 2 })
 
-            if (this.userDetailReadonly) {
-              Text('用户搜索仅用于查看基础资料，账号管理操作仅管理员可用。')
+            if (!this.userDetailReadonly && !this.canOperateTarget(this.selectedUser)) {
+              Text(this.selectedUser.role === 'super_admin' ? '超级管理员不可操作' : '当前账号不可操作')
                 .width('100%')
                 .fontSize(13)
                 .fontColor($r('app.color.app_text_secondary'))
                 .backgroundColor($r('app.color.app_card_subtle_bg'))
+                .border({ width: 1, color: $r('app.color.app_border') })
                 .padding(12)
                 .borderRadius(8)
-            } else if (!this.canOperateTarget(this.selectedUser)) {
-              Text(this.selectedUser.role === 'super_admin' ? '超级管理员账号不可在用户管理中操作' : '不能对当前登录账号执行管理操作')
-                .width('100%')
-                .fontSize(13)
-                .fontColor($r('app.color.app_text_secondary'))
-                .backgroundColor($r('app.color.app_card_subtle_bg'))
-                .padding(12)
-                .borderRadius(8)
-            } else {
+            } else if (!this.userDetailReadonly) {
               Column({ space: 10 }) {
                 Text('初始化密码')
                   .fontSize(16)
@@ -1212,6 +1336,8 @@ export struct ProfileTab {
                   .height(40)
                   .fontColor($r('app.color.app_text_primary'))
                   .backgroundColor($r('app.color.app_input_bg'))
+                  .border({ width: 1, color: $r('app.color.app_border') })
+                  .borderRadius(8)
                   .onChange((val: string): void => {
                     this.resetPassword = val;
                   })
@@ -1221,6 +1347,8 @@ export struct ProfileTab {
                   .height(40)
                   .fontColor($r('app.color.app_text_primary'))
                   .backgroundColor($r('app.color.app_input_bg'))
+                  .border({ width: 1, color: $r('app.color.app_border') })
+                  .borderRadius(8)
                   .onChange((val: string): void => {
                     this.resetConfirmPassword = val;
                   })
@@ -1237,6 +1365,7 @@ export struct ProfileTab {
               .width('100%')
               .padding(12)
               .backgroundColor($r('app.color.app_card_subtle_bg'))
+              .border({ width: 1, color: $r('app.color.app_border') })
               .borderRadius(8)
 
               if (this.canChangeTargetRole(this.selectedUser)) {
@@ -1285,7 +1414,7 @@ export struct ProfileTab {
                   .fontColor($r('app.color.app_danger'))
                   .width('100%')
 
-                Text('删除后该账号无法登录，已创建的小组和记录会转交给当前管理员。')
+                Text('删除后不可登录')
                   .fontSize(12)
                   .fontColor($r('app.color.app_text_secondary'))
                   .width('100%')
@@ -1338,7 +1467,8 @@ export struct ProfileTab {
       .height('82%')
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
-      .borderRadius(12)
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(8)
     }
     .width('100%')
     .height('100%')
@@ -1347,7 +1477,7 @@ export struct ProfileTab {
   @Builder UserSearchPage() {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 12 }) {
-        this.PageHeader('用户搜索', '查询用户基础资料')
+        this.PageHeader('用户搜索')
 
         Row({ space: 8 }) {
           TextInput({ placeholder: '输入姓名、工号或手机号', text: this.searchKeyword })
@@ -1355,14 +1485,17 @@ export struct ProfileTab {
             .height(40)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.searchKeyword = val;
             })
 
           Button('搜索')
             .height(40)
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor($r('app.color.app_primary_soft'))
+            .fontColor($r('app.color.app_primary'))
             .onClick((): void => {
               this.searchPublicUsers();
             })
@@ -1378,6 +1511,9 @@ export struct ProfileTab {
                 .width('100%')
                 .textAlign(TextAlign.Center)
                 .padding(24)
+                .backgroundColor($r('app.color.app_card_bg'))
+                .border({ width: 1, color: $r('app.color.app_border') })
+                .borderRadius(8)
             }
           }
 
@@ -1407,8 +1543,9 @@ export struct ProfileTab {
 
                 Button('查看')
                   .height(34)
-                  .backgroundColor($r('app.color.app_primary'))
-                  .fontColor(Color.White)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor($r('app.color.app_primary_soft'))
+                  .fontColor($r('app.color.app_primary'))
                   .onClick((): void => {
                     this.openReadonlyUserDetail(item);
                   })
@@ -1416,7 +1553,8 @@ export struct ProfileTab {
               .width('100%')
               .padding(14)
               .backgroundColor($r('app.color.app_card_bg'))
-              .borderRadius(10)
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(8)
             }
           })
         }
@@ -1439,7 +1577,7 @@ export struct ProfileTab {
   @Builder AdminManagementPage() {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 12 }) {
-        this.PageHeader('用户管理', '查询、创建、查看和维护用户账号')
+        this.PageHeader('用户管理')
 
         Row({ space: 8 }) {
           TextInput({ placeholder: '按姓名或工号搜索', text: this.searchKeyword })
@@ -1447,20 +1585,24 @@ export struct ProfileTab {
             .height(40)
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_input_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
             .onChange((val: string): void => {
               this.searchKeyword = val;
             })
 
           Button('搜索')
             .height(40)
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor($r('app.color.app_primary_soft'))
+            .fontColor($r('app.color.app_primary'))
             .onClick((): void => {
               this.searchUsers();
             })
 
           Button('创建')
             .height(40)
+            .padding({ left: 14, right: 14 })
             .backgroundColor($r('app.color.app_primary'))
             .fontColor(Color.White)
             .onClick((): void => {
@@ -1478,6 +1620,9 @@ export struct ProfileTab {
                 .width('100%')
                 .textAlign(TextAlign.Center)
                 .padding(24)
+                .backgroundColor($r('app.color.app_card_bg'))
+                .border({ width: 1, color: $r('app.color.app_border') })
+                .borderRadius(8)
             }
           }
 
@@ -1507,8 +1652,9 @@ export struct ProfileTab {
 
                 Button('查看')
                   .height(34)
-                  .backgroundColor($r('app.color.app_primary'))
-                  .fontColor(Color.White)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor($r('app.color.app_primary_soft'))
+                  .fontColor($r('app.color.app_primary'))
                   .onClick((): void => {
                     this.openUserDetail(item);
                   })
@@ -1516,7 +1662,8 @@ export struct ProfileTab {
               .width('100%')
               .padding(14)
               .backgroundColor($r('app.color.app_card_bg'))
-              .borderRadius(10)
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(8)
             }
           })
         }

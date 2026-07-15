@@ -48,13 +48,17 @@ export struct RenameGroupDialog {
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
 
       Row({ space: 20 }) {
         Button('取消')
           .onClick((): void => {
             this.controller.close();
           })
-          .backgroundColor(Color.Gray)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_text_primary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
 
         Button('保存')
           .backgroundColor($r('app.color.app_primary'))
@@ -68,6 +72,9 @@ export struct RenameGroupDialog {
     }
     .padding(20)
     .width('90%')
+    .backgroundColor($r('app.color.app_card_bg'))
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
   }
 }
 
@@ -324,6 +331,7 @@ export struct GroupTab {
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
     .backgroundColor($r('app.color.app_card_subtle_bg'))
+    .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
   }
 
@@ -378,7 +386,8 @@ export struct GroupTab {
       .width('88%')
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
-      .borderRadius(12)
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(8)
     }
     .width('100%')
     .height('100%')
@@ -392,15 +401,13 @@ export struct GroupTab {
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
-          Text('输入工号时会显示候选用户')
-            .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
         Button('发送')
           .height(36)
+          .padding({ left: 14, right: 14 })
           .backgroundColor($r('app.color.app_primary'))
           .fontColor(Color.White)
           .onClick((): void => {
@@ -414,12 +421,14 @@ export struct GroupTab {
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
         .onChange((val: string): void => {
           this.searchInviteCandidates(val);
         })
 
       if (this.inviteKeyword.trim().length > 0 && this.inviteCandidates.length === 0) {
-        Text('暂无可邀请候选人')
+        Text('暂无候选')
           .width('100%')
           .fontSize(13)
           .fontColor($r('app.color.app_text_secondary'))
@@ -457,19 +466,21 @@ export struct GroupTab {
         .width('100%')
         .padding(10)
         .backgroundColor($r('app.color.app_card_subtle_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
       })
     }
     .width('90%')
     .padding(14)
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(10)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
   }
 
   @Builder MemberList() {
     Column({ space: 10 }) {
       Row() {
-        Text('成员通讯录')
+        Text('成员')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.app_text_primary'))
@@ -477,8 +488,10 @@ export struct GroupTab {
 
         Button('刷新')
           .height(32)
+          .padding({ left: 12, right: 12 })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
           .fontColor($r('app.color.app_text_primary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
           .onClick((): void => {
             this.loadGroup();
           })
@@ -529,8 +542,9 @@ export struct GroupTab {
               Column({ space: 8 }) {
                 Button('查看')
                   .height(32)
-                  .backgroundColor($r('app.color.app_primary'))
-                  .fontColor(Color.White)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor($r('app.color.app_primary_soft'))
+                  .fontColor($r('app.color.app_primary'))
                   .onClick((): void => {
                     this.openMemberDetail(member);
                   })
@@ -538,8 +552,10 @@ export struct GroupTab {
                 if (this.group.is_creator && !member.is_creator) {
                   Button(member.status === 'pending' ? '撤回' : '移除')
                     .height(32)
+                    .padding({ left: 12, right: 12 })
                     .backgroundColor($r('app.color.app_card_subtle_bg'))
                     .fontColor('#B91C1C')
+                    .border({ width: 1, color: $r('app.color.app_border') })
                     .onClick((): void => {
                       this.removeMember(member);
                     })
@@ -549,7 +565,8 @@ export struct GroupTab {
             .width('100%')
             .padding(15)
             .backgroundColor($r('app.color.app_card_bg'))
-            .borderRadius(10)
+            .border({ width: 1, color: $r('app.color.app_border') })
+            .borderRadius(8)
           }
         })
       }
@@ -570,7 +587,7 @@ export struct GroupTab {
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.app_text_primary'))
-            Text(`${this.group.member_count} 位成员 · ${this.group.pending_count} 个待确认邀请`)
+            Text(`成员 ${this.group.member_count} · 待确认 ${this.group.pending_count}`)
               .fontSize(12)
               .fontColor($r('app.color.app_text_secondary'))
           }
@@ -580,23 +597,30 @@ export struct GroupTab {
           if (this.group.is_creator) {
             Button('改名')
               .height(36)
-              .backgroundColor($r('app.color.app_primary'))
-              .fontColor(Color.White)
+              .padding({ left: 14, right: 14 })
+              .backgroundColor($r('app.color.app_primary_soft'))
+              .fontColor($r('app.color.app_primary'))
               .onClick((): void => {
                 this.renameDialogController.open();
               })
           } else if (this.group.id !== 0) {
             Button('退出')
               .height(36)
-              .backgroundColor($r('app.color.app_danger'))
-              .fontColor(Color.White)
+              .padding({ left: 14, right: 14 })
+              .backgroundColor($r('app.color.app_card_bg'))
+              .fontColor($r('app.color.app_danger'))
+              .border({ width: 1, color: $r('app.color.app_danger') })
               .onClick((): void => {
                 this.leaveGroup();
               })
           }
         }
         .width('90%')
-        .padding({ top: 20, bottom: 4 })
+        .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+        .backgroundColor($r('app.color.app_card_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
+        .margin({ top: 18 })
 
         if (this.group.is_creator && this.group.id !== 0) {
           this.InvitePanel()
@@ -607,9 +631,12 @@ export struct GroupTab {
             Text(this.groupId ? '暂无成员' : '请先创建或选择小组')
               .fontSize(16)
               .fontColor($r('app.color.app_text_secondary'))
-              .margin({ top: 80 })
           }
-          .width('100%')
+          .width('90%')
+          .padding(28)
+          .backgroundColor($r('app.color.app_card_bg'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
           .layoutWeight(1)
           .justifyContent(FlexAlign.Start)
         } else {
