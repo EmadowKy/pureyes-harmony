@@ -7,6 +7,7 @@ struct Login {
   @State empId: string = '';
   @State pass: string = '';
   @State loading: boolean = false;
+  @State checkingServer: boolean = false;
   @State serverStatus: string = '检查服务器连接中...';
   @State isServerOk: boolean = false;
   @State errorMsg: string = '';
@@ -16,6 +17,12 @@ struct Login {
   }
 
   async checkServer(): Promise<void> {
+    if (this.checkingServer) {
+      return;
+    }
+
+    this.checkingServer = true;
+    this.serverStatus = '检查服务器连接中...';
     const res = await HttpUtil.get('/health');
     if (res.code === 0) {
       this.serverStatus = '✅ 服务器已连接';
@@ -24,6 +31,7 @@ struct Login {
       this.serverStatus = '❌ 服务器未连接，请检查模拟器/局域网 IP 设置';
       this.isServerOk = false;
     }
+    this.checkingServer = false;
   }
 
   async handleLogin(): Promise<void> {
@@ -32,6 +40,14 @@ struct Login {
     if (this.empId.length === 0 || this.pass.length === 0) {
       this.errorMsg = '请输入工号和密码';
       return;
+    }
+
+    if (!this.isServerOk) {
+      await this.checkServer();
+      if (!this.isServerOk) {
+        this.errorMsg = '服务器未连接，暂时无法登录';
+        return;
+      }
     }
 
     class LoginPayload {
@@ -75,6 +91,19 @@ struct Login {
         .fontColor(this.isServerOk ? Color.Green : Color.Red)
         .margin({ bottom: 10 })
 
+      if (!this.isServerOk) {
+        Button(this.checkingServer ? '检测中...' : '重新检测')
+          .width('80%')
+          .height(38)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_text_primary'))
+          .enabled(!this.checkingServer)
+          .opacity(this.checkingServer ? 0.6 : 1)
+          .onClick((): void => {
+            this.checkServer();
+          })
+      }
+
       TextInput({ placeholder: '请输入工号 (例如: admin)' })
         .width('80%')
         .height(50)
@@ -109,8 +138,8 @@ struct Login {
         .backgroundColor($r('app.color.app_primary'))
         .fontColor(Color.White)
         .margin({ top: 20 })
-        .enabled(!this.loading)
-        .opacity(this.loading ? 0.6 : 1)
+        .enabled(!this.loading && !this.checkingServer)
+        .opacity((this.loading || this.checkingServer) ? 0.6 : 1)
         .onClick((): void => {
           this.handleLogin();
         })

@@ -9,6 +9,8 @@ export class HttpResult {
   data?: string; // stringified JSON to avoid 'any'
 }
 
+const REQUEST_TIMEOUT = 10000;
+
 export class HttpUtil {
   static async request(url: string, method: http.RequestMethod, data?: Object): Promise<HttpResult> {
     const httpRequest = http.createHttp();
@@ -20,6 +22,8 @@ export class HttpUtil {
           'Authorization': `Bearer ${AppStorage.get<string>('access_token') || ''}`
         },
         extraData: data ? JSON.stringify(data) : undefined,
+        connectTimeout: REQUEST_TIMEOUT,
+        readTimeout: REQUEST_TIMEOUT,
       });
       const resObj = JSON.parse(response.result as string) as Object;
       const result = new HttpResult();
@@ -35,6 +39,8 @@ export class HttpUtil {
       errRes.code = -1;
       errRes.message = 'Network Error';
       return errRes;
+    } finally {
+      httpRequest.destroy();
     }
   }
 
