@@ -137,9 +137,16 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                             if task_id and getattr(api_config, 'is_final_answer', False):
                                 from app.workspaces.routes import running_tasks
                                 if task_id in running_tasks:
-                                    running_tasks[task_id]['answer'] = partial_text
-                        except:
-                            pass
+                                    import re
+                                    match = re.search(r'"final_answer"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', partial_text)
+                                    if match:
+                                        clean_answer = match.group(1)
+                                        clean_answer = clean_answer.replace('\\"', '"').replace('\\n', '\n')
+                                        running_tasks[task_id]['answer'] = clean_answer
+                                    else:
+                                        running_tasks[task_id]['answer'] = ""
+                        except Exception as parse_err:
+                            print(f"[MVA Stream Parse Error] {parse_err}")
                             
             content = "".join(collected_chunks)
             print(f"[MVA Cloud API] Answer (stream complete): {content}")
