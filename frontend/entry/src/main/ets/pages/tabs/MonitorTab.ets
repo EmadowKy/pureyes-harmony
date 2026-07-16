@@ -360,6 +360,16 @@ export struct MonitorTab {
       promptAction.showToast({ message: '请输入有效时间，例如 2026-07-12 12:30:00', duration: 2000 });
       return;
     }
+    const targetDate = new Date(isoTime);
+    const now = new Date();
+    if (!isNaN(targetDate.getTime()) && targetDate.getTime() > now.getTime()) {
+      const nowText = this.formatDateTime(now);
+      this.selectedTimeText = nowText;
+      this.jumpTimeText = nowText;
+      promptAction.showToast({ message: '不能跳转到未来时间', duration: 2000 });
+      await this.loadTimeline(nowText, this.playbackMode === 'history');
+      return;
+    }
     await this.loadTimeline(isoTime, true);
   }
 
@@ -386,7 +396,12 @@ export struct MonitorTab {
     if (isNaN(date.getTime())) {
       return;
     }
-    const shifted = new Date(date.getTime() + offsetSteps * this.granularityStepSeconds() * 1000);
+    let shifted = new Date(date.getTime() + offsetSteps * this.granularityStepSeconds() * 1000);
+    const now = new Date();
+    if (shifted.getTime() > now.getTime()) {
+      shifted = now;
+      promptAction.showToast({ message: '不能移动到未来时间', duration: 1600 });
+    }
     await this.loadTimeline(this.formatDateTime(shifted), this.playbackMode === 'history');
   }
 
@@ -422,7 +437,7 @@ export struct MonitorTab {
             .width('100%')
             .height(250)
             .autoPlay(true)
-            .controls(true)
+            .controls(false)
             .objectFit(ImageFit.Contain)
             .onPrepared((): void => {
               if (this.playbackMode === 'history' && this.playbackOffsetSeconds > 0) {
