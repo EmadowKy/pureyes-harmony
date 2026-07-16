@@ -103,6 +103,8 @@ export struct MonitorTab {
   @State selectedRecordIndex: number = -1;
   @State timelineOffsetValue: number = 0;
   @State jumpTimeText: string = '';
+  @State playbackOffsetSeconds: number = 0;
+  videoController: VideoController = new VideoController();
 
   addMonitorDialogController: CustomDialogController = new CustomDialogController({
     builder: AddMonitorDialog({
@@ -135,6 +137,7 @@ export struct MonitorTab {
     this.selectedRecordIndex = -1;
     this.timelineOffsetValue = 0;
     this.jumpTimeText = '';
+    this.playbackOffsetSeconds = 0;
   }
 
   buildSourceUrl(url: string): string {
@@ -182,6 +185,51 @@ export struct MonitorTab {
       }
     }
     return 60;
+  }
+
+  timestampFromText(value: string): number {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (!match) {
+      return NaN;
+    }
+    return new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    ).getTime();
+  }
+
+  calculatePlaybackOffsetSeconds(targetTime: string, startTime: string, endTime: string): number {
+    const targetMs = this.timestampFromText(targetTime);
+    const startMs = this.timestampFromText(startTime);
+    const endMs = this.timestampFromText(endTime);
+    if (isNaN(targetMs) || isNaN(startMs)) {
+      return 0;
+    }
+
+    let offset = Math.floor((targetMs - startMs) / 1000);
+    if (offset < 0) {
+      offset = 0;
+    }
+    if (!isNaN(endMs)) {
+      const maxOffset = Math.max(0, Math.floor((endMs - startMs) / 1000) - 1);
+      if (offset > maxOffset) {
+        offset = maxOffset;
+      }
+    }
+    return offset;
+  }
+
+  seekPlaybackOffset(): void {
+    if (this.playbackMode !== 'history') {
+      return;
+    }
+    this.videoController.pause();
+    this.videoController.setCurrentTime(this.playbackOffsetSeconds, SeekMode.Accurate);
+    this.videoController.start();
   }
 
   async loadMonitors(): Promise<void> {
@@ -242,6 +290,7 @@ export struct MonitorTab {
     this.selectedMonitorName = monitor.name;
     this.isLiveStream = monitor.stream_url.includes('/live/');
     this.playbackMode = 'live';
+    this.playbackOffsetSeconds = 0;
     this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
     this.selectedTimeText = this.formatDateTime(new Date());
     this.jumpTimeText = this.selectedTimeText;
@@ -284,9 +333,14 @@ export struct MonitorTab {
     });
 
     if (selectedRecord && activatePlayback) {
-      this.selectedMonitorUrl = this.buildHttpUrl(selectedRecord['url'] as string);
+      this.playbackOffsetSeconds = this.calculatePlaybackOffsetSeconds(
+        selectedTime,
+        selectedRecord['start_time'] as string,
+        selectedRecord['end_time'] as string
+      );
       this.playbackMode = 'history';
       this.isLiveStream = false;
+      this.selectedMonitorUrl = this.buildHttpUrl(selectedRecord['url'] as string);
     } else if (!selectedRecord && activatePlayback) {
       promptAction.showToast({ message: '该时间点没有对应录制片段', duration: 2000 });
     }
@@ -316,6 +370,7 @@ export struct MonitorTab {
     }
     this.playbackMode = 'live';
     this.isLiveStream = monitor.stream_url.includes('/live/');
+    this.playbackOffsetSeconds = 0;
     this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
     const nowText = this.formatDateTime(new Date());
     this.selectedTimeText = nowText;
@@ -363,12 +418,17 @@ export struct MonitorTab {
         .padding(15)
 
         Stack({ alignContent: Alignment.TopStart }) {
-          Video({ src: this.selectedMonitorUrl })
+          Video({ src: this.selectedMonitorUrl, controller: this.videoController })
             .width('100%')
             .height(250)
             .autoPlay(true)
             .controls(true)
             .objectFit(ImageFit.Contain)
+            .onPrepared((): void => {
+              if (this.playbackMode === 'history' && this.playbackOffsetSeconds > 0) {
+                this.seekPlaybackOffset();
+              }
+            })
             .onError((): void => {
               promptAction.showToast({ message: '视频流加载失败，监控无画面！', duration: 2000 });
             })
@@ -509,9 +569,10 @@ export struct MonitorTab {
                 .shadow({ radius: 4, color: $r('app.color.app_shadow') })
                 .onClick((): void => {
                   this.selectedRecordIndex = index;
-                  this.selectedMonitorUrl = record.url;
                   this.playbackMode = 'history';
                   this.isLiveStream = false;
+                  this.selectedMonitorUrl = this.buildHttpUrl(record.url.replace(BASE_HOST, '').split('?')[0]);
+                  this.playbackOffsetSeconds = 0;
                   this.selectedTimeText = record.start_time;
                   this.jumpTimeText = this.formatDateTime(new Date(record.start_time));
                   for (let i = 0; i < this.timelineRecords.length; i++) {

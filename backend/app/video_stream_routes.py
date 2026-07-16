@@ -6,6 +6,7 @@ import tempfile
 import uuid
 import time
 import threading
+import hashlib
 from flask import Blueprint, send_file, abort, Response, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,53 @@ print(f"[DEBUG] video_stream_bp BACKEND_DIR: {BACKEND_DIR}")
 executor = ThreadPoolExecutor(max_workers=2)
 transcoded_cache = {}
 MAX_CACHE_SIZE = 5
+OFFSET_CACHE_SIZE = 20
+
+
+def _serve_offset_video(video_path: str, offset_seconds: int):
+    if offset_seconds <= 0:
+        return None
+
+    try:
+        source_mtime = int(os.path.getmtime(video_path))
+        cache_key = hashlib.md5(f"accurate-v2:{video_path}:{source_mtime}:{offset_seconds}".encode("utf-8")).hexdigest()
+        offset_dir = os.path.join(BACKEND_DIR, 'temp', 'playback_offsets')
+        os.makedirs(offset_dir, exist_ok=True)
+        output_path = os.path.join(offset_dir, f"{cache_key}.mp4")
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            cmd = [
+                get_ffmpeg_path('ffmpeg'), '-y',
+                '-i', video_path,
+                '-ss', str(offset_seconds),
+                '-t', '20',
+                '-c:v', 'libx264', '-preset', 'veryfast',
+                '-pix_fmt', 'yuv420p',
+                '-an',
+                '-movflags', '+faststart',
+                output_path
+            ]
+            print(f"[INFO] Creating accurate offset playback: offset={offset_seconds}, source={video_path}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                print(f"[ERROR] Offset slice failed: {result.stderr[-500:]}")
+                return None
+
+            cached_files = sorted(
+                [os.path.join(offset_dir, name) for name in os.listdir(offset_dir) if name.endswith('.mp4')],
+                key=lambda item: os.path.getmtime(item)
+            )
+            while len(cached_files) > OFFSET_CACHE_SIZE:
+                old_path = cached_files.pop(0)
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass
+
+        return send_file(output_path, mimetype='video/mp4')
+    except Exception as e:
+        print(f"[ERROR] Offset playback exception: {e}")
+        return None
 
 
 def _normalize_video_path(video_path: str) -> str:
@@ -175,6 +223,14 @@ def serve_video(video_path):
                 'needs_transcode': needs_tc,
                 'path': video_path
             }
+
+        try:
+            offset_seconds = max(0, int(float(request.args.get('offset') or 0)))
+        except ValueError:
+            offset_seconds = 0
+        offset_response = _serve_offset_video(full_path, offset_seconds)
+        if offset_response is not None:
+            return offset_response
 
         cache_key = safe_video_path
 

@@ -47,10 +47,15 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
             
         cmd.extend([
             "-i", stream_url,
-            "-c:v", "copy",
-            "-c:a", "copy",
+            "-an",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p",
+            "-force_key_frames", "expr:gte(t,n_forced*2)",
             "-f", "segment",
             "-segment_time", "60",
+            "-reset_timestamps", "1",
             "-segment_format", "mp4",
             "-strftime", "1",
             os.path.join(output_dir, "%Y%m%d_%H%M%S.mp4")
@@ -60,10 +65,14 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
             print(f"[Recorder] Starting recording command for monitor {monitor_id}: {' '.join(cmd)}")
             # Start process in background
             # We redirect stdout/stderr to devnull to avoid blocking Popen or spamming logs
+            log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "logs"))
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, f"recorder_{monitor_id}.log")
+            log_file = open(log_path, "ab")
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=log_file,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             recording_processes[monitor_id] = proc
