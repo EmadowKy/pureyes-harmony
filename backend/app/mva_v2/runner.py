@@ -93,9 +93,19 @@ class MVA2Runner:
                     }
                 })
             
+            # 如果是最后一轮，强制要求模型输出 final_answer 结束任务
+            if loop_idx == self.max_feedback_loops:
+                logger.info("Reached maximum iterations (10). Forcing final answer...")
+                messages.append({
+                    "role": "user",
+                    "content": "【重要指令】当前问答决策已达最大限制（10轮）。请不要再调用任何工具。根据目前你搜集到的所有观察线索，请立刻给出你对用户提问的最终中文推演回答，并严格按照格式输出包含 thought 和 final_answer 的 JSON。"
+                })
+
             # 调用云端多模态大模型
             try:
                 # 这一步会根据 routes.py 注入的 LLM 密钥去调用 Qwen-VL
+                from app.mva.utils import api_config
+                setattr(api_config, 'loop_idx', loop_idx)
                 vlm_response = Qwen_VL(messages)
             except Exception as e:
                 logger.error(f"VLM call failed in ReAct loop: {e}")
@@ -227,7 +237,22 @@ class MVA2Runner:
                 logger.warning(f"Failed to remove temp image {temp_img}: {clean_err}")
                 
         if final_answer_result is None:
-            final_answer_result = "已达到最大推理步骤限制，大模型未输出确定性的答案结论。请尝试更具体地进行提问。"
+            logger.warning("Max loops reached without final answer. Running fallback final answer extraction...")
+            try:
+                messages.append({
+                    "role": "user",
+                    "content": "当前推理已被强行终止，请不要输出任何 JSON 和工具名，直接用一句话简短总结上述推演线索给出最终的中文回答。"
+                })
+                # 设置 is_final_answer = True 以开启 streaming
+                from app.mva.utils import api_config
+                setattr(api_config, 'is_final_answer', True)
+                fallback_resp = Qwen_VL(messages)
+                
+                # 尝试再次解析 final_answer，如果不是 JSON 格式则直接将返回文本当作答案
+                _, _, _, final_answer = ReActParser.parse_response(fallback_resp)
+                final_answer_result = final_answer or fallback_resp
+            except Exception as fallback_err:
+                final_answer_result = f"分析步骤已达最大限制，强制提取回答时出错: {str(fallback_err)}"
             
         return final_answer_result
 

@@ -217,6 +217,7 @@ export class ProgressGroup {
   isFailed: boolean = false;
   isCollapsed: boolean = false;
   details: Array<string> = [];
+  badgeText: string = '';
 }
 
 @CustomDialog
@@ -820,15 +821,18 @@ struct WorkspaceDetail {
         if (!g) {
           g = new ProgressGroup();
           g.id = id;
-          g.title = `决策分析 (第 ${iter} 轮)：正在决策`;
+          g.title = '正在决策';
+          g.badgeText = `第 ${iter} 轮`;
           groups.push(g);
         }
+        g.badgeText = `第 ${iter} 轮`;
 
         if (phase === 'thinking') {
-          g.title = `决策分析 (第 ${iter} 轮)：正在决策`;
+          g.title = '正在决策';
           g.isCompleted = false;
           g.isFailed = false;
-          g.details = ['大模型正在审视当前已有的证据与问题，思考下一步行动...'];
+          const thought = (data['thought'] as string) || '';
+          g.details = [`思考过程: ${thought || '大模型正在审视当前已有的证据与问题，思考下一步行动...'}`];
         } 
         else if (phase === 'action') {
           const toolName = (data['tool_name'] as string) || '';
@@ -844,7 +848,7 @@ struct WorkspaceDetail {
             friendlyTool = '查询视频元数据';
           }
           
-          g.title = `决策分析 (第 ${iter} 轮)：${friendlyTool}`;
+          g.title = friendlyTool;
           g.isCompleted = true;
           g.isFailed = false;
           
@@ -874,7 +878,7 @@ struct WorkspaceDetail {
         }
         else if (phase === 'completed') {
           const thought = (data['thought'] as string) || '锁定了完整的事件证据链';
-          g.title = `决策分析 (第 ${iter} 轮)：推理结论达成`;
+          g.title = '推理结论达成';
           g.isCompleted = true;
           g.isFailed = false;
           g.details = [`思考总结: ${thought}`];
@@ -1276,11 +1280,23 @@ struct WorkspaceDetail {
                         .fill(group.isFailed ? '#EF4444' : (group.isCompleted ? '#10B981' : '#3B82F6'))
                         .margin({ right: 10 })
 
-                      Text(group.title)
-                        .fontSize(14)
-                        .fontWeight(FontWeight.Bold)
-                        .fontColor('#374151')
-                        .layoutWeight(1)
+                      Row() {
+                        Text(group.title)
+                          .fontSize(14)
+                          .fontWeight(FontWeight.Bold)
+                          .fontColor('#374151')
+
+                        if (group.badgeText) {
+                          Text(group.badgeText)
+                            .fontSize(10)
+                            .fontColor('#3B82F6')
+                            .backgroundColor('#EFF6FF')
+                            .borderRadius(4)
+                            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                            .margin({ left: 6 })
+                        }
+                      }
+                      .layoutWeight(1)
 
                       if (group.isFailed) {
                         Text('失败')

@@ -134,17 +134,33 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                             partial_text = "".join(collected_chunks)
                             
                             # Update running tasks dict dynamically for streaming/typewriter feedback
-                            if task_id and getattr(api_config, 'is_final_answer', False):
+                            if task_id:
                                 from app.workspaces.routes import running_tasks
                                 if task_id in running_tasks:
                                     import re
-                                    match = re.search(r'"final_answer"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', partial_text)
-                                    if match:
-                                        clean_answer = match.group(1)
-                                        clean_answer = clean_answer.replace('\\"', '"').replace('\\n', '\n')
-                                        running_tasks[task_id]['answer'] = clean_answer
+                                    # 1. 最终回答流：若包含 final_answer，将其提取并更新至主答案字段
+                                    match_ans = re.search(r'"final_answer"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', partial_text)
+                                    if match_ans:
+                                        if getattr(api_config, 'is_final_answer', False):
+                                            clean_answer = match_ans.group(1)
+                                            clean_answer = clean_answer.replace('\\"', '"').replace('\\n', '\n')
+                                            running_tasks[task_id]['answer'] = clean_answer
                                     else:
+                                        # 如果是中间推理阶段或最终推理尚未输出到回答，主答案展示为空（前端会展示‘分析中’状态）
                                         running_tasks[task_id]['answer'] = ""
+
+                                    # 2. 思考过程流：若包含 thought，将其提取并更新到对应轮次的 Progress 日志中
+                                    match_thought = re.search(r'"thought"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', partial_text)
+                                    if match_thought:
+                                        clean_thought = match_thought.group(1)
+                                        clean_thought = clean_thought.replace('\\"', '"').replace('\\n', '\n')
+                                        
+                                        loop_idx = getattr(api_config, 'loop_idx', 1)
+                                        prog_list = running_tasks[task_id].get('progress', [])
+                                        for prog in reversed(prog_list):
+                                            if prog.get('stage') == 'reasoning' and prog.get('data', {}).get('iteration') == loop_idx:
+                                                prog['data']['thought'] = clean_thought
+                                                break
                         except Exception as parse_err:
                             print(f"[MVA Stream Parse Error] {parse_err}")
                             
