@@ -786,6 +786,20 @@ struct WorkspaceDetail {
     }, 100);
   }
 
+  getFriendlyVideoName(videoKey: string): string {
+    if (!videoKey) {
+      return '当前视频';
+    }
+    const filename = videoKey.split('/').pop() || videoKey;
+    for (let i = 0; i < this.segments.length; i++) {
+      const seg = this.segments[i];
+      if (seg.filepath.indexOf(filename) !== -1) {
+        return seg.remark ? `${seg.remark} (监控: ${seg.video_name})` : `片段-${seg.id} (${seg.video_name})`;
+      }
+    }
+    return filename;
+  }
+
   parseProgressToGroups(progressList: Array<Record<string, Object>>): Array<ProgressGroup> {
     const groups: Array<ProgressGroup> = [];
     
@@ -796,218 +810,77 @@ struct WorkspaceDetail {
       const msg = (item['message'] as string) || '';
       const data = (item['data'] as Record<string, Object>) || {};
 
-      // ==========================================
-      // MVA V2 算法引擎阶段匹配
-      // ==========================================
-      if (stage === 'metadata') {
-        let g = groups.find(x => x.id === 'metadata');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'metadata';
-          g.title = '任务初始化';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
-      else if (stage === 'slicing') {
-        let g = groups.find(x => x.id === 'slicing');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'slicing';
-          g.title = '视频片段物理裁剪';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
-      else if (stage === 'model_initialization') {
-        let g = groups.find(x => x.id === 'model_initialization');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'model_initialization';
-          g.title = '按需分析引擎就绪';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
-      else if (stage === 'jit_ingestion') {
-        let g = groups.find(x => x.id === 'jit_ingestion');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'jit_ingestion';
-          g.title = '时空特征提取';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
-      else if (stage === 'reasoning') {
-        let g = groups.find(x => x.id === 'reasoning');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'reasoning';
-          g.title = '多模态推演与闭环纠错';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (msg) {
-          g.details.push(msg);
-        }
-      }
-      // ==========================================
-      // 旧版 V1 算法阶段兼容匹配
-      // ==========================================
-      else if (stage === 'question_analysis') {
-        let g = groups.find(x => x.id === 'question_analysis');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'question_analysis';
-          g.title = '模型决策';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        if (data['analysis']) {
-          g.details = [`分析策略: ${data['analysis']}`];
-        } else if (msg) {
-          g.details.push(msg);
-        }
-      }
-      else if (stage === 'initialization' && status === 'running') {
-        const video = (data['video'] as string) || '';
-        const id = 'init_desc_' + video;
+      // 1. MVA V2 reasoning (ReAct Loop) 拆解
+      if (stage === 'reasoning') {
+        const iter = (data['iteration'] as number) || 1;
+        const phase = (data['phase'] as string) || 'thinking';
+        const id = 'reasoning_iter_' + iter;
+        
         let g = groups.find(x => x.id === id);
         if (!g) {
           g = new ProgressGroup();
           g.id = id;
-          g.title = `初始化视频: ${video}`;
+          g.title = `决策分析 (第 ${iter} 轮)：正在决策`;
           groups.push(g);
         }
-        g.isCompleted = false;
-        if (msg) {
-          g.details = [msg];
-        }
-      }
-      else if (stage === 'sampling' && status === 'failed') {
-        const video = (data['video'] as string) || '';
-        const iter = data['iteration'] !== undefined ? ` (循环 ${data['iteration']})` : '';
-        const id = 'sample_fail_' + video + '_' + (data['iteration'] || 'init');
-        const g = new ProgressGroup();
-        g.id = id;
-        g.title = `采样失败: ${video}${iter}`;
-        g.isFailed = true;
-        g.details.push(msg);
-        groups.push(g);
-      }
-      else if (stage === 'description_scoring' && status === 'completed') {
-        const video = (data['video'] as string) || '';
-        const iteration = data['iteration'] as number;
-        
-        if (iteration === undefined) {
-          // Initialization phase description
-          const id = 'init_desc_' + video;
-          let g = groups.find(x => x.id === id);
-          if (!g) {
-            g = new ProgressGroup();
-            g.id = id;
-            g.title = `初始化视频: ${video}`;
-            groups.push(g);
+
+        if (phase === 'thinking') {
+          g.title = `决策分析 (第 ${iter} 轮)：正在决策`;
+          g.isCompleted = false;
+          g.isFailed = false;
+          g.details = ['大模型正在审视当前已有的证据与问题，思考下一步行动...'];
+        } 
+        else if (phase === 'action') {
+          const toolName = (data['tool_name'] as string) || '';
+          const toolParams = (data['tool_params'] as Record<string, Object>) || {};
+          const thought = (data['thought'] as string) || '正在搜寻线索';
+          
+          let friendlyTool = '调用工具';
+          if (toolName === 'spatiotemporal_search') {
+            friendlyTool = '检索时空特征';
+          } else if (toolName === 'read_frame_image') {
+            friendlyTool = '提取并阅读监控画面';
+          } else if (toolName === 'get_video_metadata') {
+            friendlyTool = '查询视频元数据';
           }
+          
+          g.title = `决策分析 (第 ${iter} 轮)：${friendlyTool}`;
           g.isCompleted = true;
+          g.isFailed = false;
           
-          const vTerm = data['v_term'] as boolean;
-          const vStatus = (data['status'] as string) || '';
-          let statusText = '继续探索';
-          if (vTerm || vStatus === 'desc_terminated') {
-            statusText = '已终止探索';
+          const details: Array<string> = [];
+          details.push(`思考过程: ${thought}`);
+          
+          if (toolName === 'spatiotemporal_search') {
+            const qType = (toolParams['query_type'] as string) || 'semantic';
+            const qText = (toolParams['query_text'] as string) || '';
+            const vId = (toolParams['video_id'] as string) || '';
+            details.push(`检索类型: ${qType === 'semantic' ? '场景动作语义分析' : '特定人物目标追踪'}`);
+            details.push(`搜索目标: ${qText}`);
+            details.push(`选中视频: ${this.getFriendlyVideoName(vId)}`);
+          } 
+          else if (toolName === 'read_frame_image') {
+            const vPath = (toolParams['video_path'] as string) || '';
+            const tSec = (toolParams['timestamp_sec'] as number) || 0.0;
+            details.push(`查看画面时间点: ${tSec.toFixed(2)} 秒`);
+            details.push(`选中视频: ${this.getFriendlyVideoName(vPath)}`);
+          } 
+          else if (toolName === 'get_video_metadata') {
+            const vPath = (toolParams['video_path'] as string) || '';
+            details.push(`查询视频路径: ${this.getFriendlyVideoName(vPath)}`);
           }
           
-          g.details = [
-            `初始评分: ${data['score'] !== undefined ? data['score'] : '0.50'}`,
-            `初始描述: ${data['description'] || ''}`,
-            `当前优先级: ${data['priority'] !== undefined ? data['priority'] : '0.50'}`,
-            `视频终止探索: ${vTerm ? '是 (已锁定目标特征)' : '否'}`,
-            `探索状态: ${statusText}`
-          ];
-        } else {
-          // Iteration phase description
-          const id = `iter_desc_${video}_${iteration}`;
-          let g = groups.find(x => x.id === id);
-          if (!g) {
-            g = new ProgressGroup();
-            g.id = id;
-            g.title = `搜索视频: ${video} (第 ${iteration} 次循环)`;
-            groups.push(g);
-          }
+          g.details = details;
+        }
+        else if (phase === 'completed') {
+          const thought = (data['thought'] as string) || '锁定了完整的事件证据链';
+          g.title = `决策分析 (第 ${iter} 轮)：推理结论达成`;
           g.isCompleted = true;
-          
-          const priority = data['iteration_data'] ? (data['iteration_data'] as Record<string, Object>)['priority'] : undefined;
-          const vTerm = data['v_term'] as boolean;
-          const gTerm = data['g_term'] as boolean;
-          
-          g.details = [
-            `帧评分: ${data['new_score'] !== undefined ? data['new_score'] : '0.50'}`,
-            `新增描述: ${data['description_snippet'] || ''}`,
-            `视频评分: ${data['new_score'] !== undefined ? data['new_score'] : '0.50'}`,
-            `加速度: ${data['acceleration'] !== undefined ? data['acceleration'] : '1'}`,
-            `优先级: ${priority !== undefined ? priority : '0.50'}`,
-            `单视频终止探索: ${vTerm ? '是' : '否'}`,
-            `全局终止探索: ${gTerm ? '是' : '否'}`
-          ];
+          g.isFailed = false;
+          g.details = [`思考总结: ${thought}`];
         }
       }
-      else if (stage === 'iteration' && status === 'tool_decided') {
-        const iter = data['iteration'] as number;
-        const id = `decision_${iter}`;
-        let g = groups.find(x => x.id === id);
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = id;
-          g.title = `制定决策 (第 ${iter} 次循环)`;
-          groups.push(g);
-        }
-        g.isCompleted = true;
-        
-        const option = data['option'] !== undefined ? data['option'] : '5';
-        const start = data['target_start'] !== undefined ? (data['target_start'] as number).toFixed(2) + 's' : '0.00s';
-        const end = data['target_end'] !== undefined ? (data['target_end'] as number).toFixed(2) + 's' : '0.00s';
-        
-        g.details = [
-          `目标视频: ${data['selected_video'] || ''}`,
-          `行动选项: 选项 ${option}`,
-          `目标区间: ${start} - ${end}`,
-          `候选得分: ${data['candidate_scores'] !== undefined ? JSON.stringify(data['candidate_scores']) : '[]'}`
-        ];
-      }
-      else if (stage === 'finalization') {
-        let g = groups.find(x => x.id === 'finalization');
-        if (!g) {
-          g = new ProgressGroup();
-          g.id = 'finalization';
-          g.title = '分析探索总结';
-          groups.push(g);
-        }
-        g.isCompleted = (status === 'completed');
-        
-        const termReason = (data['term_reason'] as string) || '';
-        const iterCount = data['iteration_count'] !== undefined ? data['iteration_count'] as number : 0;
-        const numVideos = data['num_videos'] !== undefined ? data['num_videos'] as number : 1;
-        
-        g.details = [
-          `终止原因: ${termReason || msg || '探索完成'}`,
-          `分析视频数: ${numVideos}`,
-          `探索迭代次数: ${iterCount}`
-        ];
-      }
+      // 2. 最终答复阶段
       else if (stage === 'answering') {
         let g = groups.find(x => x.id === 'answering');
         if (!g) {
@@ -1019,6 +892,7 @@ struct WorkspaceDetail {
         g.isCompleted = (status === 'completed');
         g.details = [];
       }
+      // 3. 系统错误阶段
       else if (stage === 'system') {
         const id = 'sys_error';
         let g = groups.find(x => x.id === id);
@@ -1029,7 +903,7 @@ struct WorkspaceDetail {
           groups.push(g);
         }
         g.isFailed = true;
-        g.details.push(msg);
+        g.details = [msg];
       }
     }
 

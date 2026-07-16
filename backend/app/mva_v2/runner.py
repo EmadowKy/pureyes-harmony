@@ -86,7 +86,11 @@ class MVA2Runner:
                 progress_callback({
                     "stage": "reasoning",
                     "status": "running",
-                    "message": f"Agent 正在思考决策 (第 {loop_idx} 轮)..."
+                    "message": f"Agent 正在思考决策 (第 {loop_idx} 轮)...",
+                    "data": {
+                        "iteration": loop_idx,
+                        "phase": "thinking"
+                    }
                 })
             
             # 调用云端多模态大模型
@@ -113,7 +117,12 @@ class MVA2Runner:
                     progress_callback({
                         "stage": "reasoning",
                         "status": "completed",
-                        "message": f"Agent 思考终结: {thought or '锁定完整证据链'}"
+                        "message": f"Agent 思考终结: {thought or '锁定完整证据链'}",
+                        "data": {
+                            "iteration": loop_idx,
+                            "phase": "completed",
+                            "thought": thought or ""
+                        }
                     })
                 final_answer_result = final_answer
                 break
@@ -126,7 +135,14 @@ class MVA2Runner:
                     progress_callback({
                         "stage": "reasoning",
                         "status": "running",
-                        "message": f"🧠 思考: {thought or '正在搜寻线索'}\n🎬 行动: 调用 [{tool_name}]，参数: {json.dumps(tool_params, ensure_ascii=False)}"
+                        "message": f"🧠 思考: {thought or '正在搜寻线索'}\n🎬 行动: 调用 [{tool_name}]，参数: {json.dumps(tool_params, ensure_ascii=False)}",
+                        "data": {
+                            "iteration": loop_idx,
+                            "phase": "action",
+                            "thought": thought or "",
+                            "tool_name": tool_name,
+                            "tool_params": tool_params
+                        }
                     })
                 
                 # 执行具体工具
