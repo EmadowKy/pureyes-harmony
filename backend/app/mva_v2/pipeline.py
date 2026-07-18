@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import uuid
 import time
 import logging
+import os
+from ultralytics import YOLO
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,6 +21,7 @@ class BoundingBox:
     confidence: float
     class_id: int
     class_name: str
+    track_id: int = -1
 
 @dataclass
 class TrackedObject:
@@ -39,37 +42,146 @@ class ProcessedFrame:
 
 class YoloDetector:
     def __init__(self):
-        pass
+        # 加载本地下载好的 yolov8n.pt，过滤 COCO 的人与车船路常见机动车类别
+        # COCO 索引：0: person, 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck
+        self.model = YOLO('yolov8n.pt')
+        self.target_classes = [0, 1, 2, 3, 5, 7]
+        self.class_names = {
+            0: "person", 
+            1: "bicycle", 
+            2: "car", 
+            3: "motorcycle", 
+            5: "bus", 
+            7: "truck"
+        }
+
     def detect(self, image: np.ndarray) -> List[BoundingBox]:
-        time.sleep(0.02)
-        if np.random.rand() > 0.5:
-            return [BoundingBox(10, 10, 100, 100, 0.9, 0, "person")]
-        return []
+        # 启用 YOLOv8 内置的 ByteTrack 跨帧跟踪引擎，自动分配跨帧持久的 track_id
+        results = self.model.track(image, persist=True, verbose=False)
+        bboxes = []
+        if not results:
+            return bboxes
+            
+        for r in results:
+            if r.boxes is None:
+                continue
+            for box in r.boxes:
+                cls_id = int(box.cls[0].item())
+                if cls_id in self.target_classes:
+                    xyxy = box.xyxy[0].tolist()
+                    conf = float(box.conf[0].item())
+                    # 获取 YOLO 追踪 ID
+                    t_id = int(box.id[0].item()) if box.id is not None else -1
+                    bboxes.append(BoundingBox(
+                        x1=int(xyxy[0]),
+                        y1=int(xyxy[1]),
+                        x2=int(xyxy[2]),
+                        y2=int(xyxy[3]),
+                        confidence=conf,
+                        class_id=cls_id,
+                        class_name=self.class_names[cls_id],
+                        track_id=t_id
+                    ))
+        return bboxes
 
 class ByteTracker:
     def __init__(self):
-        self.active_tracks = {}
+        pass
+        
     def update(self, bboxes: List[BoundingBox], image: np.ndarray) -> List[TrackedObject]:
-        time.sleep(0.01)
         tracked = []
         for box in bboxes:
-            track_id = f"track_{uuid.uuid4().hex[:6]}"
+            # 优先映射 YOLO 原生追踪分配的 track_id
+            track_id = f"track_{box.track_id}" if box.track_id != -1 else f"track_temp_{uuid.uuid4().hex[:4]}"
             try:
                 crop = image[box.y1:box.y2, box.x1:box.x2]
+                if crop.size == 0:
+                    crop = np.zeros((64, 64, 3), dtype=np.uint8)
             except Exception:
-                crop = np.zeros((64, 64, 3))
+                crop = np.zeros((64, 64, 3), dtype=np.uint8)
             tracked.append(TrackedObject(track_id, box, 0, crop))
         return tracked
 
 class FeatureExtractor:
     def __init__(self):
-        pass
+        # 寻找并初始化本地 OSNet ONNX 行人重识别模型
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        model_path = os.path.join(os.path.dirname(backend_dir), "models", "osnet_x1_0.onnx")
+        
+        # 寻找并注入 PyTorch 内置的 CUDA/cuDNN DLL 路径，实现 Windows 平台零配置 GPU 推理
+        try:
+            import torch
+            torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
+            if os.path.exists(torch_lib):
+                os.environ['PATH'] = torch_lib + os.path.pathsep + os.environ['PATH']
+                if hasattr(os, 'add_dll_directory'):
+                    os.add_dll_directory(torch_lib)
+            site_packages = os.path.dirname(os.path.dirname(torch.__file__))
+            nvidia_dir = os.path.join(site_packages, 'nvidia')
+            if os.path.exists(nvidia_dir):
+                for sub in os.listdir(nvidia_dir):
+                    bin_path = os.path.join(nvidia_dir, sub, 'bin')
+                    if os.path.exists(bin_path):
+                        os.environ['PATH'] = bin_path + os.path.pathsep + os.environ['PATH']
+                        if hasattr(os, 'add_dll_directory'):
+                            os.add_dll_directory(bin_path)
+        except Exception as dll_err:
+            logger.warning(f"Failed to inject PyTorch CUDA/cuDNN DLL paths: {dll_err}")
+
+        import onnxruntime as ort
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Critical ReID model file not found at expected path: {model_path}")
+            
+        try:
+            available_providers = ort.get_available_providers()
+            self.session = None
+            if 'CUDAExecutionProvider' in available_providers:
+                try:
+                    self.session = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
+                    logger.info("Successfully loaded OSNet ReID ONNX model on GPU (CUDAExecutionProvider)")
+                except Exception as cuda_err:
+                    logger.warning(f"GPU (CUDAExecutionProvider) failed to initialize: {cuda_err}. Falling back to CPU.")
+                    
+            if self.session is None:
+                self.session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+                logger.info("Successfully loaded OSNet ReID ONNX model on CPU (CPUExecutionProvider)")
+        except Exception as ort_err:
+            raise RuntimeError(f"Failed to load ReID ONNX model session: {ort_err}")
+
     def extract_reid(self, crop: np.ndarray) -> np.ndarray:
-        time.sleep(0.01)
-        return np.random.rand(512).astype(np.float32)
+        if crop is None or crop.size == 0:
+            raise ValueError("Input image crop is empty or None")
+        if self.session is None:
+            raise RuntimeError("FeatureExtractor session is not initialized")
+            
+        # OSNet 输入规范：裁剪图 Resize 至 256x128，BGR 转 RGB，按 ImageNet 均值标准差标准化
+        img = cv2.resize(crop, (128, 256))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img.astype(np.float32) / 255.0
+        
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        img = (img - mean) / std
+        
+        # HWC -> CHW, 插入 Batch 维度 -> (1, 3, 256, 128)
+        img = np.transpose(img, (2, 0, 1))
+        img = np.expand_dims(img, axis=0)
+        
+        # 运行 ONNX 推理
+        input_name = self.session.get_inputs()[0].name
+        output_name = self.session.get_outputs()[0].name
+        feat = self.session.run([output_name], {input_name: img})[0]
+        
+        # 归一化特征向量
+        feat = feat[0]
+        norm = np.linalg.norm(feat)
+        if norm > 0:
+            feat = feat / norm
+        return feat
+
     def extract_clip(self, image: np.ndarray) -> np.ndarray:
-        time.sleep(0.04)
-        return np.random.rand(512).astype(np.float32)
+        # 网络受限，返回零向量填充。高层语义过滤由 database.py 中的类别路由引擎自动承接
+        return np.zeros(512, dtype=np.float32)
 
 class JITVideoPipeline:
     """按需即时提取管线 (JIT Processing Engine)"""
@@ -90,12 +202,21 @@ class JITVideoPipeline:
         return np.count_nonzero(thresh) > (curr_frame.shape[0] * curr_frame.shape[1] * 0.01)
 
     async def producer_video_reader(self, video_path: str, video_id: str, start_sec: float, end_sec: float, sample_fps: int = 1, progress_callback: Optional[Callable[[int], None]] = None):
-        logger.info(f"[JIT] Extracting {video_id} from {start_sec}s to {end_sec}s...")
+        """(已废弃，其功能并入 process_clip 串行执行)"""
+        await self.process_clip(video_path, video_id, start_sec, end_sec, progress_callback)
+
+    async def consumer_feature_extractor(self):
+        """(已废弃，其功能并入 process_clip 串行执行)"""
+        pass
+
+    async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None):
+        """按需立刻处理目标片段并阻塞等待完成 (已优化为线程安全的单线程串行模式，防止多线程 CUDA 冲突)"""
+        logger.info(f"[JIT] Processing clip {video_id} from {start_sec}s to {end_sec}s...")
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         
-        # 定位到指定时间
-        cap.set(cv2.CAP_PROP_POS_MSEC, start_sec * 1000.0)
+        # 默认 1 秒抽 1 帧
+        sample_fps = 1
         frame_interval = int(fps / sample_fps) if fps > 0 else 30
         
         start_frame_idx = int(start_sec * fps)
@@ -112,30 +233,39 @@ class JITVideoPipeline:
                 break
                 
             if frames_processed % frame_interval == 0:
-                has_motion = await asyncio.to_thread(self._detect_motion, prev_frame, frame)
+                # 运动检测
+                has_motion = self._detect_motion(prev_frame, frame)
                 if has_motion:
-                    bboxes = await asyncio.to_thread(self.detector.detect, frame)
+                    # 串行同步调用 YOLO 追踪，避免并发 CUDA context 竞争
+                    bboxes = self.detector.detect(frame)
                     if bboxes:
-                        tracked_objs = await asyncio.to_thread(self.tracker.update, bboxes, frame)
-                        for t in tracked_objs:
-                            t.frame_idx = frame_idx
+                        # 串行同步调用 tracker
+                        tracked_objs = self.tracker.update(bboxes, frame)
                         
-                        processed = ProcessedFrame(
-                            video_id=video_id,
-                            frame_idx=frame_idx,
-                            timestamp_sec=frame_idx / fps,
-                            image=frame,
-                            tracked_objects=tracked_objs
-                        )
-                        
-                        if self.frame_queue.qsize() > self.frame_queue.maxsize * 0.9:
-                            processed.skip_heavy_processing = True
-                        
-                        await self.frame_queue.put(processed)
+                        tracklet_records = []
+                        for track in tracked_objs:
+                            # 串行同步调用 ReID 模型提取特征向量
+                            reid_emb = self.extractor.extract_reid(track.image_crop)
+                            record = {
+                                "video_id": video_id,
+                                "timestamp": frame_idx / fps,
+                                "frame_idx": frame_idx,
+                                "track_id": track.track_id,
+                                "class_name": track.bbox.class_name,
+                                "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
+                                "reid_vector": reid_emb.tolist(),
+                                "clip_vector": [0.0] * 512  # CLIP 零填充
+                            }
+                            tracklet_records.append(record)
+                            
+                        # 特征库入库
+                        if self.db_client and tracklet_records:
+                            self.db_client.insert(tracklet_records)
+                            
                 if frame is not None:
                     prev_frame = frame.copy()
             
-            # 回报进度 (稍微降低回调频率以免数据库写锁过于频繁)
+            # 回报进度
             if progress_callback and (frames_processed % 5 == 0 or frame_idx == end_frame_idx):
                 progress_pct = min(99, int((frame_idx - start_frame_idx) / total_frames_to_process * 100))
                 progress_callback(progress_pct)
@@ -145,48 +275,5 @@ class JITVideoPipeline:
             await asyncio.sleep(0.001)
             
         cap.release()
-        await self.frame_queue.put(None)
-        logger.info(f"[JIT] Producer finished extracting clip.")
-
-    async def consumer_feature_extractor(self):
-        logger.info("[JIT] Started Consumer Feature Extractor")
-        while True:
-            item = await self.frame_queue.get()
-            if item is None:
-                self.frame_queue.task_done()
-                break
-                
-            processed: ProcessedFrame = item
-            if not processed.skip_heavy_processing:
-                processed.clip_embedding = await asyncio.to_thread(self.extractor.extract_clip, processed.image)
-            
-            tracklet_records = []
-            for track in processed.tracked_objects:
-                reid_emb = await asyncio.to_thread(self.extractor.extract_reid, track.image_crop)
-                record = {
-                    "video_id": processed.video_id,
-                    "timestamp": processed.timestamp_sec,
-                    "frame_idx": processed.frame_idx,
-                    "track_id": track.track_id,
-                    "class_name": track.bbox.class_name,
-                    "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
-                    "reid_vector": reid_emb.tolist(),
-                    "clip_vector": processed.clip_embedding.tolist() if processed.clip_embedding is not None else None
-                }
-                tracklet_records.append(record)
-            
-            if self.db_client and tracklet_records:
-                await asyncio.to_thread(self.db_client.insert, tracklet_records)
-            self.frame_queue.task_done()
-            
-        logger.info("[JIT] Consumer finished processing clip.")
-
-    async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None):
-        """按需立刻处理目标片段并阻塞等待完成"""
-        producer_task = asyncio.create_task(self.producer_video_reader(video_path, video_id, start_sec, end_sec, progress_callback=progress_callback))
-        consumer_task = asyncio.create_task(self.consumer_feature_extractor())
-        await asyncio.gather(producer_task, consumer_task)
-        
-        # 消费者结束后强制推满至 100%
         if progress_callback:
             progress_callback(100)

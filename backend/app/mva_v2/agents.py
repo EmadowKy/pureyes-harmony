@@ -51,27 +51,93 @@ class ReActTools:
     def __init__(self, db_client: Any):
         self.db = db_client
 
-    def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str) -> List[Dict[str, Any]]:
+    def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str) -> Dict[str, Any]:
         """
-        检索特征库。
-        query_type: 'semantic' (场景/动作) 或 'identity' (同一个人)
+        检索特征库并返回统计元数据与采样结果。
+        query_type: 'semantic' (场景/动作) 或 'identity' (同一个人/物体)
         """
         logger.info(f"[TOOL - spatiotemporal_search] Running search: type={query_type}, query={query_text} on video={video_id}")
         
         # 从数据库特征池中，筛选过滤出当前片段的特征
         clip_records = [r for r in self.db.records if r['video_id'] == video_id]
         if not clip_records:
-            return []
+            return {
+                "summary": {
+                    "total_matching_records": 0,
+                    "total_unique_track_ids": 0,
+                    "unique_track_ids_list": []
+                },
+                "sampled_results": []
+            }
+
+        retrieved = []
+        total_matching_records = 0
+        unique_track_ids = []
 
         if query_type == "identity":
-            # 身份比对 (mock ReID 特征匹配)
-            mock_reid_vector = [0.2] * 512
-            retrieved = self.db.search_identity(query_reid_vector=mock_reid_vector)
-            retrieved = [r for r in retrieved if r['video_id'] == video_id]
+            # 真实 ReID 检索：若 query_text 是 track_id，则提取其 ReID 特征向量进行全局余弦相似度比对
+            track_id = query_text.strip()
+            target_records = [r for r in clip_records if r.get("track_id") == track_id]
+            if target_records:
+                query_vector = target_records[0].get("reid_vector")
+                if query_vector:
+                    # 获取较大数量的相似候选以进行全局统计
+                    results = self.db.search_identity(query_reid_vector=query_vector, top_k=99999)
+                    matched_candidates = [r for r in results if r.get("video_id") == video_id]
+                    
+                    total_matching_records = len(matched_candidates)
+                    unique_track_ids = list(set(r.get("track_id") for r in matched_candidates if r.get("track_id")))
+                    
+                    # 采样 15 个代表帧返回给大模型上下文
+                    if len(matched_candidates) <= 15:
+                        retrieved = matched_candidates
+                    else:
+                        step = len(matched_candidates) / 15
+                        retrieved = [matched_candidates[int(i * step)] for i in range(15)]
+            
+            # 兜底：如果检索不到相似记录或没提取到特征，直接返回该 track_id 的物理轨迹
+            if not retrieved:
+                matched_candidates = [r for r in clip_records if r.get("track_id") == track_id]
+                total_matching_records = len(matched_candidates)
+                unique_track_ids = [track_id] if matched_candidates else []
+                retrieved = matched_candidates
         else:
-            # 语义匹配 (mock CLIP 动作匹配)
-            import random
-            retrieved = random.sample(clip_records, min(5, len(clip_records)))
+            # 真实语义路由检索：使用中文关键词检索匹配的大类，并在当前视频的所有帧中进行全局统计
+            person_keys = ["人", "男", "女", "谁", "衣", "步", "跑", "走", "影", "涉案", "嫌疑", "嫌疑人"]
+            car_keys = ["车", "轿车", "卡车", "面包车", "小车", "大车", "货车", "公路", "道路", "公交", "巴士", "自行车", "摩托", "行车", "交通"]
+            
+            target_class = None
+            for k in person_keys:
+                if k in query_text:
+                    target_class = "person"
+                    break
+            if not target_class:
+                for k in car_keys:
+                    if k in query_text:
+                        target_class = "vehicle"
+                        break
+            
+            # 统计当前视频片段中所有匹配大类的数据库记录
+            matched_candidates = []
+            for r in clip_records:
+                c_name = r.get("class_name", "")
+                if target_class == "person" and c_name == "person":
+                    matched_candidates.append(r)
+                elif target_class == "vehicle" and c_name in ["car", "truck", "bus", "motorcycle", "bicycle"]:
+                    matched_candidates.append(r)
+                elif not target_class:
+                    matched_candidates.append(r)
+            
+            total_matching_records = len(matched_candidates)
+            unique_track_ids = list(set(r.get("track_id") for r in matched_candidates if r.get("track_id")))
+            
+            # 采样 15 个代表帧返回给大模型上下文
+            matched_candidates.sort(key=lambda x: x["timestamp"])
+            if len(matched_candidates) <= 15:
+                retrieved = matched_candidates
+            else:
+                step = len(matched_candidates) / 15
+                retrieved = [matched_candidates[int(i * step)] for i in range(15)]
 
         # 格式化精简输出，节省大模型 Token
         formatted_results = []
@@ -83,7 +149,15 @@ class ReActTools:
                 "class_name": r["class_name"],
                 "bbox": r["bbox"]
             })
-        return formatted_results
+            
+        return {
+            "summary": {
+                "total_matching_records": total_matching_records,
+                "total_unique_track_ids": len(unique_track_ids),
+                "unique_track_ids_list": unique_track_ids
+            },
+            "sampled_results": formatted_results
+        }
 
     def read_frame_image(self, video_path: str, timestamp_sec: float, video_id: str) -> Optional[str]:
         """
