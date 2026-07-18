@@ -102,6 +102,7 @@ export struct MonitorTab {
   @State timelineRecords: Array<MonitorRecordInfo> = [];
   @State selectedRecordIndex: number = -1;
   @State timelineOffsetValue: number = 0;
+  @State isTimelineShifting: boolean = false;
   @State jumpTimeText: string = '';
   @State playbackOffsetSeconds: number = 0;
   videoController: VideoController = new VideoController();
@@ -136,6 +137,7 @@ export struct MonitorTab {
     this.timelineRecords = [];
     this.selectedRecordIndex = -1;
     this.timelineOffsetValue = 0;
+    this.isTimelineShifting = false;
     this.jumpTimeText = '';
     this.playbackOffsetSeconds = 0;
   }
@@ -185,6 +187,19 @@ export struct MonitorTab {
       }
     }
     return 60;
+  }
+
+  timelineSliderLimit(): number {
+    if (this.granularity === 'second') {
+      return 90;
+    }
+    if (this.granularity === 'minute') {
+      return 60;
+    }
+    if (this.granularity === 'hour') {
+      return 24;
+    }
+    return 30;
   }
 
   timestampFromText(value: string): number {
@@ -389,20 +404,28 @@ export struct MonitorTab {
   }
 
   async shiftTimeline(offsetSteps: number): Promise<void> {
-    if (!this.selectedTimeText) {
+    if (!this.selectedTimeText || this.isTimelineShifting) {
       return;
     }
     const date = new Date(this.selectedTimeText.replace(' ', 'T'));
     if (isNaN(date.getTime())) {
+      this.timelineOffsetValue = 0;
       return;
     }
-    let shifted = new Date(date.getTime() + offsetSteps * this.granularityStepSeconds() * 1000);
-    const now = new Date();
-    if (shifted.getTime() > now.getTime()) {
-      shifted = now;
-      promptAction.showToast({ message: '不能移动到未来时间', duration: 1600 });
+
+    this.isTimelineShifting = true;
+    try {
+      let shifted = new Date(date.getTime() + offsetSteps * this.granularityStepSeconds() * 1000);
+      const now = new Date();
+      if (shifted.getTime() > now.getTime()) {
+        shifted = now;
+        promptAction.showToast({ message: '不能移动到未来时间', duration: 1600 });
+      }
+      await this.loadTimeline(this.formatDateTime(shifted), this.playbackMode === 'history');
+    } finally {
+      this.timelineOffsetValue = 0;
+      this.isTimelineShifting = false;
     }
-    await this.loadTimeline(this.formatDateTime(shifted), this.playbackMode === 'history');
   }
 
   build() {
@@ -541,16 +564,23 @@ export struct MonitorTab {
           }
           .width('100%')
 
-          Slider({ value: this.timelineOffsetValue, min: -6, max: 6, step: 1 })
+          Slider({ value: this.timelineOffsetValue, min: -this.timelineSliderLimit(), max: this.timelineSliderLimit(), step: 1 })
             .blockColor($r('app.color.app_primary'))
             .trackColor($r('app.color.app_text_muted'))
             .selectedColor($r('app.color.app_primary'))
             .width('100%')
-            .onChange((value: number): void => {
+            .onChange((value: number, mode: SliderChangeMode): void => {
+              if (this.isTimelineShifting) {
+                return;
+              }
               const rounded = Math.round(value);
-              if (rounded !== 0) {
-                this.timelineOffsetValue = rounded;
-                this.shiftTimeline(rounded);
+              this.timelineOffsetValue = rounded;
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                if (rounded !== 0) {
+                  this.shiftTimeline(rounded);
+                } else {
+                  this.timelineOffsetValue = 0;
+                }
               }
             })
         }
