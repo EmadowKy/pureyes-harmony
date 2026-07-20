@@ -37,4 +37,24 @@ def get_ffmpeg_path(name="ffmpeg"):
     if os.path.exists(local_bin_path):
         return local_bin_path
 
+    env_path = os.environ.get(f"{name.upper()}_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    env_home = os.environ.get("FFMPEG_HOME")
+    if env_home:
+        env_home_path = os.path.join(env_home, exe_name)
+        if os.path.exists(env_home_path):
+            return env_home_path
+        env_home_bin_path = os.path.join(env_home, "bin", exe_name)
+        if os.path.exists(env_home_bin_path):
+            return env_home_bin_path
+
+    common_windows_path = os.path.join(
+        "D:\\tools\\ffmpeg\\ffmpeg-8\\ffmpeg-8.1.2-full_build\\bin",
+        exe_name,
+    )
+    if os.path.exists(common_windows_path):
+        return common_windows_path
+
     return name

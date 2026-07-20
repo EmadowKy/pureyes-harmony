@@ -4,12 +4,14 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 _tmpdir = tempfile.TemporaryDirectory()
+os.environ["PUREYES_DISABLE_BACKGROUND"] = "1"
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(_tmpdir.name) / 'test_user_group.db'}"
 sys.modules.setdefault("cv2", types.SimpleNamespace())
 
@@ -25,19 +27,24 @@ class UserGroupApiTest(unittest.TestCase):
         cls.client = cls.app.test_client()
 
         from app.monitors import routes as monitor_routes
+        monitor_routes.BACKEND_ROOT = str(Path(_tmpdir.name))
         cls.recordings_base = Path(_tmpdir.name) / "recordings"
+        cls.covers_base = Path(_tmpdir.name) / "covers"
         monitor_routes.RECORDINGS_BASE = str(cls.recordings_base)
+        monitor_routes.COVERS_BASE = str(cls.covers_base)
         monitor_routes.start_recording = lambda monitor_id, stream_url: True
+        monitor_routes.stop_recording = lambda monitor_id: None
 
     @classmethod
     def tearDownClass(cls):
+        cls.client = None
         with cls.app.app_context():
+            db.drop_all()
             db.session.remove()
             db.engine.dispose()
-            db.drop_all()
         try:
             _tmpdir.cleanup()
-        except PermissionError:
+        except OSError:
             pass
 
     def auth_headers(self, emp_id, password):
@@ -318,6 +325,22 @@ class UserGroupApiTest(unittest.TestCase):
         self.assertEqual(allowed_create.status_code, 201, allowed_create.get_json())
         monitor_id = allowed_create.get_json()["data"]["id"]
 
+        forbidden_update = self.client.put(
+            f"/api/monitors/{monitor_id}",
+            headers=member_headers,
+            json={"name": "Gate Camera Updated", "stream_url": "rtsp://example/updated"},
+        )
+        self.assertEqual(forbidden_update.status_code, 403, forbidden_update.get_json())
+
+        allowed_update = self.client.put(
+            f"/api/monitors/{monitor_id}",
+            headers=leader_headers,
+            json={"name": "Gate Camera Updated", "stream_url": "rtsp://example/updated"},
+        )
+        self.assertEqual(allowed_update.status_code, 200, allowed_update.get_json())
+        self.assertEqual(allowed_update.get_json()["data"]["name"], "Gate Camera Updated")
+        self.assertEqual(allowed_update.get_json()["data"]["stream_url"], "rtsp://example/updated")
+
         recordings_dir = self.recordings_base / str(monitor_id)
         recordings_dir.mkdir(parents=True, exist_ok=True)
         recording_name = "20260712_120000.mp4"
@@ -338,6 +361,43 @@ class UserGroupApiTest(unittest.TestCase):
         )
         self.assertEqual(playback.status_code, 200, playback.get_json())
         self.assertEqual(playback.get_json()["data"]["record"]["filename"], recording_name)
+
+        cover_recording_name = "20260712_120100.mp4"
+        (recordings_dir / cover_recording_name).write_bytes(b"fake-video")
+
+        from app.monitors import routes as monitor_routes
+
+        def fake_ffmpeg(cmd, capture_output, text, timeout):
+            Path(cmd[-1]).write_bytes(b"fake-jpeg")
+            return types.SimpleNamespace(returncode=0, stderr="")
+
+        with patch.object(monitor_routes.subprocess, "run", side_effect=fake_ffmpeg):
+            listed = self.client.get(
+                f"/api/monitors/{group_id}",
+                headers=member_headers,
+            )
+            self.assertEqual(listed.status_code, 200, listed.get_json())
+            monitor_payload = listed.get_json()["data"][0]
+            self.assertEqual(monitor_payload["cover_url"], f"/api/monitors/{monitor_id}/cover")
+            self.assertTrue(monitor_payload["cover_updated_at"])
+
+            cover = self.client.get(f"/api/monitors/{monitor_id}/cover")
+            self.assertEqual(cover.status_code, 200, cover.get_json() if cover.is_json else cover.status)
+            self.assertEqual(cover.mimetype, "image/jpeg")
+
+        forbidden_delete = self.client.delete(
+            f"/api/monitors/{monitor_id}",
+            headers=member_headers,
+        )
+        self.assertEqual(forbidden_delete.status_code, 403, forbidden_delete.get_json())
+
+        allowed_delete = self.client.delete(
+            f"/api/monitors/{monitor_id}",
+            headers=leader_headers,
+        )
+        self.assertEqual(allowed_delete.status_code, 200, allowed_delete.get_json())
+        self.assertFalse(recordings_dir.exists())
+        self.assertFalse((self.covers_base / f"{monitor_id}.jpg").exists())
 
 
 if __name__ == "__main__":

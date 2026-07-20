@@ -1,21 +1,33 @@
 import os
 import re
+import shutil
+import subprocess
+import threading
+import time
 from datetime import datetime, timedelta
 
-from flask import request
+from flask import Response, request, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.core.config import get_ffmpeg_path
 from app.core.db import db
 from app.models.monitor import Monitor
+from app.models.qa_record import QAVideoSelection
 from app.models.group import GroupMember
-from app.user_center.permissions import require_group_creator
+from app.user_center.permissions import current_user, is_admin, require_group_creator
 from app.core.response import success, fail
 from . import monitors_bp
 from .slicer import slice_video
-from app.core.recorder import start_recording
+from app.core.recorder import start_recording, stop_recording
 
 
-RECORDINGS_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "streams"))
+BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+RECORDINGS_BASE = os.path.join(BACKEND_ROOT, "storage", "streams")
+COVERS_BASE = os.path.join(BACKEND_ROOT, "storage", "monitor_covers")
 SEGMENT_NAME_RE = re.compile(r"^(?P<stamp>\d{8}_\d{6})\.mp4$")
+COVER_REFRESH_INTERVAL_SECONDS = int(os.environ.get("MONITOR_COVER_INTERVAL_SECONDS", "60"))
+COVER_ACTIVE_FILE_GRACE_SECONDS = int(os.environ.get("MONITOR_COVER_ACTIVE_FILE_GRACE_SECONDS", "15"))
+cover_refresh_started = False
+cover_refresh_lock = threading.Lock()
 
 
 def _parse_segment_time(filename: str):
@@ -30,6 +42,129 @@ def _parse_segment_time(filename: str):
 
 def _monitor_recordings_dir(monitor_id: int) -> str:
     return os.path.join(RECORDINGS_BASE, str(monitor_id))
+
+
+def _monitor_cover_path(monitor_id: int) -> str:
+    return os.path.join(COVERS_BASE, f"{monitor_id}.jpg")
+
+
+def _remove_monitor_cover(monitor: Monitor) -> None:
+    cover_path = _monitor_cover_path(monitor.id)
+    try:
+        if os.path.exists(cover_path):
+            os.remove(cover_path)
+    except OSError as exc:
+        print(f"[MonitorCover] failed to remove cover for monitor {monitor.id}: {exc}")
+    monitor.cover_path = None
+    monitor.cover_updated_at = None
+
+
+def _relative_backend_path(path: str) -> str:
+    return os.path.relpath(path, BACKEND_ROOT).replace("\\", "/")
+
+
+def _absolute_backend_path(path: str) -> str:
+    full_path = os.path.abspath(os.path.join(BACKEND_ROOT, path.replace("/", os.sep)))
+    if not full_path.startswith(BACKEND_ROOT + os.sep) and full_path != BACKEND_ROOT:
+        raise ValueError("invalid backend path")
+    return full_path
+
+
+def _latest_recording_file(monitor_id: int):
+    output_dir = _monitor_recordings_dir(monitor_id)
+    if not os.path.exists(output_dir):
+        return None
+
+    candidates = []
+    for filename in os.listdir(output_dir):
+        if not filename.endswith(".mp4"):
+            continue
+        start_time = _parse_segment_time(filename)
+        if not start_time:
+            continue
+        full_path = os.path.join(output_dir, filename)
+        if not os.path.isfile(full_path) or os.path.getsize(full_path) == 0:
+            continue
+        if time.time() - os.path.getmtime(full_path) < COVER_ACTIVE_FILE_GRACE_SECONDS:
+            continue
+        candidates.append((start_time, full_path))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _refresh_monitor_cover(monitor: Monitor) -> bool:
+    latest_path = _latest_recording_file(monitor.id)
+    if not latest_path:
+        return False
+
+    cover_path = _monitor_cover_path(monitor.id)
+    latest_mtime = os.path.getmtime(latest_path)
+    if os.path.exists(cover_path) and os.path.getmtime(cover_path) >= latest_mtime:
+        if not monitor.cover_path:
+            monitor.cover_path = _relative_backend_path(cover_path)
+            monitor.cover_updated_at = datetime.utcnow()
+            return True
+        return False
+
+    os.makedirs(COVERS_BASE, exist_ok=True)
+    cmd = [
+        get_ffmpeg_path("ffmpeg"), "-y",
+        "-sseof", "-1",
+        "-i", latest_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        "-update", "1",
+        "-f", "image2",
+        cover_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0 or not os.path.exists(cover_path) or os.path.getsize(cover_path) == 0:
+            print(f"[MonitorCover] failed for monitor {monitor.id}: {result.stderr[-500:] if result.stderr else ''}")
+            return False
+    except Exception as exc:
+        print(f"[MonitorCover] exception for monitor {monitor.id}: {exc}")
+        return False
+
+    monitor.cover_path = _relative_backend_path(cover_path)
+    monitor.cover_updated_at = datetime.utcnow()
+    return True
+
+
+def refresh_all_monitor_covers() -> int:
+    changed_count = 0
+    monitors = Monitor.query.filter(Monitor.stream_url.isnot(None)).all()
+    for monitor in monitors:
+        if not (monitor.stream_url or "").strip():
+            continue
+        if _refresh_monitor_cover(monitor):
+            changed_count += 1
+    if changed_count:
+        db.session.commit()
+    return changed_count
+
+
+def start_cover_refresh_loop(app) -> None:
+    global cover_refresh_started
+    with cover_refresh_lock:
+        if cover_refresh_started:
+            return
+        cover_refresh_started = True
+
+    def loop() -> None:
+        while True:
+            try:
+                with app.app_context():
+                    refresh_all_monitor_covers()
+            except Exception as exc:
+                print(f"[MonitorCover] refresh loop error: {exc}")
+            time.sleep(max(30, COVER_REFRESH_INTERVAL_SECONDS))
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
 
 
 def _parse_client_time(raw: str):
@@ -83,6 +218,20 @@ def _build_recording_items(monitor_id: int, selected_time: datetime, window_coun
 
     return items, chosen_item
 
+
+def _require_monitor_creator(monitor_id: int, emp_id: str):
+    monitor = Monitor.query.get(monitor_id)
+    if not monitor:
+        return None, fail(message="monitor not found", code=4003, http_status=404)
+    user = current_user()
+    if is_admin(user):
+        return monitor, None
+    _, error = require_group_creator(monitor.group_id, emp_id)
+    if error:
+        return None, error
+    return monitor, None
+
+
 @monitors_bp.post("/<int:group_id>")
 @jwt_required()
 def add_monitor(group_id):
@@ -90,22 +239,23 @@ def add_monitor(group_id):
     group, error = require_group_creator(group_id, emp_id)
     if error:
         return error
-        
+
     data = request.get_json() or {}
-    name = data.get("name")
-    stream_url = data.get("stream_url", "")
-    
+    name = (data.get("name") or "").strip()
+    stream_url = (data.get("stream_url") or "").strip()
+
     if not name:
         return fail(message="monitor name is required", code=4002, http_status=400)
-        
+
     monitor = Monitor(group_id=group_id, name=name, stream_url=stream_url)
     db.session.add(monitor)
     db.session.commit()
 
     if monitor.stream_url:
         start_recording(monitor.id, monitor.stream_url)
-    
+
     return success(message="monitor added", data=monitor.to_dict(), http_status=201)
+
 
 @monitors_bp.get("/<int:group_id>")
 @jwt_required()
@@ -114,9 +264,105 @@ def get_monitors(group_id):
     member = GroupMember.query.filter_by(group_id=group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=4001, http_status=403)
-        
+
     monitors = Monitor.query.filter_by(group_id=group_id).all()
+    changed = False
+    for monitor in monitors:
+        changed = _refresh_monitor_cover(monitor) or changed
+    if changed:
+        db.session.commit()
     return success(data=[m.to_dict() for m in monitors])
+
+
+@monitors_bp.put("/<int:monitor_id>")
+@jwt_required()
+def update_monitor(monitor_id):
+    emp_id = get_jwt_identity()
+    monitor, error = _require_monitor_creator(monitor_id, emp_id)
+    if error:
+        return error
+
+    data = request.get_json() or {}
+    next_name = ((data.get("name") if "name" in data else monitor.name) or "").strip()
+    next_url = ((data.get("stream_url") if "stream_url" in data else monitor.stream_url) or "").strip()
+    if not next_name:
+        return fail(message="monitor name is required", code=4002, http_status=400)
+
+    url_changed = next_url != (monitor.stream_url or "")
+    monitor.name = next_name
+    monitor.stream_url = next_url
+    if url_changed:
+        stop_recording(monitor.id)
+        _remove_monitor_cover(monitor)
+
+    db.session.commit()
+
+    if url_changed and monitor.stream_url:
+        start_recording(monitor.id, monitor.stream_url)
+
+    return success(message="monitor updated", data=monitor.to_dict())
+
+
+@monitors_bp.delete("/<int:monitor_id>")
+@jwt_required()
+def delete_monitor(monitor_id):
+    emp_id = get_jwt_identity()
+    monitor, error = _require_monitor_creator(monitor_id, emp_id)
+    if error:
+        return error
+
+    stop_recording(monitor.id)
+    recordings_dir = _monitor_recordings_dir(monitor.id)
+    cover_path = _monitor_cover_path(monitor.id)
+    QAVideoSelection.query.filter_by(monitor_id=monitor.id).delete(synchronize_session=False)
+    db.session.delete(monitor)
+    db.session.commit()
+
+    for path in [recordings_dir, cover_path]:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError as exc:
+            print(f"[MonitorDelete] failed to remove {path}: {exc}")
+
+    return success(message="monitor deleted")
+
+
+@monitors_bp.get("/<int:monitor_id>/cover")
+def get_monitor_cover(monitor_id):
+    monitor = Monitor.query.get(monitor_id)
+    if not monitor:
+        return fail(message="monitor not found", code=4003, http_status=404)
+
+    if _refresh_monitor_cover(monitor):
+        db.session.commit()
+
+    if not monitor.cover_path:
+        return fail(message="monitor cover not ready", code=4045, http_status=404)
+
+    try:
+        cover_path = _absolute_backend_path(monitor.cover_path)
+    except ValueError:
+        return fail(message="invalid cover path", code=4046, http_status=404)
+
+    if not os.path.exists(cover_path):
+        monitor.cover_path = None
+        monitor.cover_updated_at = None
+        db.session.commit()
+        return fail(message="monitor cover not ready", code=4045, http_status=404)
+
+    try:
+        with open(cover_path, "rb") as image_file:
+            image_bytes = image_file.read()
+    except OSError:
+        monitor.cover_path = None
+        monitor.cover_updated_at = None
+        db.session.commit()
+        return fail(message="monitor cover not ready", code=4045, http_status=404)
+
+    return Response(image_bytes, mimetype="image/jpeg")
 
 
 @monitors_bp.get("/<int:monitor_id>/history")
@@ -201,27 +447,23 @@ def get_monitor_playback(monitor_id):
         "records": items,
     })
 
+
 @monitors_bp.get("/<int:monitor_id>/slice")
 @jwt_required()
 def get_monitor_slice(monitor_id):
-    # This endpoint returns a URL to the sliced video
     emp_id = get_jwt_identity()
     monitor = Monitor.query.get(monitor_id)
     if not monitor:
         return fail(message="monitor not found", code=4003, http_status=404)
-        
+
     member = GroupMember.query.filter_by(group_id=monitor.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=4001, http_status=403)
-        
+
     start_time = request.args.get("start")
     end_time = request.args.get("end")
     if not start_time or not end_time:
         return fail(message="start and end time are required", code=4004, http_status=400)
-        
-    # Execute slicing logic
+
     output_path = slice_video(monitor_id, start_time, end_time)
-    
-    # In a real app, this should return a URL to access the output_path via a static file server or another endpoint
-    # Here we just return the path relative to a static route
     return success(data={"url": f"/api/static/slices/{output_path}"})

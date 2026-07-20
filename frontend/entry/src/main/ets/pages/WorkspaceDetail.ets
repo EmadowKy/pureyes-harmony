@@ -416,6 +416,8 @@ struct SegmentDetailDialog {
             .fontColor(Color.White)
             .layoutWeight(1)
             .height(40)
+            .fontSize(14)
+            .padding({ left: 0, right: 0 })
             .onClick((): void => {
               this.onConfirmSelection();
               this.controller.close();
@@ -426,6 +428,8 @@ struct SegmentDetailDialog {
             .fontColor(Color.White)
             .layoutWeight(1)
             .height(40)
+            .fontSize(14)
+            .padding({ left: 0, right: 0 })
             .onClick((): void => {
               this.controller.close();
             })

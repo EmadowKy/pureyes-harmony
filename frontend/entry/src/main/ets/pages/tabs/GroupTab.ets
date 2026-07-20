@@ -456,7 +456,10 @@ export struct GroupTab {
           .layoutWeight(1)
 
           Button(this.selectedInviteEmpId === candidate.emp_id ? '已选择' : '选择')
+            .width(64)
             .height(32)
+            .fontSize(12)
+            .padding({ left: 0, right: 0 })
             .backgroundColor(this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary_soft') : $r('app.color.app_primary'))
             .fontColor(this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary') : Color.White)
             .onClick((): void => {

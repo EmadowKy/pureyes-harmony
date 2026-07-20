@@ -5,6 +5,8 @@ export class MonitorInfo {
   id: number = 0;
   name: string = '';
   stream_url: string = '';
+  raw_stream_url: string = '';
+  cover_url: string = '';
   status: string = '';
 }
 
@@ -17,6 +19,11 @@ export class MonitorRecordInfo {
 }
 
 class AddMonitorPayload {
+  name: string = '';
+  stream_url: string = '';
+}
+
+class EditMonitorPayload {
   name: string = '';
   stream_url: string = '';
 }
@@ -105,7 +112,12 @@ export struct MonitorTab {
   @State isTimelineShifting: boolean = false;
   @State jumpTimeText: string = '';
   @State playbackOffsetSeconds: number = 0;
+  @State editingMonitorId: number = 0;
+  @State editingMonitorName: string = '';
+  @State editingMonitorUrl: string = '';
   videoController: VideoController = new VideoController();
+  coverRefreshTimer: number = 0;
+  isLoadingMonitors: boolean = false;
 
   addMonitorDialogController: CustomDialogController = new CustomDialogController({
     builder: AddMonitorDialog({
@@ -118,6 +130,25 @@ export struct MonitorTab {
 
   aboutToAppear(): void {
     this.loadMonitors();
+    this.startCoverRefreshTimer();
+  }
+
+  aboutToDisappear(): void {
+    if (this.coverRefreshTimer) {
+      clearInterval(this.coverRefreshTimer);
+      this.coverRefreshTimer = 0;
+    }
+  }
+
+  startCoverRefreshTimer(): void {
+    if (this.coverRefreshTimer) {
+      clearInterval(this.coverRefreshTimer);
+    }
+    this.coverRefreshTimer = setInterval(async (): Promise<void> => {
+      if (this.groupId && this.selectedMonitorId === 0) {
+        await this.loadMonitors();
+      }
+    }, 60000);
   }
 
   onGroupChange(): void {
@@ -140,6 +171,9 @@ export struct MonitorTab {
     this.isTimelineShifting = false;
     this.jumpTimeText = '';
     this.playbackOffsetSeconds = 0;
+    this.editingMonitorId = 0;
+    this.editingMonitorName = '';
+    this.editingMonitorUrl = '';
   }
 
   buildSourceUrl(url: string): string {
@@ -252,40 +286,124 @@ export struct MonitorTab {
       this.monitors = [];
       return;
     }
-    const res = await HttpUtil.get(`/monitors/${this.groupId}`);
-    if (res.code === 0 && res.data) {
-      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
-      this.monitors = listObj.map((item: Record<string, Object>): MonitorInfo => {
-        const monitor = new MonitorInfo();
-        monitor.id = item['id'] as number;
-        monitor.name = item['name'] as string;
-        monitor.status = (item['status'] as string) || '';
+    if (this.isLoadingMonitors) {
+      return;
+    }
 
-        const rawUrl = ((item['stream_url'] as string) || '').trim();
-        if (!rawUrl) {
-          monitor.stream_url = '';
-        } else if (rawUrl.startsWith('rtsp://') || rawUrl.startsWith('rtmp://')) {
-          monitor.stream_url = `${BASE_HOST}/api/video/live/${monitor.id}/index.m3u8`;
-        } else if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-          monitor.stream_url = rawUrl;
-        } else {
-          monitor.stream_url = `${BASE_HOST}/api/video/${rawUrl}`;
-        }
-        return monitor;
-      });
+    this.isLoadingMonitors = true;
+    try {
+      const res = await HttpUtil.get(`/monitors/${this.groupId}`);
+      if (res.code === 0 && res.data) {
+        const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+        this.monitors = listObj.map((item: Record<string, Object>): MonitorInfo => {
+          const monitor = new MonitorInfo();
+          monitor.id = item['id'] as number;
+          monitor.name = item['name'] as string;
+          monitor.status = (item['status'] as string) || '';
+
+          const rawUrl = ((item['stream_url'] as string) || '').trim();
+          monitor.raw_stream_url = rawUrl;
+          const coverUrl = ((item['cover_url'] as string) || '').trim();
+          monitor.cover_url = coverUrl ? this.buildHttpUrl(coverUrl) : '';
+          if (!rawUrl) {
+            monitor.stream_url = '';
+          } else if (rawUrl.startsWith('rtsp://') || rawUrl.startsWith('rtmp://')) {
+            monitor.stream_url = `${BASE_HOST}/api/video/live/${monitor.id}/index.m3u8`;
+          } else if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+            monitor.stream_url = rawUrl;
+          } else {
+            monitor.stream_url = `${BASE_HOST}/api/video/${rawUrl}`;
+          }
+          return monitor;
+        });
+      } else {
+        this.monitors = [];
+      }
+    } finally {
+      this.isLoadingMonitors = false;
+    }
+  }
+
+  openEditMonitor(monitor: MonitorInfo): void {
+    this.editingMonitorId = monitor.id;
+    this.editingMonitorName = monitor.name;
+    this.editingMonitorUrl = monitor.raw_stream_url;
+  }
+
+  cancelEditMonitor(): void {
+    this.editingMonitorId = 0;
+    this.editingMonitorName = '';
+    this.editingMonitorUrl = '';
+  }
+
+  async submitEditMonitor(monitorId: number): Promise<void> {
+    const nextName = this.editingMonitorName.trim();
+    const nextUrl = this.editingMonitorUrl.trim();
+    if (!nextName) {
+      promptAction.showToast({ message: '请填写监控名称', duration: 2000 });
+      return;
+    }
+    const payload = new EditMonitorPayload();
+    payload.name = nextName;
+    payload.stream_url = nextUrl;
+    const res = await HttpUtil.put(`/monitors/${monitorId}`, payload);
+    if (res.code === 0) {
+      promptAction.showToast({ message: '监控已更新', duration: 2000 });
+      this.cancelEditMonitor();
+      this.loadMonitors();
+      if (this.selectedMonitorId === monitorId) {
+        this.resetSelection();
+      }
     } else {
-      this.monitors = [];
+      promptAction.showToast({ message: res.message || '更新失败', duration: 2000 });
+    }
+  }
+
+  confirmDeleteMonitor(monitor: MonitorInfo): void {
+    AlertDialog.show({
+      title: '删除监控',
+      message: `确认删除“${monitor.name}”？录制文件和封面也会一起删除。`,
+      autoCancel: true,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: '#C00000',
+        action: (): void => {
+          this.deleteMonitor(monitor);
+        }
+      }
+    });
+  }
+
+  async deleteMonitor(monitor: MonitorInfo): Promise<void> {
+    const res = await HttpUtil.del(`/monitors/${monitor.id}`);
+    if (res.code === 0) {
+      promptAction.showToast({ message: '监控已删除', duration: 2000 });
+      if (this.selectedMonitorId === monitor.id) {
+        this.resetSelection();
+      }
+      if (this.editingMonitorId === monitor.id) {
+        this.cancelEditMonitor();
+      }
+      this.loadMonitors();
+    } else {
+      promptAction.showToast({ message: res.message || '删除失败', duration: 2000 });
     }
   }
 
   async submitAddMonitor(name: string, streamUrl: string): Promise<void> {
-    if (!name || !streamUrl) {
+    const nextName = name.trim();
+    const nextUrl = streamUrl.trim();
+    if (!nextName || !nextUrl) {
       promptAction.showToast({ message: '请填写完整信息', duration: 2000 });
       return;
     }
     const payload = new AddMonitorPayload();
-    payload.name = name;
-    payload.stream_url = streamUrl;
+    payload.name = nextName;
+    payload.stream_url = nextUrl;
     const res = await HttpUtil.post(`/monitors/${this.groupId}`, payload);
     if (res.code === 0) {
       promptAction.showToast({ message: '监控添加成功', duration: 2000 });
@@ -664,30 +782,118 @@ export struct MonitorTab {
           Grid() {
             ForEach(this.monitors, (monitor: MonitorInfo): void => {
               GridItem() {
-                Column() {
-                  Image($r('app.media.foreground'))
+                Column({ space: 8 }) {
+                  Image(monitor.cover_url ? monitor.cover_url : $r('app.media.foreground'))
                     .width('100%')
                     .height(100)
                     .objectFit(ImageFit.Cover)
                     .borderRadius({ topLeft: 8, topRight: 8 })
                     .backgroundColor(Color.Gray)
-                  Text(monitor.name)
-                    .fontSize(14)
-                    .fontColor($r('app.color.app_text_primary'))
-                    .padding(8)
+                    .onClick((): void => {
+                      this.openMonitor(monitor);
+                    })
+
+                  if (this.editingMonitorId === monitor.id) {
+                    TextInput({ placeholder: '监控名称', text: this.editingMonitorName })
+                      .height(36)
+                      .fontSize(13)
+                      .fontColor($r('app.color.app_text_primary'))
+                      .backgroundColor($r('app.color.app_input_bg'))
+                      .onChange((val: string): void => {
+                        this.editingMonitorName = val;
+                      })
+                    TextInput({ placeholder: '视频流地址', text: this.editingMonitorUrl })
+                      .height(36)
+                      .fontSize(13)
+                      .fontColor($r('app.color.app_text_primary'))
+                      .backgroundColor($r('app.color.app_input_bg'))
+                      .onChange((val: string): void => {
+                        this.editingMonitorUrl = val;
+                      })
+                    Row({ space: 8 }) {
+                      Button('保存')
+                        .layoutWeight(1)
+                        .height(34)
+                        .fontSize(12)
+                        .padding({ left: 0, right: 0 })
+                        .backgroundColor($r('app.color.app_primary'))
+                        .fontColor(Color.White)
+                        .onClick((): void => {
+                          this.submitEditMonitor(monitor.id);
+                        })
+                      Button('取消')
+                        .layoutWeight(1)
+                        .height(34)
+                        .fontSize(12)
+                        .padding({ left: 0, right: 0 })
+                        .backgroundColor($r('app.color.app_card_subtle_bg'))
+                        .fontColor($r('app.color.app_text_primary'))
+                        .onClick((): void => {
+                          this.cancelEditMonitor();
+                        })
+                    }
                     .width('100%')
-                    .textAlign(TextAlign.Center)
-                  Text(monitor.status || 'online')
-                    .fontSize(11)
-                    .fontColor($r('app.color.app_text_secondary'))
-                    .padding({ bottom: 8 })
+                    .padding({ left: 8, right: 8, bottom: 8 })
+                  } else {
+                    Text(monitor.name)
+                      .fontSize(14)
+                      .fontColor($r('app.color.app_text_primary'))
+                      .padding({ left: 8, right: 8, top: 2 })
+                      .width('100%')
+                      .textAlign(TextAlign.Center)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text(monitor.raw_stream_url || '未配置地址')
+                      .fontSize(10)
+                      .fontColor($r('app.color.app_text_secondary'))
+                      .padding({ left: 8, right: 8 })
+                      .width('100%')
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Column({ space: 6 }) {
+                      Row({ space: 8 }) {
+                        Button('打开')
+                          .layoutWeight(1)
+                          .height(32)
+                          .fontSize(12)
+                          .padding({ left: 0, right: 0 })
+                          .backgroundColor($r('app.color.app_primary'))
+                          .fontColor(Color.White)
+                          .onClick((): void => {
+                            this.openMonitor(monitor);
+                          })
+                        Button('编辑')
+                          .layoutWeight(1)
+                          .height(32)
+                          .fontSize(12)
+                          .padding({ left: 0, right: 0 })
+                          .backgroundColor($r('app.color.app_card_subtle_bg'))
+                          .fontColor($r('app.color.app_text_primary'))
+                          .onClick((): void => {
+                            this.openEditMonitor(monitor);
+                          })
+                      }
+                      .width('100%')
+
+                      Button('删除')
+                        .width('100%')
+                        .height(32)
+                        .fontSize(12)
+                        .padding({ left: 0, right: 0 })
+                        .backgroundColor('#C00000')
+                        .fontColor(Color.White)
+                        .onClick((): void => {
+                          this.confirmDeleteMonitor(monitor);
+                        })
+                    }
+                    .width('100%')
+                    .padding({ left: 8, right: 8, bottom: 8 })
+                  }
                 }
+                .padding({ bottom: 8 })
                 .backgroundColor($r('app.color.app_card_bg'))
                 .borderRadius(10)
                 .shadow({ radius: 5, color: $r('app.color.app_shadow') })
-                .onClick((): void => {
-                  this.openMonitor(monitor);
-                })
               }
             })
           }
