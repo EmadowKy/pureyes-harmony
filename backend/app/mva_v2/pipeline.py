@@ -209,15 +209,14 @@ class JITVideoPipeline:
         """(已废弃，其功能并入 process_clip 串行执行)"""
         pass
 
-    async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None):
-        """按需立刻处理目标片段并阻塞等待完成 (已优化为线程安全的单线程串行模式，防止多线程 CUDA 冲突)"""
-        logger.info(f"[JIT] Processing clip {video_id} from {start_sec}s to {end_sec}s...")
+    async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None, sample_fps: float = 1.0, resolution: str = "1080P"):
+        """按需立刻处理目标片段并阻塞等待完成 (支持动态采样率 sample_fps 与画质清晰度 resolution)"""
+        logger.info(f"[JIT] Processing clip {video_id} from {start_sec}s to {end_sec}s with sample_fps={sample_fps}, resolution={resolution}...")
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         
-        # 默认 1 秒抽 1 帧
-        sample_fps = 1
-        frame_interval = int(fps / sample_fps) if fps > 0 else 30
+        # 计算采样帧间隔
+        frame_interval = max(1, int(fps / sample_fps)) if fps > 0 else 30
         
         start_frame_idx = int(start_sec * fps)
         frame_idx = start_frame_idx
@@ -233,6 +232,23 @@ class JITVideoPipeline:
                 break
                 
             if frames_processed % frame_interval == 0:
+                # 按照画质分辨率设定对帧进行自适应缩放
+                if frame is not None:
+                    h, w = frame.shape[:2]
+                    target_h = 1080
+                    if resolution == "480P":
+                        target_h = 480
+                    elif resolution == "720P":
+                        target_h = 720
+                    elif resolution == "1080P":
+                        target_h = 1080
+                    elif resolution == "4K":
+                        target_h = 2160
+                    
+                    if h > target_h:
+                        scale = target_h / float(h)
+                        frame = cv2.resize(frame, (int(w * scale), target_h))
+
                 # 运动检测
                 has_motion = self._detect_motion(prev_frame, frame)
                 if has_motion:

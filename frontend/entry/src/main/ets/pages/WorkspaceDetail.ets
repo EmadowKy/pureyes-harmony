@@ -17,6 +17,9 @@ export class WorkspaceVideoSegment {
   status: string = 'pending';
   progress: number = 0;
   error_msg: string = '';
+  sample_fps: number = 1.0;
+  resolution: string = '1080P';
+  orig_resolution: string = '1080P';
 }
 
 export class TextChunk {
@@ -358,31 +361,130 @@ struct SegmentDetailDialog {
   controller: CustomDialogController
   segment: WorkspaceVideoSegment = new WorkspaceVideoSegment();
   @State remarkText: string = '';
+  @State isEditingRemark: boolean = false;
+  @State showDeleteConfirm: boolean = false;
+  @State selectedFps: number = 1.0;
+  @State selectedResolution: string = '1080P';
   showSelectionActions: boolean = false;
   @Prop jumpSeconds: number = 0;
   onUpdate: (remark: string) => void = (_remark: string): void => {};
   onDelete: () => void = (): void => {};
   onConfirmSelection: () => void = (): void => {};
+  onPreprocess: (sampleFps: number, resolution: string) => void = (_fps: number, _res: string): void => {};
+  onDeleteFeatures: () => void = (): void => {};
 
   videoController: VideoController = new VideoController();
 
   aboutToAppear(): void {
     this.remarkText = this.segment.remark;
+    this.isEditingRemark = false;
+    this.showDeleteConfirm = false;
+    this.selectedFps = this.segment.sample_fps || 1.0;
+    this.selectedResolution = this.segment.resolution || '1080P';
+  }
+
+  isResAllowed(resOption: string, origRes: string): boolean {
+    const resMap: Record<string, number> = {
+      '480P': 1,
+      '720P': 2,
+      '1080P': 3,
+      '4K': 4
+    };
+    const optLevel = resMap[resOption] || 1;
+    const origLevel = resMap[origRes || '1080P'] || 3;
+    return optLevel <= origLevel;
   }
 
   build() {
-    Column({ space: 15 }) {
-      Text('片段详情与预览')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+    Column({ space: 14 }) {
+      // 1. 顶部 Header 行：左上角返回/关闭图标，中间标题，右上角垃圾桶删除图标
+      Row() {
+        // 左上角返回/关闭图标
+        Row() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(22)
+            .fontColor([$r('app.color.app_text_primary')])
+        }
+        .width(36)
+        .height(36)
+        .borderRadius(18)
+        .backgroundColor('#F3F4F6')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .onClick((): void => {
+          this.controller.close();
+        })
 
-      Text(`${this.segment.video_name} (${this.segment.start_offset.toFixed(1)}s - ${this.segment.end_offset.toFixed(1)}s)`)
-        .fontSize(13)
-        .fontColor($r('app.color.app_text_secondary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text('片段详情')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+          .textAlign(TextAlign.Center)
 
+        // 右上角垃圾桶删除图标（非选择模式下显示）
+        if (!this.showSelectionActions) {
+          Row() {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(18)
+              .fontColor(['#EF4444'])
+          }
+          .width(36)
+          .height(36)
+          .borderRadius(18)
+          .backgroundColor('#FEE2E2')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .onClick((): void => {
+            this.showDeleteConfirm = true;
+          })
+        } else {
+          Blank().width(36)
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 删除确认弹框 / 提示条
+      if (this.showDeleteConfirm) {
+        Column({ space: 10 }) {
+          Text('确认要删除该视频片段吗？')
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#EF4444')
+          
+          Row({ space: 12 }) {
+            Button('确定删除')
+              .backgroundColor('#EF4444')
+              .fontColor(Color.White)
+              .height(34)
+              .fontSize(13)
+              .layoutWeight(1)
+              .onClick((): void => {
+                this.onDelete();
+                this.controller.close();
+              })
+
+            Button('取消')
+              .backgroundColor('#E5E7EB')
+              .fontColor('#374151')
+              .height(34)
+              .fontSize(13)
+              .layoutWeight(1)
+              .onClick((): void => {
+                this.showDeleteConfirm = false;
+              })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor('#FEF2F2')
+        .borderRadius(10)
+        .border({ width: 1, color: '#FCA5A5' })
+      }
+
+      // 视频播放器
       Video({
         src: BASE_HOST + '/api/video/' + this.segment.filepath,
         controller: this.videoController
@@ -398,19 +500,326 @@ struct SegmentDetailDialog {
           }
         })
 
-      if (!this.showSelectionActions) {
-        TextInput({ placeholder: '修改片段备注', text: this.remarkText })
-          .width('100%')
-          .height(45)
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_input_bg'))
-          .onChange((value: string): void => {
-            this.remarkText = value;
-          })
-      }
+      // 视频信息：监控名称及时间范围
+      Text(`${this.segment.video_name} (${this.segment.start_offset.toFixed(1)}s - ${this.segment.end_offset.toFixed(1)}s)`)
+        .fontSize(12)
+        .fontColor($r('app.color.app_text_secondary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
 
-      Row({ space: 10 }) {
-        if (this.showSelectionActions) {
+      // 视频下方直接显示备注及修改逻辑
+      Column({ space: 8 }) {
+        if (!this.isEditingRemark) {
+          // 展示模式：备注内容 + 铅笔修改图标
+          Row() {
+            Column({ space: 2 }) {
+              Text('片段备注')
+                .fontSize(11)
+                .fontColor('#9CA3AF')
+              Text(this.remarkText ? this.remarkText : '暂无备注')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.remarkText ? $r('app.color.app_text_primary') : '#9CA3AF')
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            // 铅笔图标（点击变成可编辑文本框）
+            if (!this.showSelectionActions) {
+              Row() {
+                SymbolGlyph($r('sys.symbol.square_and_pencil'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.app_text_primary')])
+              }
+              .width(32)
+              .height(32)
+              .borderRadius(16)
+              .backgroundColor('#F3F4F6')
+              .justifyContent(FlexAlign.Center)
+              .alignItems(VerticalAlign.Center)
+              .onClick((): void => {
+                this.isEditingRemark = true;
+              })
+            }
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor('#F9FAFB')
+          .borderRadius(8)
+          .alignItems(VerticalAlign.Center)
+        } else {
+          // 编辑模式：可修改的文本框 + 保存/取消操作按钮
+          Column({ space: 8 }) {
+            Text('编辑片段备注')
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+              .width('100%')
+
+            TextInput({ placeholder: '请输入新备注', text: this.remarkText })
+              .width('100%')
+              .height(42)
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_input_bg'))
+              .onChange((value: string): void => {
+                this.remarkText = value;
+              })
+
+            Row({ space: 10 }) {
+              Button('保存备注')
+                .backgroundColor($r('app.color.app_primary'))
+                .fontColor(Color.White)
+                .height(36)
+                .fontSize(13)
+                .layoutWeight(1)
+                .onClick((): void => {
+                  this.onUpdate(this.remarkText);
+                  this.isEditingRemark = false;
+                })
+
+              Button('取消')
+                .backgroundColor('#E5E7EB')
+                .fontColor('#374151')
+                .height(36)
+                .fontSize(13)
+                .layoutWeight(1)
+                .onClick((): void => {
+                  this.remarkText = this.segment.remark;
+                  this.isEditingRemark = false;
+                })
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor('#F9FAFB')
+          .borderRadius(8)
+        }
+      }
+      .width('100%')
+
+      // 预处理部分（位于备注正下方）
+      Column({ space: 10 }) {
+        Text('视频特征预处理')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+
+        if (this.segment.status === 'completed') {
+          // 1. 已预处理状态：展示精度信息，并提供删除预处理按钮
+          Row() {
+            Column({ space: 3 }) {
+              Row({ space: 6 }) {
+                Text('已预处理')
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#10B981')
+                  .backgroundColor('#D1FAE5')
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .borderRadius(4)
+                Text('特征提炼就绪')
+                  .fontSize(12)
+                  .fontColor('#6B7280')
+              }
+
+              Text(`帧采样率: ${this.segment.sample_fps || 1} 帧/秒  |  画质: ${this.segment.resolution || '1080P'}`)
+                .fontSize(12)
+                .fontColor('#374151')
+                .margin({ top: 4 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            if (!this.showSelectionActions) {
+              Button('删除预处理')
+                .fontSize(12)
+                .fontColor('#EF4444')
+                .backgroundColor('#FEE2E2')
+                .height(32)
+                .onClick((): void => {
+                  this.onDeleteFeatures();
+                })
+            }
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor('#F0FDF4')
+          .borderRadius(8)
+          .border({ width: 1, color: '#BBF7D0' })
+          .alignItems(VerticalAlign.Center)
+
+        } else if (this.segment.status === 'processing' || this.segment.status === 'pending') {
+          // 2. 正在预处理状态：显示当前设置的精度与进度条
+          Column({ space: 8 }) {
+            Row() {
+              Text(`正在预处理 (${this.segment.sample_fps || 1} 帧/秒, ${this.segment.resolution || '1080P'})`)
+                .fontSize(12)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#3B82F6')
+                .layoutWeight(1)
+              Text(`${this.segment.progress}%`)
+                .fontSize(12)
+                .fontColor('#3B82F6')
+            }
+            .width('100%')
+
+            Progress({ value: this.segment.progress, total: 100, type: ProgressType.Linear })
+              .width('100%')
+              .height(8)
+              .color($r('app.color.app_primary'))
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor('#EFF6FF')
+          .borderRadius(8)
+          .border({ width: 1, color: '#BFDBFE' })
+
+        } else {
+          // 3. 失败或未预处理状态：展示失败原因（若失败） + 精度选择器 + 开始/重新预处理按钮
+          Column({ space: 10 }) {
+            if (this.segment.status === 'failed') {
+              Text('预处理失败原因: ' + (this.segment.error_msg || '未知错误'))
+                .fontSize(12)
+                .fontColor('#EF4444')
+                .backgroundColor('#FEF2F2')
+                .padding(8)
+                .borderRadius(6)
+                .width('100%')
+            }
+
+            // A. 采样率选择 (0.5, 1, 2)
+            Column({ space: 4 }) {
+              Text('帧采样率')
+                .fontSize(11)
+                .fontColor('#6B7280')
+                .width('100%')
+
+              Row({ space: 8 }) {
+                Button('0.5 帧/秒')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedFps === 0.5 ? Color.White : '#374151')
+                  .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedFps = 0.5;
+                  })
+
+                Button('1 帧/秒 (推荐)')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedFps === 1.0 ? Color.White : '#374151')
+                  .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedFps = 1.0;
+                  })
+
+                Button('2 帧/秒')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedFps === 2.0 ? Color.White : '#374151')
+                  .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedFps = 2.0;
+                  })
+              }
+              .width('100%')
+            }
+
+            // B. 画质清晰度选择 (480P, 720P, 1080P, 4K)，约束不超过原画
+            Column({ space: 4 }) {
+              Text(`画质清晰度 (原画: ${this.segment.orig_resolution || '1080P'})`)
+                .fontSize(11)
+                .fontColor('#6B7280')
+                .width('100%')
+
+              Row({ space: 6 }) {
+                // 480P
+                Button('480P')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedResolution === '480P' ? Color.White : '#374151')
+                  .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '480P';
+                  })
+
+                // 720P
+                Button('720P')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .enabled(this.isResAllowed('720P', this.segment.orig_resolution))
+                  .fontColor(this.selectedResolution === '720P' ? Color.White : (this.isResAllowed('720P', this.segment.orig_resolution) ? '#374151' : '#9CA3AF'))
+                  .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '720P';
+                  })
+
+                // 1080P
+                Button('1080P')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .enabled(this.isResAllowed('1080P', this.segment.orig_resolution))
+                  .fontColor(this.selectedResolution === '1080P' ? Color.White : (this.isResAllowed('1080P', this.segment.orig_resolution) ? '#374151' : '#9CA3AF'))
+                  .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '1080P';
+                  })
+
+                // 4K
+                Button('4K')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .enabled(this.isResAllowed('4K', this.segment.orig_resolution))
+                  .fontColor(this.selectedResolution === '4K' ? Color.White : (this.isResAllowed('4K', this.segment.orig_resolution) ? '#374151' : '#9CA3AF'))
+                  .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '4K';
+                  })
+              }
+              .width('100%')
+            }
+
+            // C. 灰色提示文字
+            Text('提示：精度越高/视频越长，预处理时间将会越长')
+              .fontSize(11)
+              .fontColor('#9CA3AF')
+              .width('100%')
+
+            // D. 开始/重新预处理按钮
+            if (!this.showSelectionActions) {
+              Button(this.segment.status === 'failed' ? '重新预处理' : '开始预处理')
+                .fontSize(13)
+                .backgroundColor($r('app.color.app_primary'))
+                .fontColor(Color.White)
+                .width('100%')
+                .height(36)
+                .onClick((): void => {
+                  this.onPreprocess(this.selectedFps, this.selectedResolution);
+                })
+            }
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor('#F9FAFB')
+          .borderRadius(8)
+        }
+      }
+      .width('100%')
+
+      // 问答选框选择模式的确认/取消按键
+      if (this.showSelectionActions) {
+        Row({ space: 10 }) {
           Button('确认选择')
             .backgroundColor($r('app.color.app_primary'))
             .fontColor(Color.White)
@@ -433,40 +842,11 @@ struct SegmentDetailDialog {
             .onClick((): void => {
               this.controller.close();
             })
-        } else {
-          Button('删除片段')
-            .backgroundColor('#EF4444')
-            .fontColor(Color.White)
-            .layoutWeight(1)
-            .height(40)
-            .onClick((): void => {
-              this.onDelete();
-              this.controller.close();
-            })
-
-          Button('修改备注')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .layoutWeight(1)
-            .height(40)
-            .onClick((): void => {
-              this.onUpdate(this.remarkText);
-              this.controller.close();
-            })
-
-          Button('关闭')
-            .backgroundColor('#999999')
-            .fontColor(Color.White)
-            .layoutWeight(1)
-            .height(40)
-            .onClick((): void => {
-              this.controller.close();
-            })
         }
+        .width('100%')
       }
-      .width('100%')
     }
-    .padding(20)
+    .padding(16)
     .width('95%')
     .backgroundColor($r('app.color.app_card_bg'))
     .borderRadius(16)
@@ -530,6 +910,12 @@ struct WorkspaceDetail {
       },
       onDelete: (): void => {
         this.submitDeleteSegment(this.selectedSegment.id);
+      },
+      onPreprocess: (sampleFps: number, resolution: string): void => {
+        this.submitPreprocessSegment(this.selectedSegment.id, sampleFps, resolution);
+      },
+      onDeleteFeatures: (): void => {
+        this.submitDeleteSegmentFeatures(this.selectedSegment.id);
       }
     }),
     autoCancel: true
@@ -601,6 +987,9 @@ struct WorkspaceDetail {
         s.status = (item['status'] as string) || 'pending';
         s.progress = (item['progress'] as number) || 0;
         s.error_msg = (item['error_msg'] as string) || '';
+        s.sample_fps = (item['sample_fps'] as number) || 1.0;
+        s.resolution = (item['resolution'] as string) || '1080P';
+        s.orig_resolution = (item['orig_resolution'] as string) || '1080P';
         
         // 恢复之前已被勾选的状态
         if (selectedIds.has(s.id)) {
@@ -747,6 +1136,34 @@ struct WorkspaceDetail {
       this.loadSegments();
     } else {
       promptAction.showToast({ message: '删除失败: ' + (res.message || '未知错误'), duration: 2000 });
+    }
+  }
+
+  async submitPreprocessSegment(segmentId: number, sampleFps: number, resolution: string): Promise<void> {
+    class PreprocessPayload {
+      sample_fps: number = 1.0;
+      resolution: string = '1080P';
+    }
+    const payload = new PreprocessPayload();
+    payload.sample_fps = sampleFps;
+    payload.resolution = resolution;
+
+    const res = await HttpUtil.post(`/workspaces/segments/${segmentId}/preprocess`, payload);
+    if (res.code === 0) {
+      promptAction.showToast({ message: '已开始预处理', duration: 1500 });
+      this.loadSegments();
+    } else {
+      promptAction.showToast({ message: '启动预处理失败: ' + (res.message || '未知错误'), duration: 2000 });
+    }
+  }
+
+  async submitDeleteSegmentFeatures(segmentId: number): Promise<void> {
+    const res = await HttpUtil.del(`/workspaces/segments/${segmentId}/features`);
+    if (res.code === 0) {
+      promptAction.showToast({ message: '预处理特征已删除', duration: 1500 });
+      this.loadSegments();
+    } else {
+      promptAction.showToast({ message: '删除特征失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 

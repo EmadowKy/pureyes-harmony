@@ -34,9 +34,12 @@ class WorkspaceVideoSegment(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     
     # 新增特征提取状态与进度字段
-    status = db.Column(db.String(32), default="pending", nullable=False)  # pending, processing, completed, failed
+    status = db.Column(db.String(32), default="pending", nullable=False)  # pending, processing, completed, failed, none
     progress = db.Column(db.Integer, default=0, nullable=False)            # 0 - 100
     error_msg = db.Column(db.String(512), nullable=True)
+    sample_fps = db.Column(db.Float, default=1.0, nullable=True)
+    resolution = db.Column(db.String(32), default="1080P", nullable=True)
+    orig_resolution = db.Column(db.String(32), default="1080P", nullable=True)
 
     def to_dict(self):
         return {
@@ -51,5 +54,8 @@ class WorkspaceVideoSegment(db.Model):
             "created_at": self.created_at.isoformat() + "Z",
             "status": self.status,
             "progress": self.progress,
-            "error_msg": self.error_msg
+            "error_msg": self.error_msg,
+            "sample_fps": self.sample_fps if self.sample_fps is not None else 1.0,
+            "resolution": self.resolution or "1080P",
+            "orig_resolution": self.orig_resolution or "1080P"
         }

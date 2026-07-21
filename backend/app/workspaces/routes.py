@@ -55,13 +55,15 @@ from flask import current_app
 # Global in-memory running tasks registry
 running_tasks = {}
 
-def extract_segment_features_bg(app, filepath, video_id, duration):
+def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.0, resolution="1080P"):
     with app.app_context():
         # 获取对应的数据库记录，设置状态为 processing
         seg = WorkspaceVideoSegment.query.filter_by(filepath=filepath).first()
         if seg:
             seg.status = "processing"
             seg.progress = 0
+            seg.sample_fps = sample_fps
+            seg.resolution = resolution
             db.session.commit()
             
         try:
@@ -76,13 +78,13 @@ def extract_segment_features_bg(app, filepath, video_id, duration):
                 db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({"progress": pct})
                 db.session.commit()
 
-            print(f"[BG FEATURE EXTRACTION] Starting JIT feature extraction for {video_id}...")
+            print(f"[BG FEATURE EXTRACTION] Starting JIT feature extraction for {video_id} (sample_fps={sample_fps}, resolution={resolution})...")
             pipeline = JITVideoPipeline(db_client)
             
             BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             abs_filepath = os.path.join(BACKEND_DIR, filepath)
             
-            asyncio.run(pipeline.process_clip(abs_filepath, video_id, 0.0, duration, progress_callback=progress_callback))
+            asyncio.run(pipeline.process_clip(abs_filepath, video_id, 0.0, duration, progress_callback=progress_callback, sample_fps=sample_fps, resolution=resolution))
             
             # 更新状态为 completed
             db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({
@@ -675,3 +677,57 @@ def delete_video_segment(segment_id):
     db.session.commit()
 
     return success(message="segment deleted")
+
+
+@workspaces_bp.post("/segments/<int:segment_id>/preprocess")
+@jwt_required()
+def preprocess_segment(segment_id):
+    segment = WorkspaceVideoSegment.query.get(segment_id)
+    if not segment:
+        return fail(message="segment not found", code=5003, http_status=404)
+    
+    data = request.get_json() or {}
+    sample_fps = float(data.get("sample_fps", 1.0))
+    resolution = str(data.get("resolution", "1080P"))
+
+    segment.sample_fps = sample_fps
+    segment.resolution = resolution
+    segment.status = "processing"
+    segment.progress = 0
+    segment.error_msg = None
+    db.session.commit()
+
+    app = current_app._get_current_object()
+    t_analysis = threading.Thread(
+        target=extract_segment_features_bg,
+        args=(app, segment.filepath, os.path.basename(segment.filepath), segment.duration, sample_fps, resolution)
+    )
+    t_analysis.daemon = True
+    t_analysis.start()
+
+    return success(message="preprocess started", data=segment.to_dict())
+
+
+@workspaces_bp.delete("/segments/<int:segment_id>/features")
+@jwt_required()
+def delete_segment_features(segment_id):
+    segment = WorkspaceVideoSegment.query.get(segment_id)
+    if not segment:
+        return fail(message="segment not found", code=5003, http_status=404)
+
+    # 从 spatiotemporal_db.json 中删除该片段的已知特征
+    video_id = os.path.basename(segment.filepath)
+    try:
+        from app.mva_v2.database import SpatiotemporalDB
+        db_client = SpatiotemporalDB()
+        db_client.records = [r for r in db_client.records if r.get("video_id") != video_id]
+        db_client._save_to_disk()
+    except Exception as e:
+        print(f"[CLEAR FEATURES ERROR] {e}")
+
+    segment.status = "none"
+    segment.progress = 0
+    segment.error_msg = None
+    db.session.commit()
+
+    return success(message="features deleted", data=segment.to_dict())

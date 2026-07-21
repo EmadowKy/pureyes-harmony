@@ -192,9 +192,9 @@ export struct WorkspaceTab {
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
 
-                Image($r('app.media.foreground'))
-                  .width(24)
-                  .height(24)
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.app_text_secondary')])
               }
               .width('100%')
               .padding(20)
