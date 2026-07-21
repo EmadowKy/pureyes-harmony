@@ -210,85 +210,92 @@ class JITVideoPipeline:
         pass
 
     async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None, sample_fps: float = 1.0, resolution: str = "1080P"):
-        """按需立刻处理目标片段并阻塞等待完成 (支持动态采样率 sample_fps 与画质清晰度 resolution)"""
-        logger.info(f"[JIT] Processing clip {video_id} from {start_sec}s to {end_sec}s with sample_fps={sample_fps}, resolution={resolution}...")
+        """按需立刻处理目标片段并阻塞等待完成 (高效率 Fast-Skipping 预处理引擎)"""
+        logger.info(f"[JIT] Fast-processing clip {video_id} from {start_sec}s to {end_sec}s with sample_fps={sample_fps}, resolution={resolution}...")
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = 30.0
         
         # 计算采样帧间隔
-        frame_interval = max(1, int(fps / sample_fps)) if fps > 0 else 30
+        frame_interval = max(1, int(fps / sample_fps))
         
         start_frame_idx = int(start_sec * fps)
-        frame_idx = start_frame_idx
         end_frame_idx = int(end_sec * fps)
-        prev_frame = None
-        frames_processed = 0
-        
         total_frames_to_process = max(1, end_frame_idx - start_frame_idx)
         
-        while cap.isOpened() and frame_idx <= end_frame_idx:
-            ret, frame = await asyncio.to_thread(cap.read)
-            if not ret:
-                break
-                
-            if frames_processed % frame_interval == 0:
-                # 按照画质分辨率设定对帧进行自适应缩放
-                if frame is not None:
-                    h, w = frame.shape[:2]
-                    target_h = 1080
-                    if resolution == "480P":
-                        target_h = 480
-                    elif resolution == "720P":
-                        target_h = 720
-                    elif resolution == "1080P":
-                        target_h = 1080
-                    elif resolution == "4K":
-                        target_h = 2160
-                    
-                    if h > target_h:
-                        scale = target_h / float(h)
-                        frame = cv2.resize(frame, (int(w * scale), target_h))
-
-                # 运动检测
-                has_motion = self._detect_motion(prev_frame, frame)
-                if has_motion:
-                    # 串行同步调用 YOLO 追踪，避免并发 CUDA context 竞争
-                    bboxes = self.detector.detect(frame)
-                    if bboxes:
-                        # 串行同步调用 tracker
-                        tracked_objs = self.tracker.update(bboxes, frame)
-                        
-                        tracklet_records = []
-                        for track in tracked_objs:
-                            # 串行同步调用 ReID 模型提取特征向量
-                            reid_emb = self.extractor.extract_reid(track.image_crop)
-                            record = {
-                                "video_id": video_id,
-                                "timestamp": frame_idx / fps,
-                                "frame_idx": frame_idx,
-                                "track_id": track.track_id,
-                                "class_name": track.bbox.class_name,
-                                "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
-                                "reid_vector": reid_emb.tolist(),
-                                "clip_vector": [0.0] * 512  # CLIP 零填充
-                            }
-                            tracklet_records.append(record)
-                            
-                        # 特征库入库
-                        if self.db_client and tracklet_records:
-                            self.db_client.insert(tracklet_records)
-                            
-                if frame is not None:
-                    prev_frame = frame.copy()
+        # 跳转至起始帧
+        if start_frame_idx > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_idx)
             
-            # 回报进度
-            if progress_callback and (frames_processed % 5 == 0 or frame_idx == end_frame_idx):
+        frame_idx = start_frame_idx
+        prev_frame = None
+        last_progress_pct = -1
+        last_callback_time = 0.0
+
+        while cap.isOpened() and frame_idx <= end_frame_idx:
+            # 快速帧跳跃：如果不是采样目标帧，直接 grab 跳过图像解码
+            if (frame_idx - start_frame_idx) % frame_interval != 0:
+                cap.grab()
+                frame_idx += 1
+                continue
+
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+
+            # 按照画质分辨率设定对帧进行自适应缩放
+            h, w = frame.shape[:2]
+            target_h = 1080
+            if resolution == "480P":
+                target_h = 480
+            elif resolution == "720P":
+                target_h = 720
+            elif resolution == "1080P":
+                target_h = 1080
+            elif resolution == "4K":
+                target_h = 2160
+            
+            if h > target_h:
+                scale = target_h / float(h)
+                frame = cv2.resize(frame, (int(w * scale), target_h))
+
+            # 运动检测与 YOLO 追踪提取
+            has_motion = self._detect_motion(prev_frame, frame)
+            if has_motion:
+                bboxes = self.detector.detect(frame)
+                if bboxes:
+                    tracked_objs = self.tracker.update(bboxes, frame)
+                    tracklet_records = []
+                    for track in tracked_objs:
+                        reid_emb = self.extractor.extract_reid(track.image_crop)
+                        record = {
+                            "video_id": video_id,
+                            "timestamp": frame_idx / fps,
+                            "frame_idx": frame_idx,
+                            "track_id": track.track_id,
+                            "class_name": track.bbox.class_name,
+                            "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
+                            "reid_vector": reid_emb.tolist(),
+                            "clip_vector": [0.0] * 512
+                        }
+                        tracklet_records.append(record)
+                        
+                    if self.db_client and tracklet_records:
+                        self.db_client.insert(tracklet_records)
+                        
+            prev_frame = frame.copy()
+            
+            # 高效汇报进度：节流更新频率，避免 SQL 事务事务锁开销
+            if progress_callback:
                 progress_pct = min(99, int((frame_idx - start_frame_idx) / total_frames_to_process * 100))
-                progress_callback(progress_pct)
+                now = time.time()
+                if progress_pct != last_progress_pct and (now - last_callback_time >= 0.3 or progress_pct >= 99):
+                    last_progress_pct = progress_pct
+                    last_callback_time = now
+                    progress_callback(progress_pct)
                 
             frame_idx += 1
-            frames_processed += 1
-            await asyncio.sleep(0.001)
             
         cap.release()
         if progress_callback:

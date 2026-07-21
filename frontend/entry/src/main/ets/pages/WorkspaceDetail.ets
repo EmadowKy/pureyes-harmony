@@ -230,17 +230,25 @@ struct VideoRangeDialog {
   @State startOffset: number = 0;
   @State endOffset: number = 0;
   @State remarkText: string = '';
-  confirm: (start: number, end: number, remark: string) => void = (_start: number, _end: number, _remark: string): void => {};
+  @State enablePreprocess: boolean = true;
+  @State selectedFps: number = 1.0;
+  @State selectedResolution: string = '1080P';
+
+  confirm: (start: number, end: number, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string) => void =
+    (_start: number, _end: number, _remark: string, _enable: boolean, _fps: number, _res: string): void => {};
   
   videoController: VideoController = new VideoController();
 
   aboutToAppear(): void {
     this.startOffset = this.activeVideo.startOffset;
     this.endOffset = this.activeVideo.endOffset > 0 ? this.activeVideo.endOffset : this.activeVideo.duration;
+    this.enablePreprocess = true;
+    this.selectedFps = 1.0;
+    this.selectedResolution = '1080P';
   }
 
   build() {
-    Column({ space: 15 }) {
+    Column({ space: 14 }) {
       Text('截取视频片段')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
@@ -328,6 +336,134 @@ struct VideoRangeDialog {
           this.remarkText = value;
         })
 
+      // 视频特征预处理开关拉杆
+      Column({ space: 8 }) {
+        Row() {
+          Text('视频特征预处理')
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.enablePreprocess })
+            .selectedColor($r('app.color.app_primary'))
+            .onChange((isOn: boolean): void => {
+              this.enablePreprocess = isOn;
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        if (this.enablePreprocess) {
+          Column({ space: 10 }) {
+            // A. 采样率选择 (0.5, 1, 2)
+            Column({ space: 4 }) {
+              Text('帧采样率')
+                .fontSize(11)
+                .fontColor('#6B7280')
+                .width('100%')
+
+              Row({ space: 8 }) {
+                Button('0.5 帧/秒')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedFps === 0.5 ? Color.White : '#374151')
+                  .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedFps = 0.5;
+                  })
+
+                Button('1 帧/秒 (推荐)')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedFps === 1.0 ? Color.White : '#374151')
+                  .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedFps = 1.0;
+                  })
+
+                Button('2 帧/秒')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedFps === 2.0 ? Color.White : '#374151')
+                  .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedFps = 2.0;
+                  })
+              }
+              .width('100%')
+            }
+
+            // B. 画质清晰度选择 (480P, 720P, 1080P, 4K)
+            Column({ space: 4 }) {
+              Text('画质清晰度')
+                .fontSize(11)
+                .fontColor('#6B7280')
+                .width('100%')
+
+              Row({ space: 6 }) {
+                Button('480P')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedResolution === '480P' ? Color.White : '#374151')
+                  .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '480P';
+                  })
+
+                Button('720P')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedResolution === '720P' ? Color.White : '#374151')
+                  .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '720P';
+                  })
+
+                Button('1080P')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedResolution === '1080P' ? Color.White : '#374151')
+                  .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '1080P';
+                  })
+
+                Button('4K')
+                  .fontSize(12)
+                  .height(30)
+                  .layoutWeight(1)
+                  .fontColor(this.selectedResolution === '4K' ? Color.White : '#374151')
+                  .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#E5E7EB')
+                  .onClick((): void => {
+                    this.selectedResolution = '4K';
+                  })
+              }
+              .width('100%')
+            }
+
+            // C. 灰色提示文字
+            Text('提示：精度越高/视频越长，预处理时间将会越长')
+              .fontSize(11)
+              .fontColor('#9CA3AF')
+              .width('100%')
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor('#F9FAFB')
+          .borderRadius(8)
+        }
+      }
+      .width('100%')
+      .padding(10)
+      .backgroundColor('#F9FAFB')
+      .borderRadius(8)
+
       Row({ space: 20 }) {
         Button('取消')
           .backgroundColor('#999999')
@@ -344,7 +480,7 @@ struct VideoRangeDialog {
           .width(100)
           .height(40)
           .onClick((): void => {
-            this.confirm(this.startOffset, this.endOffset, this.remarkText);
+            this.confirm(this.startOffset, this.endOffset, this.remarkText, this.enablePreprocess, this.selectedFps, this.selectedResolution);
             this.controller.close();
           })
       }
@@ -895,8 +1031,8 @@ struct WorkspaceDetail {
   rangeDialogController: CustomDialogController = new CustomDialogController({
     builder: VideoRangeDialog({
       activeVideo: this.activeVideo,
-      confirm: (start: number, end: number, remark: string): void => {
-        this.submitCreateSegment(this.activeIndex, start, end, remark);
+      confirm: (start: number, end: number, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string): void => {
+        this.submitCreateSegment(this.activeIndex, start, end, remark, enablePreprocess, sampleFps, resolution);
       }
     }),
     autoCancel: true
@@ -1047,7 +1183,7 @@ struct WorkspaceDetail {
     this.rangeDialogController.open();
   }
 
-  async submitCreateSegment(index: number, start: number, end: number, remark: string): Promise<void> {
+  async submitCreateSegment(index: number, start: number, end: number, remark: string, enablePreprocess: boolean = true, sampleFps: number = 1.0, resolution: string = '1080P'): Promise<void> {
     const video = this.exampleVideos[index];
     
     class SegmentPayload {
@@ -1055,12 +1191,18 @@ struct WorkspaceDetail {
       start_offset: number = 0;
       end_offset: number = 0;
       remark: string = '';
+      enable_preprocess: boolean = true;
+      sample_fps: number = 1.0;
+      resolution: string = '1080P';
     }
     const payload = new SegmentPayload();
     payload.video_name = video.name;
     payload.start_offset = start;
     payload.end_offset = end;
     payload.remark = remark;
+    payload.enable_preprocess = enablePreprocess;
+    payload.sample_fps = sampleFps;
+    payload.resolution = resolution;
 
     promptAction.showToast({ message: '正在物理裁剪并保存片段...', duration: 1500 });
     const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/segments`, payload);
@@ -2075,15 +2217,14 @@ struct WorkspaceDetail {
                         .padding(10)
                         .backgroundColor(seg.isSelected ? '#EFF6FF' : $r('app.color.app_card_bg'))
                         .borderRadius(8)
-                        .opacity(seg.status === 'completed' ? 1.0 : 0.5) // 未分析完置灰
+                        .opacity(1.0)
                         .border({
                           width: 1.5,
                           color: seg.isSelected ? '#3B82F6' : Color.Transparent
                         })
                         .onClick((): void => {
-                          if (seg.status !== 'completed') {
-                            promptAction.showToast({ message: '该片段仍在分析预处理中，暂不可选择提问' });
-                            return;
+                          if (seg.status === 'processing' || seg.status === 'pending') {
+                            promptAction.showToast({ message: '该片段正在后台预处理中，可同步提交问答', duration: 1500 });
                           }
                           if (seg.isSelected) {
                             this.toggleSegmentSelection(index, false);

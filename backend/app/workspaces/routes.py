@@ -102,7 +102,7 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
             })
             db.session.commit()
 
-def process_qa_thread(app, task_id, question, video_paths):
+def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
     with app.app_context():
         try:
             # Stage 1: Video Slicing
@@ -186,7 +186,8 @@ def process_qa_thread(app, task_id, question, video_paths):
                 question=question,
                 video_paths=video_paths,
                 config_path=config_path,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                segment_metas=segment_metas
             )
 
             if result.get("success", True) is False:
@@ -311,6 +312,7 @@ def submit_qa(workspace_id):
     db.session.add(record)
     
     video_paths = []
+    segment_metas = []
     from datetime import timedelta
     base_time = datetime(2026, 6, 27, 0, 0, 0)
     for seg_id in segment_ids:
@@ -318,11 +320,8 @@ def submit_qa(workspace_id):
         if not segment:
             return fail(message=f"segment {seg_id} not found in this workspace", code=5011, http_status=404)
         
-        # 校验分析状态：提问时不可选择未分析完的片段
-        if segment.status != "completed":
-            return fail(message=f"片段 '{segment.video_name}' (ID: {seg_id}) 仍在分析预处理中 ({segment.progress}%)，请稍候再提问", code=5012, http_status=400)
-        
         video_paths.append(segment.filepath)
+        segment_metas.append(segment.to_dict())
         
         # Add selection row in DB
         qvs = QAVideoSelection(
@@ -354,7 +353,7 @@ def submit_qa(workspace_id):
     
     # Start thread
     app = current_app._get_current_object()
-    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, video_paths))
+    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, video_paths, segment_metas))
     t.daemon = True
     t.start()
     
@@ -540,6 +539,9 @@ def create_video_segment(workspace_id):
     start_offset = data.get("start_offset")
     end_offset = data.get("end_offset")
     remark = data.get("remark") or ""
+    enable_preprocess = data.get("enable_preprocess", True)
+    sample_fps = float(data.get("sample_fps", 1.0))
+    resolution = str(data.get("resolution", "1080P"))
 
     if not video_name or start_offset is None or end_offset is None:
         return fail(message="video_name, start_offset, and end_offset are required", code=5006, http_status=400)
@@ -559,6 +561,24 @@ def create_video_segment(workspace_id):
     example_video_path = os.path.join(example_dir, video_name)
     if not os.path.exists(example_video_path):
         return fail(message=f"example video file {video_name} not found", code=5007, http_status=404)
+
+    # 检测原画分辨率
+    orig_res = "1080P"
+    try:
+        import cv2
+        cap = cv2.VideoCapture(example_video_path)
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if h >= 2160:
+            orig_res = "4K"
+        elif h >= 1080:
+            orig_res = "1080P"
+        elif h >= 720:
+            orig_res = "720P"
+        else:
+            orig_res = "480P"
+    except Exception:
+        orig_res = "1080P"
 
     sim_filename = f"slice_{workspace_id}_{uuid.uuid4().hex[:8]}.mp4"
     sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
@@ -590,19 +610,24 @@ def create_video_segment(workspace_id):
             end_offset=end_offset,
             duration=duration,
             remark=remark,
-            filepath=f"storage/slices/{sim_filename}"
+            filepath=f"storage/slices/{sim_filename}",
+            status="pending" if enable_preprocess else "none",
+            sample_fps=sample_fps,
+            resolution=resolution,
+            orig_resolution=orig_res
         )
         db.session.add(segment)
         db.session.commit()
 
-        # Trigger background JIT feature extraction immediately after slicing
-        app = current_app._get_current_object()
-        t_analysis = threading.Thread(
-            target=extract_segment_features_bg,
-            args=(app, segment.filepath, os.path.basename(segment.filepath), segment.duration)
-        )
-        t_analysis.daemon = True
-        t_analysis.start()
+        # Trigger background JIT feature extraction only if enable_preprocess is True
+        if enable_preprocess:
+            app = current_app._get_current_object()
+            t_analysis = threading.Thread(
+                target=extract_segment_features_bg,
+                args=(app, segment.filepath, os.path.basename(segment.filepath), segment.duration, sample_fps, resolution)
+            )
+            t_analysis.daemon = True
+            t_analysis.start()
 
         return success(message="segment created", data=segment.to_dict(), http_status=201)
 

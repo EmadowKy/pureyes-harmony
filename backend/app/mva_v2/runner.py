@@ -18,15 +18,22 @@ class MVA2Runner:
         self.tools = ReActTools(self.db)
         self.max_feedback_loops = 10  # 支持最大 10 轮 ReAct 循环
 
-    async def execute_on_demand(self, video_path: str, video_id: str, start_sec: float, end_sec: float, user_query: str, progress_callback: Optional[Callable] = None) -> str:
+    async def execute_on_demand(self, video_path: str, video_id: str, start_sec: float, end_sec: float, user_query: str, progress_callback: Optional[Callable] = None, segment_meta: Optional[Dict[str, Any]] = None) -> str:
         logger.info("="*60)
         logger.info(f"MVA V2 (ReAct Agent) Runner started for query: '{user_query}'")
         logger.info("="*60)
         
+        meta = segment_meta or {}
+        seg_status = meta.get("status", "completed" if any(rec['video_id'] == video_id for rec in self.db.records) else "none")
+        sample_fps = meta.get("sample_fps", 1.0)
+        resolution = meta.get("resolution", "1080P")
+        orig_resolution = meta.get("orig_resolution", "1080P")
+        duration = max(0.1, end_sec - start_sec)
+
         # ==========================================
         # 阶段零：即时提权与入库 (JIT Ingestion)
         # ==========================================
-        # 检查数据库中是否已存在该视频片段的特征信息，避免重复分析
+        # 检查数据库中是否已存在该视频片段的特征信息
         has_records = any(rec['video_id'] == video_id for rec in self.db.records)
         
         if not has_records:
@@ -34,17 +41,17 @@ class MVA2Runner:
                 progress_callback({
                     "stage": "jit_ingestion",
                     "status": "started",
-                    "message": "检测到未预分析视频，正在进行特征提取与目标追踪..."
+                    "message": "检测到未提前提取特征视频，正在进行即时全扫描与目标追踪..."
                 })
             
             logger.info(f"--- Phase 0: JIT Feature Extraction for {video_id} ---")
-            await self.pipeline.process_clip(video_path, video_id, start_sec, end_sec)
+            await self.pipeline.process_clip(video_path, video_id, start_sec, end_sec, sample_fps=sample_fps, resolution=resolution)
             
             if progress_callback:
                 progress_callback({
                     "stage": "jit_ingestion",
                     "status": "completed",
-                    "message": f"视频片段特征提取完毕，共入库 {len([r for r in self.db.records if r['video_id'] == video_id])} 条结构化记录"
+                    "message": f"视频片段即时扫描完毕，提取 {len([r for r in self.db.records if r['video_id'] == video_id])} 条结构化数据"
                 })
         else:
             logger.info(f"--- Phase 0: Skipping JIT Ingestion, records already exist for {video_id} ---")
@@ -52,7 +59,7 @@ class MVA2Runner:
                 progress_callback({
                     "stage": "jit_ingestion",
                     "status": "completed",
-                    "message": "检测到该视频片段已完成预处理，直接进入 RAG 工具调用阶段"
+                    "message": "检测到该视频片段已完成预处理，直接调取库特征分析"
                 })
         
         # ==========================================
@@ -60,6 +67,15 @@ class MVA2Runner:
         # ==========================================
         from app.mva.utils import Qwen_VL
         
+        meta_prompt = (
+            f"【当前关联切片片段预处理状态元数据】:\n"
+            f"- 视频文件名: '{video_id}'\n"
+            f"- 物理片段总时长: {duration:.1f} 秒\n"
+            f"- 是否已进行特征预处理: {'是 (已结构化入库)' if seg_status == 'completed' or has_records else '否 (未预处理/即时全扫描)'}\n"
+            f"- 配置帧采样率: {sample_fps} 帧/秒\n"
+            f"- 配置画质分辨率: {resolution} (视频原画分辨率: {orig_resolution})\n"
+        )
+
         # 初始化消息上下文，植入 ReAct 系统提示词
         messages = [
             {
@@ -68,7 +84,7 @@ class MVA2Runner:
             },
             {
                 "role": "user",
-                "content": f"目标视频文件名 (video_id): '{video_id}'\n"
+                "content": f"{meta_prompt}\n"
                            f"视频文件的绝对路径 (video_path): '{os.path.abspath(video_path)}'\n"
                            f"用户提出的问题 (question): '{user_query}'\n\n"
                            f"请开始你的推理。请一步一步思考，使用工具链搜集客观事实，不要瞎猜。"
@@ -260,6 +276,7 @@ class MVA2Runner:
         import os
         question = sample.get("question", "")
         video_filenames = sample.get("video_paths", sample.get("videos", []))
+        segment_metas = sample.get("segment_metas", [])
         
         if not video_filenames:
             return {"error": "No video paths provided", "success": False}
@@ -277,6 +294,7 @@ class MVA2Runner:
         
         for idx, video_path in enumerate(full_video_paths):
             video_id = os.path.basename(video_path)
+            meta = segment_metas[idx] if idx < len(segment_metas) else {}
             
             if progress_callback:
                 progress_callback({
@@ -297,7 +315,7 @@ class MVA2Runner:
             
             try:
                 answer = asyncio.run(
-                    self.execute_on_demand(video_path, video_id, start_sec, end_sec, question, progress_callback)
+                    self.execute_on_demand(video_path, video_id, start_sec, end_sec, question, progress_callback, segment_meta=meta)
                 )
                 all_answers.append(answer)
             except Exception as e:
