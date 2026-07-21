@@ -68,15 +68,26 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
             
         try:
             import asyncio
+            import time
             from app.mva_v2.database import SpatiotemporalDB
             from app.mva_v2.pipeline import JITVideoPipeline
             
             db_client = SpatiotemporalDB()
             
-            # 定义更新数据库进度的回调函数
+            # 定义更新数据库进度的回调函数 (增加写库节流阀)
+            last_db_pct = -1
+            last_db_time = 0.0
             def progress_callback(pct):
-                db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({"progress": pct})
-                db.session.commit()
+                nonlocal last_db_pct, last_db_time
+                now = time.time()
+                if (pct - last_db_pct >= 5 or pct >= 100) and (now - last_db_time >= 0.8 or pct >= 100):
+                    last_db_pct = pct
+                    last_db_time = now
+                    try:
+                        db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({"progress": pct})
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
 
             print(f"[BG FEATURE EXTRACTION] Starting JIT feature extraction for {video_id} (sample_fps={sample_fps}, resolution={resolution})...")
             pipeline = JITVideoPipeline(db_client)
@@ -86,6 +97,8 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
             
             asyncio.run(pipeline.process_clip(abs_filepath, video_id, 0.0, duration, progress_callback=progress_callback, sample_fps=sample_fps, resolution=resolution))
             
+            db_client.flush()
+
             # 更新状态为 completed
             db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({
                 "status": "completed",

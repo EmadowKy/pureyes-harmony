@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict, Any
 import os
 import json
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +35,30 @@ class SpatiotemporalDB:
             except Exception as e:
                 logger.error(f"Failed to load spatiotemporal DB from disk: {e}")
 
-    def _save_to_disk(self):
+    _last_save_time = 0.0
+
+    def _save_to_disk(self, force: bool = False):
+        now = time.time()
+        # 节流磁盘写入：至少间隔 1.0 秒写一次，或者 force=True 时强制写入
+        if not force and (now - SpatiotemporalDB._last_save_time < 1.0):
+            return
         try:
+            SpatiotemporalDB._last_save_time = now
             os.makedirs(os.path.dirname(DB_FILE_PATH), exist_ok=True)
             with open(DB_FILE_PATH, "w", encoding="utf-8") as f:
-                json.dump(self.records, f, ensure_ascii=False, indent=2)
+                json.dump(self.records, f, ensure_ascii=False)
             logger.debug(f"Saved {len(self.records)} records to spatiotemporal DB file.")
         except Exception as e:
             logger.error(f"Failed to save spatiotemporal DB to disk: {e}")
 
     def insert(self, records: List[Dict[str, Any]]):
         self.records.extend(records)
-        self._save_to_disk()
+        self._save_to_disk(force=False)
         logger.debug(f"Inserted {len(records)} records. Total: {len(self.records)}")
+
+    def flush(self):
+        """强制即刻刷盘持久化"""
+        self._save_to_disk(force=True)
 
     def clear(self):
         """清除所有特征数据"""

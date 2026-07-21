@@ -1,7 +1,7 @@
 import http from '@ohos.net.http';
 
-export const BASE_HOST = 'http://10.0.2.2:8000';
-const BASE_URL = 'http://10.0.2.2:8000/api';
+export const BASE_HOST = 'http://192.168.0.105:8000';
+const BASE_URL = 'http://192.168.0.105:8000/api';
 
 export class HttpResult {
   code: number = -1;
