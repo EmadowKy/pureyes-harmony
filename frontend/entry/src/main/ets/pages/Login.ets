@@ -8,8 +8,10 @@ struct Login {
   @State pass: string = '';
   @State loading: boolean = false;
   
-  // 自定义服务器相关状态
-  @State isCustomServer: boolean = false;
+  // 使用 StorageLink 进行鸿蒙本地磁盘持久化存储双向绑定
+  @StorageLink('is_custom_server') isCustomServer: boolean = false;
+  @StorageLink('custom_server_url') customServerUrlStorage: string = '';
+  
   @State serverUrl: string = OFFICIAL_SERVER_URL;
   @State testingServer: boolean = false;
   @State testResultText: string = '';
@@ -19,12 +21,11 @@ struct Login {
   @State errorMsg: string = '';
 
   aboutToAppear(): void {
-    const savedCustomUrl = AppStorage.get<string>('custom_server_url');
-    if (savedCustomUrl && savedCustomUrl.trim().length > 0) {
-      this.isCustomServer = true;
-      this.serverUrl = savedCustomUrl;
+    if (this.isCustomServer && this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
+      this.serverUrl = this.customServerUrlStorage;
+    } else if (this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
+      this.serverUrl = this.customServerUrlStorage;
     } else {
-      this.isCustomServer = false;
       this.serverUrl = OFFICIAL_SERVER_URL;
     }
     this.testConnection();
@@ -48,9 +49,7 @@ struct Login {
 
     if (res.success) {
       if (this.isCustomServer) {
-        AppStorage.setOrCreate('custom_server_url', this.serverUrl);
-      } else {
-        AppStorage.setOrCreate('custom_server_url', '');
+        this.customServerUrlStorage = this.serverUrl;
       }
       updateBaseHost();
     }
@@ -109,7 +108,7 @@ struct Login {
         .fontColor($r('app.color.app_text_primary'))
         .margin({ bottom: 10 })
 
-      // 自定义服务器输入栏（点击“使用自定义服务器”后，在用户名/工号上方显示）
+      // 自定义服务器输入栏（当 isCustomServer 为 true 时显示在用户名上方）
       if (this.isCustomServer) {
         Column({ space: 6 }) {
           // 1. 在服务器地址输入框的上方显示测试结果
@@ -131,9 +130,10 @@ struct Login {
               .backgroundColor(Color.Transparent)
               .onChange((val: string): void => {
                 this.serverUrl = val;
+                this.customServerUrlStorage = val;
               })
 
-            // 测试图标按钮（使用测试图标，点击后进行连通性测试）
+            // 测试图标按钮（点击后进行连通性测试）
             Row() {
               SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                 .fontSize(20)
@@ -219,12 +219,15 @@ struct Login {
           this.isCustomServer = !this.isCustomServer;
           if (!this.isCustomServer) {
             // 切回官方服务器
-            this.serverUrl = OFFICIAL_SERVER_URL;
-            AppStorage.setOrCreate('custom_server_url', '');
+            updateBaseHost();
           } else {
             // 切到自定义服务器
             if (!this.serverUrl || this.serverUrl === OFFICIAL_SERVER_URL) {
-              this.serverUrl = OFFICIAL_SERVER_URL;
+              if (this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
+                this.serverUrl = this.customServerUrlStorage;
+              } else {
+                this.serverUrl = OFFICIAL_SERVER_URL;
+              }
             }
           }
           this.testConnection();

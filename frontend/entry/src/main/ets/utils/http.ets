@@ -3,6 +3,15 @@ import http from '@ohos.net.http';
 export const OFFICIAL_SERVER_URL = 'https://api.pureyes.top/api';
 export const OFFICIAL_BASE_HOST = 'https://api.pureyes.top';
 
+// 初始化持久化存储，确保跨应用退出/重启仍然保留服务器地址偏好
+try {
+  PersistentStorage.persistProp('access_token', '');
+  PersistentStorage.persistProp('custom_server_url', '');
+  PersistentStorage.persistProp('is_custom_server', false);
+} catch (e) {
+  console.error('Failed to initialize PersistentStorage', JSON.stringify(e));
+}
+
 export function normalizeServerUrl(rawUrl: string): string {
   let url = rawUrl.trim();
   if (!url) {
@@ -16,8 +25,9 @@ export function normalizeServerUrl(rawUrl: string): string {
 }
 
 export function getBaseUrl(): string {
+  const isCustom = AppStorage.get<boolean>('is_custom_server');
   const custom = AppStorage.get<string>('custom_server_url');
-  if (custom && custom.trim().length > 0) {
+  if (isCustom && custom && custom.trim().length > 0) {
     return normalizeServerUrl(custom);
   }
   return OFFICIAL_SERVER_URL;
@@ -55,7 +65,6 @@ export class HttpUtil {
     const httpRequest = http.createHttp();
     let currentBaseUrl = getBaseUrl().replace(/\/+$/, '');
     
-    // 如果 URL 参数以 / 开头，进行拼接；如 currentBaseUrl 末尾包含 /api，直接与 /url 拼合
     let requestUrl = url.startsWith('/') ? `${currentBaseUrl}${url}` : `${currentBaseUrl}/${url}`;
 
     try {
