@@ -1,4 +1,5 @@
 import { HttpUtil, updateBaseHost, OFFICIAL_SERVER_URL } from '../utils/http'
+import { SecurityUtil } from '../utils/security'
 import router from '@ohos.router'
 
 @Entry
@@ -20,7 +21,8 @@ struct Login {
   @State isServerOk: boolean = false;
   @State errorMsg: string = '';
 
-  aboutToAppear(): void {
+  async aboutToAppear(): Promise<void> {
+    await SecurityUtil.initSecureState();
     if (this.isCustomServer && this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
       this.serverUrl = this.customServerUrlStorage;
     } else if (this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
@@ -50,6 +52,10 @@ struct Login {
     if (res.success) {
       if (this.isCustomServer) {
         this.customServerUrlStorage = this.serverUrl;
+        SecurityUtil.setSecureProp('custom_server_url', this.serverUrl);
+        SecurityUtil.setSecureProp('is_custom_server', 'true');
+      } else {
+        SecurityUtil.setSecureProp('is_custom_server', 'false');
       }
       updateBaseHost();
     }
@@ -86,7 +92,9 @@ struct Login {
 
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
-      AppStorage.setOrCreate('access_token', dataObj['access_token'] as string);
+      const token = dataObj['access_token'] as string;
+      AppStorage.setOrCreate('access_token', token);
+      SecurityUtil.setSecureProp('access_token', token);
       router.replaceUrl({ url: 'pages/Index' });
     } else {
       this.errorMsg = res.message.length > 0 ? res.message : '工号或密码错误';

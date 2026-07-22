@@ -2,6 +2,7 @@ import { HttpUtil } from '../../utils/http'
 import promptAction from '@ohos.promptAction'
 import router from '@ohos.router'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
+import { SecurityUtil } from '../../utils/security'
 
 const PAGE_HOME = 'home';
 const PAGE_INFO = 'info';
@@ -657,6 +658,7 @@ export struct ProfileTab {
   handleLogout(): void {
     AppStorage.setOrCreate('access_token', '');
     AppStorage.setOrCreate('currentGroupId', 0);
+    SecurityUtil.removeSecureProp('access_token');
     router.replaceUrl({ url: 'pages/Login' });
   }
 
