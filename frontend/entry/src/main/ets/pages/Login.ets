@@ -1,4 +1,4 @@
-﻿import { HttpUtil } from '../utils/http'
+import { HttpUtil, updateBaseHost, OFFICIAL_SERVER_URL } from '../utils/http'
 import router from '@ohos.router'
 
 @Entry
@@ -7,31 +7,53 @@ struct Login {
   @State empId: string = '';
   @State pass: string = '';
   @State loading: boolean = false;
-  @State checkingServer: boolean = false;
-  @State serverStatus: string = '检查服务器连接中...';
+  
+  // 自定义服务器相关状态
+  @State isCustomServer: boolean = false;
+  @State serverUrl: string = OFFICIAL_SERVER_URL;
+  @State testingServer: boolean = false;
+  @State testResultText: string = '';
+  @State isTestSuccess: boolean = false;
+  
   @State isServerOk: boolean = false;
   @State errorMsg: string = '';
 
   aboutToAppear(): void {
-    this.checkServer();
+    const savedCustomUrl = AppStorage.get<string>('custom_server_url');
+    if (savedCustomUrl && savedCustomUrl.trim().length > 0) {
+      this.isCustomServer = true;
+      this.serverUrl = savedCustomUrl;
+    } else {
+      this.isCustomServer = false;
+      this.serverUrl = OFFICIAL_SERVER_URL;
+    }
+    this.testConnection();
   }
 
-  async checkServer(): Promise<void> {
-    if (this.checkingServer) {
+  async testConnection(): Promise<void> {
+    if (this.testingServer) {
       return;
     }
+    this.testingServer = true;
+    this.testResultText = '正在测试服务器连接...';
+    this.isTestSuccess = false;
 
-    this.checkingServer = true;
-    this.serverStatus = '检查服务器连接中...';
-    const res = await HttpUtil.get('/health');
-    if (res.code === 0) {
-      this.serverStatus = '✅ 服务器已连接';
-      this.isServerOk = true;
-    } else {
-      this.serverStatus = '❌ 服务器未连接，请检查模拟器/局域网 IP 设置';
-      this.isServerOk = false;
+    const targetUrl = this.isCustomServer ? this.serverUrl : OFFICIAL_SERVER_URL;
+    const res = await HttpUtil.testServerUrl(targetUrl);
+    
+    this.testingServer = false;
+    this.testResultText = res.message;
+    this.isTestSuccess = res.success;
+    this.isServerOk = res.success;
+
+    if (res.success) {
+      if (this.isCustomServer) {
+        AppStorage.setOrCreate('custom_server_url', this.serverUrl);
+      } else {
+        AppStorage.setOrCreate('custom_server_url', '');
+      }
+      updateBaseHost();
     }
-    this.checkingServer = false;
   }
 
   async handleLogin(): Promise<void> {
@@ -43,7 +65,7 @@ struct Login {
     }
 
     if (!this.isServerOk) {
-      await this.checkServer();
+      await this.testConnection();
       if (!this.isServerOk) {
         this.errorMsg = '服务器未连接，暂时无法登录';
         return;
@@ -73,38 +95,78 @@ struct Login {
   }
 
   build() {
-    Column({ space: 20 }) {
+    Column({ space: 16 }) {
       Image($r('app.media.foreground'))
-        .width(100)
-        .height(100)
-        .margin({ top: 92 })
+        .width(90)
+        .height(90)
+        .margin({ top: 60 })
         .backgroundColor($r('app.color.app_card_subtle_bg'))
-        .borderRadius(50)
+        .borderRadius(45)
 
       Text('Pureyes 安防系统')
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.app_text_primary'))
-
-      Text(this.serverStatus)
-        .fontSize(14)
-        .fontColor(this.isServerOk ? Color.Green : Color.Red)
         .margin({ bottom: 10 })
 
-      if (!this.isServerOk) {
-        Button(this.checkingServer ? '检测中...' : '重新检测')
+      // 自定义服务器输入栏（点击“使用自定义服务器”后，在用户名/工号上方显示）
+      if (this.isCustomServer) {
+        Column({ space: 6 }) {
+          // 1. 在服务器地址输入框的上方显示测试结果
+          if (this.testResultText.length > 0) {
+            Text(this.testResultText)
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.isTestSuccess ? Color.Green : Color.Red)
+              .width('80%')
+              .textAlign(TextAlign.Start)
+          }
+
+          // 2. 服务器地址输入框与右侧测试图标按钮
+          Row() {
+            TextInput({ placeholder: '请输入服务器地址', text: this.serverUrl })
+              .layoutWeight(1)
+              .height(50)
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor(Color.Transparent)
+              .onChange((val: string): void => {
+                this.serverUrl = val;
+              })
+
+            // 测试图标按钮（使用测试图标，点击后进行连通性测试）
+            Row() {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(20)
+                .fontColor(this.testingServer ? ['#9CA3AF'] : [$r('app.color.app_primary')])
+            }
+            .width(44)
+            .height(50)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(VerticalAlign.Center)
+            .onClick((): void => {
+              this.testConnection();
+            })
+          }
           .width('80%')
-          .height(38)
-          .backgroundColor($r('app.color.app_card_subtle_bg'))
-          .fontColor($r('app.color.app_text_primary'))
-          .enabled(!this.checkingServer)
-          .opacity(this.checkingServer ? 0.6 : 1)
-          .onClick((): void => {
-            this.checkServer();
-          })
+          .height(50)
+          .backgroundColor($r('app.color.app_input_bg'))
+          .borderRadius(10)
+          .padding({ left: 4, right: 4 })
+        }
+        .width('100%')
+      } else {
+        // 官方服务器模式下的连接状态显示
+        if (this.testResultText.length > 0) {
+          Text(this.testResultText)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.isTestSuccess ? Color.Green : Color.Red)
+            .margin({ bottom: 4 })
+        }
       }
 
-      TextInput({ placeholder: '请输入工号 (例如: admin)' })
+      // 3. 用户名/工号输入框
+      TextInput({ placeholder: '请输入工号 (例如: admin)', text: this.empId })
         .width('80%')
         .height(50)
         .fontColor($r('app.color.app_text_primary'))
@@ -114,7 +176,8 @@ struct Login {
           this.empId = val;
         })
 
-      TextInput({ placeholder: '请输入密码 (例如: admin)' })
+      // 4. 密码输入框
+      TextInput({ placeholder: '请输入密码 (例如: admin)', text: this.pass })
         .type(InputType.Password)
         .width('80%')
         .height(50)
@@ -125,23 +188,46 @@ struct Login {
           this.pass = val;
         })
 
+      // 错误提示
       if (this.errorMsg.length > 0) {
         Text(this.errorMsg)
           .fontSize(14)
           .fontColor(Color.Red)
-          .margin({ top: 4 })
+          .margin({ top: 2 })
       }
 
+      // 登录按钮
       Button(this.loading ? '登录中...' : '登录')
         .width('80%')
         .height(50)
         .backgroundColor($r('app.color.app_primary'))
         .fontColor(Color.White)
-        .margin({ top: 20 })
-        .enabled(!this.loading && !this.checkingServer)
-        .opacity((this.loading || this.checkingServer) ? 0.6 : 1)
+        .margin({ top: 10 })
+        .enabled(!this.loading && !this.testingServer)
+        .opacity((this.loading || this.testingServer) ? 0.6 : 1)
         .onClick((): void => {
           this.handleLogin();
+        })
+
+      // 5. 登录界面下方的蓝字切换按钮
+      Text(this.isCustomServer ? '使用官方服务器' : '使用自定义服务器')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#2563EB')
+        .margin({ top: 10 })
+        .onClick((): void => {
+          this.isCustomServer = !this.isCustomServer;
+          if (!this.isCustomServer) {
+            // 切回官方服务器
+            this.serverUrl = OFFICIAL_SERVER_URL;
+            AppStorage.setOrCreate('custom_server_url', '');
+          } else {
+            // 切到自定义服务器
+            if (!this.serverUrl || this.serverUrl === OFFICIAL_SERVER_URL) {
+              this.serverUrl = OFFICIAL_SERVER_URL;
+            }
+          }
+          this.testConnection();
         })
     }
     .width('100%')
@@ -149,5 +235,3 @@ struct Login {
     .backgroundColor($r('app.color.app_page_bg'))
   }
 }
-
-
