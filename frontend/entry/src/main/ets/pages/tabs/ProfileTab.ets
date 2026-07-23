@@ -82,56 +82,62 @@ export struct CreateUserDialog {
     (_empId: string, _name: string, _phone: string, _pass: string): void => {};
 
   build() {
-    Column({ space: 12 }) {
+    Column({ space: 14 }) {
       Text('创建新用户')
-        .fontSize(20)
+        .fontSize(19)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.app_text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
 
       TextInput({ placeholder: '工号', text: this.empId })
+        .width('100%')
         .onChange((val: string): void => {
           this.empId = val;
         })
-        .height(40)
+        .height(46)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
       TextInput({ placeholder: '姓名，可选', text: this.name })
+        .width('100%')
         .onChange((val: string): void => {
           this.name = val;
         })
-        .height(40)
+        .height(46)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
       TextInput({ placeholder: '手机号，可选', text: this.phone })
+        .width('100%')
         .onChange((val: string): void => {
           this.phone = val;
         })
-        .height(40)
+        .height(46)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
       TextInput({ placeholder: '初始密码，至少6位', text: this.pass })
+        .width('100%')
         .type(InputType.Password)
         .onChange((val: string): void => {
           this.pass = val;
         })
-        .height(40)
+        .height(46)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      Row({ space: 20 }) {
+      Row({ space: 10 }) {
         Button() {
-          Row({ space: 5 }) {
+          Row({ space: 6 }) {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(16)
               .fontColor([$r('app.color.app_text_primary')])
@@ -139,15 +145,20 @@ export struct CreateUserDialog {
               .fontSize(14)
               .fontColor($r('app.color.app_text_primary'))
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
         }
+          .layoutWeight(1)
+          .height(44)
           .onClick((): void => {
             this.controller.close();
           })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
           .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
 
         Button() {
-          Row({ space: 5 }) {
+          Row({ space: 6 }) {
             SymbolGlyph($r('sys.symbol.folder_badge_plus'))
               .fontSize(16)
               .fontColor([Color.White])
@@ -155,17 +166,23 @@ export struct CreateUserDialog {
               .fontSize(14)
               .fontColor(Color.White)
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
         }
+          .layoutWeight(1)
+          .height(44)
           .backgroundColor($r('app.color.app_primary'))
+          .borderRadius(8)
           .onClick((): void => {
             this.confirm(this.empId, this.name, this.phone, this.pass);
             this.controller.close();
           })
       }
-      .margin({ top: 8 })
+      .width('100%')
+      .margin({ top: 6 })
     }
-    .padding(20)
-    .width('90%')
+    .padding({ left: 22, right: 22, top: 22, bottom: 18 })
+    .width('86%')
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
@@ -203,7 +220,8 @@ export struct ProfileTab {
         this.submitCreateUser(empId, name, phone, pass);
       }
     }),
-    autoCancel: true
+    autoCancel: true,
+    customStyle: true
   })
 
   aboutToAppear(): void {
@@ -762,6 +780,7 @@ export struct ProfileTab {
     .height(36)
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
     .onClick(action)
   }
 
@@ -779,6 +798,28 @@ export struct ProfileTab {
     .padding({ left: 12, right: 12 })
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
+    .onClick(action)
+  }
+
+  @Builder WideIconTextButton(name: string, label: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      Row({ space: 6 }) {
+        this.AppSymbol(name, color, 17)
+        Text(label)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(color)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .height(42)
+    .backgroundColor(background)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
     .onClick(action)
   }
 
@@ -931,7 +972,7 @@ export struct ProfileTab {
         .width('90%')
 
         Row() {
-          this.IconTextButton('logout', '退出登录', $r('app.color.app_danger'), $r('app.color.app_card_bg'), (): void => {
+          this.WideIconTextButton('logout', '退出登录', $r('app.color.app_danger'), $r('app.color.app_card_bg'), (): void => {
             this.handleLogout();
           })
         }
@@ -997,7 +1038,7 @@ export struct ProfileTab {
               this.editPhone = val;
             })
 
-          this.IconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+          this.WideIconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
             this.submitEditProfile();
           })
         }
@@ -1045,7 +1086,7 @@ export struct ProfileTab {
             this.confirmPassword = val;
           })
 
-        this.IconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+        this.WideIconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
           this.submitChangePassword();
         })
       }
@@ -1089,6 +1130,7 @@ export struct ProfileTab {
           .height(36)
           .backgroundColor($r('app.color.app_card_subtle_bg'))
           .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
           .enabled(this.messageCount() > 0)
           .opacity(this.messageCount() > 0 ? 1 : 0.45)
           .onClick((): void => {
@@ -1239,7 +1281,7 @@ export struct ProfileTab {
             this.newGroupName = val;
           })
 
-        this.IconTextButton('groupAdd', '创建', Color.White, $r('app.color.app_primary'), (): void => {
+        this.WideIconTextButton('groupAdd', '创建', Color.White, $r('app.color.app_primary'), (): void => {
           this.createGroup();
         })
       }
@@ -1294,7 +1336,7 @@ export struct ProfileTab {
               this.llmModel = val;
             })
 
-          this.IconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+          this.WideIconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
             this.submitSaveApiConfig();
           })
         }
@@ -1424,7 +1466,7 @@ export struct ProfileTab {
                     this.resetConfirmPassword = val;
                   })
 
-                this.IconTextButton('key', '初始化', Color.White, $r('app.color.app_primary'), (): void => {
+                this.WideIconTextButton('key', '初始化密码', Color.White, $r('app.color.app_primary'), (): void => {
                   this.resetSelectedUserPassword();
                 })
               }
@@ -1532,7 +1574,7 @@ export struct ProfileTab {
                   }
                   .width('100%')
                 } else {
-                  this.IconTextButton('trash', '删除用户', Color.White, $r('app.color.app_danger'), (): void => {
+                  this.WideIconTextButton('trash', '删除用户', Color.White, $r('app.color.app_danger'), (): void => {
                     this.deleteSelectedUser();
                   })
                 }
@@ -1671,7 +1713,7 @@ export struct ProfileTab {
             this.searchUsers();
           })
 
-          this.IconButton('groupAdd', Color.White, $r('app.color.app_primary'), (): void => {
+          this.IconTextButton('groupAdd', '新建', Color.White, $r('app.color.app_primary'), (): void => {
             this.createUserDialogController.open();
           })
         }

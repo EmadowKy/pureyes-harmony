@@ -35,25 +35,28 @@ export struct RenameGroupDialog {
   confirm: (name: string) => void = (_name: string): void => {};
 
   build() {
-    Column({ space: 15 }) {
+    Column({ space: 14 }) {
       Text('修改小组名称')
-        .fontSize(20)
+        .fontSize(19)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.app_text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
 
       TextInput({ placeholder: '新的小组名称', text: this.groupName })
+        .width('100%')
         .onChange((val: string): void => {
           this.groupName = val;
         })
-        .height(40)
+        .height(46)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      Row({ space: 20 }) {
+      Row({ space: 10 }) {
         Button() {
-          Row({ space: 5 }) {
+          Row({ space: 6 }) {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(16)
               .fontColor([$r('app.color.app_text_primary')])
@@ -61,15 +64,20 @@ export struct RenameGroupDialog {
               .fontSize(14)
               .fontColor($r('app.color.app_text_primary'))
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
         }
+          .layoutWeight(1)
+          .height(44)
           .onClick((): void => {
             this.controller.close();
           })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
           .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
 
         Button() {
-          Row({ space: 5 }) {
+          Row({ space: 6 }) {
             SymbolGlyph($r('sys.symbol.checkmark'))
               .fontSize(16)
               .fontColor([Color.White])
@@ -77,17 +85,23 @@ export struct RenameGroupDialog {
               .fontSize(14)
               .fontColor(Color.White)
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
         }
+          .layoutWeight(1)
+          .height(44)
           .backgroundColor($r('app.color.app_primary'))
+          .borderRadius(8)
           .onClick((): void => {
             this.confirm(this.groupName);
             this.controller.close();
           })
       }
-      .margin({ top: 10 })
+      .width('100%')
+      .margin({ top: 6 })
     }
-    .padding(20)
-    .width('90%')
+    .padding({ left: 22, right: 22, top: 22, bottom: 18 })
+    .width('86%')
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
@@ -112,7 +126,8 @@ export struct GroupTab {
         this.renameGroup(name);
       }
     }),
-    autoCancel: true
+    autoCancel: true,
+    customStyle: true
   })
 
   aboutToAppear(): void {
@@ -375,6 +390,7 @@ export struct GroupTab {
     .height(36)
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
     .onClick(action)
   }
 
@@ -392,6 +408,7 @@ export struct GroupTab {
     .padding({ left: 12, right: 12 })
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
     .onClick(action)
   }
 
