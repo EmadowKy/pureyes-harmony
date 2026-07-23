@@ -1,375 +1,68 @@
-# pureyes-harmony 部署跑通说明
+# Pureyes (清眸) 鸿蒙多模态视觉监控与分析系统
 
-## 2026-07-16 用户与小组模块更新
+欢迎来到 **Pureyes (清眸)** 官方代码仓库。本系统是基于 HarmonyOS 5.0 (ArkTS) 架构打造的智能化多模态视觉监控与分析平台，融合了多模态视觉大语言模型 (支持用户自定义配置 API Key / Base URL)、YOLOv8 实时目标检测与 OSNet Person ReID 跨镜头行人重识别算法，旨在为安防巡检、智能监控、团队协作与视频内容检索提供一站式解决方案。
 
-- “我的”页已拆分为个人信息、账号安全、我的消息、新建小组、用户搜索/用户管理等独立入口。
-- 普通用户可使用只读“用户搜索”；管理员/超级管理员使用“用户管理”，支持创建用户、查看详情、初始化密码、删除用户，超级管理员可调整角色。
-- 小组页已完善为成员通讯录；同组成员可查看基础资料，只有组长可邀请成员，输入工号/姓名/手机号时会展示候选用户卡片。
-- 2026-07-23：用户与小组页面按钮改用 HarmonyOS 系统符号，减少大段文字按钮，保持用户模块内聚。
-- 最新用户与小组模块说明见 [docs/user-group-module.md](docs/user-group-module.md)。
+---
 
-## 模块文档
+## 文档全景导航
 
-- 用户与小组模块：[docs/user-group-module.md](docs/user-group-module.md)
+本帮助中心根据使用者角色的不同，拆分为三大独立板块：
 
-## 更新记录
+```mermaid
+graph TD
+    A[Pureyes 帮助中心] --> B[终端用户指南 docs/user-guide]
+    A --> C[开发者技术文档 docs/developer-guide]
+    A --> D[后端私有部署 docs/server-deployment]
 
-- 2026-06-27 19:20:30 +08:00：DevEco 模拟器连接远程后端，完成用户管理搜索测试账号、展开详情、停用账号、启用账号回滚的前端实测；本地调试地址已恢复，测试账号已从远程库清理。
-- 2026-06-27 19:07:33 +08:00：补充用户模块启停用账号、停用用户旧 token 拦截、资料编辑防误清空，并细化 AutoDL/SSH 隧道/DevEco 模拟器联调步骤。
-- 2026-06-27 18:51:45 +08:00：远程服务器已补齐 `Qwen3-VL-2B-Instruct` 本地模型并通过离线加载检查；DevEco 模拟器完成登录、用户页、小组页和创建小组端到端冒烟测试。
-- 2026-06-27 18:22:19 +08:00：远程后端编译和用户/小组接口测试通过；本机 DevEco/Hvigor `assembleApp` 构建通过。
-- 2026-06-27 18:16:14 +08:00：补齐用户与小组模块后端接口、前端“我的/小组”页面、模块说明文档，并记录远程后端大模型检查结果。
+    B --> B1[01-系统简介与特性]
+    B --> B2[02-客户端快速入门]
+    B --> B3[03-账号认证与安全]
+    B --> B4[04-小组协作通讯录]
+    B --> B5[05-实时视频监控]
+    B --> B6[06-工作区与视频切片]
+    B --> B7[07-多模态 AI 问答]
+    B --> B8[08-管理员控制台]
+    B --> B9[09-个人中心与设置]
 
-本文面向当前仓库 `EmadowKy/pureyes-harmony` 的 `main` 分支，检查时间为 2026-06-27。本仓库当前没有原始 README；本说明只新增部署文件，不修改已有源码。
+    C --> C1[01-全局架构设计]
+    C --> C2[02-鸿蒙 ArkTS 前端]
+    C --> C3[03-Flask RESTful API]
+    C --> C4[04-AI 视觉分析引擎]
+    C --> C5[05-数据库 Schema]
 
-## 结论
-
-- 可以在 AutoDL、学校 GPU 服务器、阿里云 GPU 等远程 Linux/NVIDIA CUDA 环境调试并跑通后端。
-- 后端不需要安装华为 DevEco Studio、HarmonyOS SDK、华为编译器、CANN、MindSpore、`torch_npu`。当前后端是 Flask + PyTorch CUDA + Hugging Face Transformers。
-- 前端是 HarmonyOS / ArkTS 工程，需要在本机 DevEco Studio 中编译、签名、安装到 HarmonyOS 真机或模拟器。仓库前端 `modelVersion`、`targetSdkVersion`、`compatibleSdkVersion` 都是 `26.0.0`，你下载的华为开发者官网 26 beta 工具链方向是匹配的。
-- 如果只想先把后端 API 和模型推理跑通，AutoDL 上只配 Python/CUDA/FFmpeg/模型即可，不需要华为相关软件。
-
-## 新增文件
-
-- `README.md`：当前部署说明。
-- `backend/requirements-autodl.txt`：后端锁版本依赖，不包含 `torch` / `torchvision`，避免覆盖 GPU wheel。
-- `deploy/check_env.py`：非下载式环境检查脚本。
-- `deploy/run_backend_autodl.py`：不改原 `backend/run.py` 的启动脚本，支持 `HOST`/`PORT` 环境变量，并让 `model.yaml` 里的 `../../output/...` 解析到仓库内 `output/...`。
-
-## 推荐服务器环境
-
-- 系统：Ubuntu 22.04 或 20.04。
-- Python：3.10。
-- GPU：NVIDIA GPU，16 GB 显存起步，24 GB 及以上更稳。
-- CUDA：优先用 PyTorch pip CUDA wheel，不要求服务器安装完整 CUDA Toolkit 或 `nvcc`。
-- 磁盘：至少预留 20 GB；模型、上传视频、抽帧和转码文件会占空间。
-- 系统工具：必须有 `ffmpeg` 和 `ffprobe`，代码中监控录制、视频切片、视频兼容性检查都会调用。
-
-## 1. 克隆仓库
-
-```bash
-cd /root/autodl-tmp
-git clone https://github.com/EmadowKy/pureyes-harmony.git
-cd pureyes-harmony
+    D --> D1[01-硬件与环境依赖]
+    D --> D2[02-后端部署与运维]
 ```
 
-如果是你本地 Windows 工作区，本文对应的 clone 目录是：
-
-```text
-D:\VSCode_MyCode\C4_AI\pureyes-harmony
-```
-
-## 2. 创建 Conda 环境
-
-```bash
-conda create -n pureyes python=3.10 -y
-conda activate pureyes
-
-python -m pip install -U pip setuptools wheel
-conda install -c conda-forge ffmpeg git git-lfs -y
-git lfs install
-```
-
-检查系统工具：
-
-```bash
-ffmpeg -version
-ffprobe -version
-nvidia-smi
-```
-
-## 3. 安装 GPU PyTorch
-
-推荐先用 CUDA 12.6 wheel：
-
-```bash
-pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu126
-```
-
-如果服务器 NVIDIA 驱动较旧，CUDA 12.6 wheel 无法使用，再换 CUDA 11.8 wheel：
-
-```bash
-pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118
-```
-
-验证：
-
-```bash
-python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no cuda')"
-```
-
-`torch.cuda.is_available()` 必须是 `True`，否则先不要继续跑模型。
-
-## 4. 安装后端依赖
-
-不要优先使用原 `backend/requirements.txt`，它的 AI 依赖范围太宽，会安装当前 pip 源上的最新版本，复现性较差。建议用新增的锁版本文件：
-
-```bash
-pip install -r backend/requirements-autodl.txt
-```
-
-检查关键导入：
-
-```bash
-python deploy/check_env.py
-```
-
-如果这里报 `cannot import name 'Qwen3VLForConditionalGeneration'`，说明当前 `transformers` wheel 不含项目需要的 Qwen3-VL 类。先尝试：
-
-```bash
-pip uninstall -y transformers
-pip install git+https://github.com/huggingface/transformers
-python deploy/check_env.py
-```
-
-## 5. 准备本地模型，避免缓存下载
-
-当前 `backend/configs/model.yaml` 默认是：
-
-```yaml
-models:
-  main_model_path: "Qwen/Qwen3-VL-2B-Instruct"
-```
-
-这会让 Transformers 按 Hugging Face 仓库 ID 加载模型，可能触发联网下载和缓存。为了符合“不希望下载缓存，模型手动放服务器”的要求，建议把模型直接放到仓库内：
-
-```text
-pureyes-harmony/
-  models/
-    Qwen3-VL-2B-Instruct/
-      config.json
-      model.safetensors.index.json
-      tokenizer.json
-      ...
-```
-
-然后把 `backend/configs/model.yaml` 的模型路径改成本地相对路径：
-
-```yaml
-models:
-  main_model_path: "../../models/Qwen3-VL-2B-Instruct"
-```
-
-这个相对路径配合 `deploy/run_backend_autodl.py` 使用：启动脚本会把进程工作目录切到 `backend/configs`，所以 `../../models/...` 会解析到仓库根目录下的 `models/...`。
-
-为了防止误触发在线下载，模型目录准备好以后可以开启离线环境变量：
-
-```bash
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-python deploy/check_env.py --require-local-model
-```
-
-注意：代码里 `backend/app/mva/utils.py` 当前写了 `HF_ENDPOINT=https://hf-mirror.com`。只要 `main_model_path` 是本地目录，就不会依赖这个镜像；如果仍然写 `Qwen/Qwen3-VL-2B-Instruct`，就可能走在线下载。
-
-## 6. 启动后端
-
-推荐用新增启动脚本：
-
-```bash
-export PORT=6006
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-python deploy/run_backend_autodl.py
-```
-
-默认监听：
-
-```text
-0.0.0.0:6006
-```
-
-如果不设置 `PORT`，默认是 `8000`。原始启动方式仍然可用：
-
-```bash
-cd backend
-python run.py
-```
-
-但原 `backend/run.py` 端口写死为 `8000`，且 `model.yaml` 里的输出目录会按当前工作目录解析；远程部署更建议使用 `deploy/run_backend_autodl.py`。
-
-后台运行示例：
-
-```bash
-mkdir -p logs
-nohup python deploy/run_backend_autodl.py > logs/backend.log 2>&1 &
-tail -f logs/backend.log
-```
-
-## 7. 后端健康检查
-
-另开一个终端：
-
-```bash
-curl http://127.0.0.1:6006/api/health
-```
-
-预期类似：
-
-```json
-{"code":0,"data":{"service":"backend"},"message":"ok"}
-```
-
-首次启动会自动创建管理员：
-
-```text
-emp_id: admin
-password: admin
-```
-
-登录检查：
-
-```bash
-curl -X POST http://127.0.0.1:6006/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"emp_id":"admin","password":"admin"}'
-```
-
-健康检查和登录不会加载大模型。第一次调用 QA 推理接口时才会加载 Qwen3-VL。
-
-## 8. AutoDL 端口和前端地址
-
-先在远程服务器里确认后端跑起来：
-
-```bash
-cd /root/autodl-tmp/pureyes-harmony
-conda activate pureyes
-export PORT=6006
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-python deploy/run_backend_autodl.py
-```
-
-远程服务器内部检查：
-
-```bash
-curl http://127.0.0.1:6006/api/health
-```
-
-看到 `{"code":0,...}` 就说明后端进程正常。
-
-### 方式 A：AutoDL 公网端口直连
-
-如果 AutoDL/SeetaCloud 控制台已经把容器 `6006` 端口映射成公网地址，例如：
-
-```text
-http://公网主机:公网端口
-```
-
-先在 Windows 浏览器或 PowerShell 检查：
-
-```powershell
-Invoke-WebRequest http://公网主机:公网端口/api/health
-```
-
-能返回 `code: 0` 时，前端 `frontend/entry/src/main/ets/utils/http.ets` 写公网地址：
-
-```ts
-export const BASE_HOST = 'http://公网主机:公网端口';
-const BASE_URL = 'http://公网主机:公网端口/api';
-```
-
-### 方式 B：公网端口不可用时用 SSH 隧道
-
-如果公网地址访问 `/api/health` 是 `502`、超时或打不开，就在 Windows PowerShell 新开一个窗口执行：
-
-```powershell
-ssh -N -L 6006:127.0.0.1:6006 -p 你的SSH端口 root@你的SSH主机
-```
-
-这个窗口不要关闭。再开另一个 PowerShell 检查：
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:6006/api/health
-```
-
-如果 Windows 本机浏览器访问，地址是：
-
-```text
-http://127.0.0.1:6006
-```
-
-如果 DevEco 模拟器访问 Windows 这个隧道，`http.ets` 要写：
-
-```ts
-export const BASE_HOST = 'http://10.0.2.2:6006';
-const BASE_URL = 'http://10.0.2.2:6006/api';
-```
-
-如果是真机访问 Windows 这个隧道，不能用 `10.0.2.2`，要把 `BASE_HOST` 改成 Windows 在同一局域网里的 IP，例如：
-
-```ts
-export const BASE_HOST = 'http://192.168.1.23:6006';
-const BASE_URL = 'http://192.168.1.23:6006/api';
-```
-
-不要把 `localhost` 写进前端，模拟器或真机会把 `localhost` 理解成设备自己。
-
-## 9. 前端 DevEco 配置和运行
-
-前端目录：
-
-```text
-frontend/
-```
-
-建议流程：
-
-1. 在 Windows 本机安装 DevEco Studio / HarmonyOS SDK 26 beta。
-2. 用 DevEco Studio 打开 `frontend` 目录。
-3. 等待 DevEco 同步 ohpm/hvigor 工程。
-4. 按上面“方式 A”或“方式 B”修改 `frontend/entry/src/main/ets/utils/http.ets`。
-5. 在 DevEco 里选择模拟器或真机，点击运行。
-
-当前代码默认地址只是占位，需要按你的实际后端地址修改：
-
-```ts
-export const BASE_HOST = 'http://10.32.212.191:8000';
-const BASE_URL = 'http://10.32.212.191:8000/api';
-```
-
-也可以用命令行构建和安装，便于排错：
-
-```powershell
-$env:NODE_HOME='D:\Huawei\DevEco Studio\tools\node'
-$env:JAVA_HOME='D:\Huawei\DevEco Studio\jbr'
-$env:DEVECO_SDK_HOME='D:\Huawei\DevEco Studio\sdk'
-$env:PATH="$env:JAVA_HOME\bin;$env:NODE_HOME;$env:PATH"
-
-cd D:\VSCode_MyCode\C4_AI\pureyes-harmony\frontend
-& 'D:\Huawei\DevEco Studio\tools\ohpm\bin\ohpm.bat' install
-& 'D:\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleApp --no-daemon
-& 'D:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' list targets
-& 'D:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' install -r .\entry\build\default\outputs\default\app\entry-default.hap
-& 'D:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell aa start -a EntryAbility -b cn.edu.nuaa.pureyes
-```
-
-前端已有网络权限：
-
-```json5
-"name": "ohos.permission.INTERNET"
-```
-
-## 10. 常见问题
-
-`torch.cuda.is_available()` 是 `False`：
-先检查 `nvidia-smi` 是否正常，再确认安装的是 PyTorch CUDA wheel，不是默认 CPU wheel。
-
-`Qwen3VLForConditionalGeneration` 导入失败：
-优先使用 `transformers==4.57.6`；如果仍失败，安装 Hugging Face Transformers 最新源码版。
-
-服务启动后显存没有变化：
-正常。健康检查和登录不加载模型，第一次 QA 推理才加载。
-
-模型仍然联网下载：
-确认 `backend/configs/model.yaml` 的 `main_model_path` 不是 `Qwen/Qwen3-VL-2B-Instruct`，而是本地模型目录；再设置 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`。
-
-前端访问失败：
-优先确认 Windows 浏览器能打开后端 `/api/health`。如果浏览器能打开但前端不能，检查 `http.ets` 中是否仍使用旧 IP、`localhost` 或未暴露的内网地址。
-
-## 参考来源
-
-- PyTorch 官方安装页：https://pytorch.org/get-started/locally/
-- PyTorch 官方历史版本页：https://pytorch.org/get-started/previous-versions/
-- Qwen3-VL-2B-Instruct 模型页：https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct
-- 华为开发者下载页：https://developer.huawei.com/consumer/cn/download/
+### 1. 终端用户指南 (docs/user-guide)
+适合项目使用人员、巡检员、小组组长及系统管理员：
+- [01-系统简介与核心特性](./docs/user-guide/01-overview.md)
+- [02-客户端快速入门](./docs/user-guide/02-quick-start.md)
+- [03-账号认证与安全设置](./docs/user-guide/03-authentication.md)
+- [04-小组协作与团队通讯录](./docs/user-guide/04-group-collaboration.md)
+- [05-实时视频监控与历史回放](./docs/user-guide/05-live-monitoring.md)
+- [06-工作区管理与视频切片](./docs/user-guide/06-workspace-management.md)
+- [07-智能多模态视觉问答](./docs/user-guide/07-ai-multimodal-qa.md)
+- [08-管理员控制台与用户管理](./docs/user-guide/08-admin-console.md)
+- [09-个人中心与大模型 API 设置](./docs/user-guide/09-profile-and-settings.md)
+
+### 2. 开发者技术文档 (docs/developer-guide)
+适合前端、后端与算法开发工程师：
+- [01-系统整体架构设计与数据流](./docs/developer-guide/01-architecture-design.md)
+- [02-鸿蒙前端 ArkTS 架构与组件设计](./docs/developer-guide/02-frontend-arkts.md)
+- [03-后端 RESTful API 接口规范详解](./docs/developer-guide/03-backend-flask-api.md)
+- [04-AI 多模态视觉分析引擎原理](./docs/developer-guide/04-ai-mva-engine.md)
+- [05-数据库设计与实体关系模型](./docs/developer-guide/05-database-schema.md)
+
+### 3. 自建服务器部署手册 (docs/server-deployment)
+适合运维工程师及有私有化部署需求的团队：
+- [01-服务器硬件配置与环境依赖](./docs/server-deployment/01-requirements-and-env.md)
+- [02-后端服务部署与运行维护](./docs/server-deployment/02-backend-deployment-guide.md)
+
+---
+
+> [!TIP]
+> **快速上手建议**：
+> - 普通使用人员请直接阅读 [02-客户端快速入门](./docs/user-guide/02-quick-start.md)。
+> - 团队管理者请重点参阅 [04-小组协作与团队通讯录](./docs/user-guide/04-group-collaboration.md) 与 [08-管理员控制台](./docs/user-guide/08-admin-console.md)。
+> - 二次开发或算法接入人员请转至 [开发者技术文档](./docs/developer-guide/01-architecture-design.md)。
