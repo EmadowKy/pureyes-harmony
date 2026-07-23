@@ -130,17 +130,33 @@ export struct CreateUserDialog {
         .borderRadius(8)
 
       Row({ space: 20 }) {
-        Button('取消')
+        Button() {
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.app_text_primary')])
+            Text('取消')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_primary'))
+          }
+        }
           .onClick((): void => {
             this.controller.close();
           })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
-          .fontColor($r('app.color.app_text_primary'))
           .border({ width: 1, color: $r('app.color.app_border') })
 
-        Button('创建')
+        Button() {
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.folder_badge_plus'))
+              .fontSize(16)
+              .fontColor([Color.White])
+            Text('创建')
+              .fontSize(14)
+              .fontColor(Color.White)
+          }
+        }
           .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
           .onClick((): void => {
             this.confirm(this.empId, this.name, this.phone, this.pass);
             this.controller.close();
@@ -662,6 +678,110 @@ export struct ProfileTab {
     router.replaceUrl({ url: 'pages/Login' });
   }
 
+  @Builder AppSymbol(name: string, color: ResourceColor, size: number) {
+    if (name === 'back') {
+      SymbolGlyph($r('sys.symbol.chevron_left'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'next') {
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'camera') {
+      SymbolGlyph($r('sys.symbol.camera'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'info') {
+      SymbolGlyph($r('sys.symbol.person'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'lock') {
+      SymbolGlyph($r('sys.symbol.lock'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'message') {
+      SymbolGlyph($r('sys.symbol.message'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'groupAdd') {
+      SymbolGlyph($r('sys.symbol.folder_badge_plus'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'users') {
+      SymbolGlyph($r('sys.symbol.person_2'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'api') {
+      SymbolGlyph($r('sys.symbol.gearshape'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'search') {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'refresh') {
+      SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'trash') {
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'close') {
+      SymbolGlyph($r('sys.symbol.xmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'view') {
+      SymbolGlyph($r('sys.symbol.eye'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'save') {
+      SymbolGlyph($r('sys.symbol.checkmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'key') {
+      SymbolGlyph($r('sys.symbol.key'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'logout') {
+      SymbolGlyph($r('sys.symbol.arrowshape_right_fill'))
+        .fontSize(size)
+        .fontColor([color])
+    } else {
+      SymbolGlyph($r('sys.symbol.plus'))
+        .fontSize(size)
+        .fontColor([color])
+    }
+  }
+
+  @Builder IconButton(name: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      this.AppSymbol(name, color, 18)
+    }
+    .width(36)
+    .height(36)
+    .backgroundColor(background)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick(action)
+  }
+
+  @Builder IconTextButton(name: string, label: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      Row({ space: 5 }) {
+        this.AppSymbol(name, color, 16)
+        Text(label)
+          .fontSize(14)
+          .fontColor(color)
+      }
+      .alignItems(VerticalAlign.Center)
+    }
+    .height(36)
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(background)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick(action)
+  }
+
   @Builder ProfileHeader() {
     Row({ space: 16 }) {
       Image(this.user.avatar ? this.user.avatar : $r('app.media.foreground'))
@@ -698,14 +818,9 @@ export struct ProfileTab {
           }
         }
 
-        Button('更换头像')
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .backgroundColor($r('app.color.app_primary_soft'))
-          .fontColor($r('app.color.app_primary'))
-          .onClick((): void => {
-            this.chooseAvatar();
-          })
+        this.IconTextButton('camera', '头像', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+          this.chooseAvatar();
+        })
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
@@ -720,15 +835,9 @@ export struct ProfileTab {
 
   @Builder PageHeader(title: string) {
     Row({ space: 12 }) {
-      Button('返回')
-        .height(36)
-        .padding({ left: 12, right: 12 })
-        .backgroundColor($r('app.color.app_card_subtle_bg'))
-        .fontColor($r('app.color.app_text_primary'))
-        .border({ width: 1, color: $r('app.color.app_border') })
-        .onClick((): void => {
-          this.backHome();
-        })
+      this.IconButton('back', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+        this.backHome();
+      })
 
       Column({ space: 2 }) {
         Text(title)
@@ -743,8 +852,16 @@ export struct ProfileTab {
     .padding({ top: 18, bottom: 6 })
   }
 
-  @Builder MenuItem(title: string, page: string, badge: string) {
-    Row() {
+  @Builder MenuItem(title: string, page: string, badge: string, iconName: string) {
+    Row({ space: 12 }) {
+      Stack() {
+        this.AppSymbol(iconName, $r('app.color.app_primary'), 19)
+      }
+      .width(34)
+      .height(34)
+      .backgroundColor($r('app.color.app_primary_soft'))
+      .borderRadius(8)
+
       Column({ space: 4 }) {
         Text(title)
           .fontSize(16)
@@ -764,20 +881,16 @@ export struct ProfileTab {
           .margin({ right: 10 })
       }
 
-      Button('进入')
-        .height(32)
-        .padding({ left: 12, right: 12 })
-        .backgroundColor($r('app.color.app_primary_soft'))
-        .fontColor($r('app.color.app_primary'))
-        .onClick((): void => {
-          this.openPage(page);
-        })
+      this.AppSymbol('next', $r('app.color.app_text_muted'), 16)
     }
     .width('100%')
     .padding({ left: 16, right: 14, top: 14, bottom: 14 })
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
+    .onClick((): void => {
+      this.openPage(page);
+    })
   }
 
   @Builder ProfileHome() {
@@ -791,21 +904,21 @@ export struct ProfileTab {
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .padding({ left: 2, top: 4 })
-          this.MenuItem('个人信息', PAGE_INFO, '')
-          this.MenuItem('账号安全', PAGE_SECURITY, '')
-          this.MenuItem('我的消息', PAGE_MESSAGES, this.invites.length > 0 ? `${this.invites.length}` : '')
+          this.MenuItem('个人信息', PAGE_INFO, '', 'info')
+          this.MenuItem('账号安全', PAGE_SECURITY, '', 'lock')
+          this.MenuItem('我的消息', PAGE_MESSAGES, this.invites.length > 0 ? `${this.invites.length}` : '', 'message')
 
           Text('小组')
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .padding({ left: 2, top: 8 })
-          this.MenuItem('新建小组', PAGE_CREATE_GROUP, '')
+          this.MenuItem('新建小组', PAGE_CREATE_GROUP, '', 'groupAdd')
 
           if (this.isAdminUser()) {
-            this.MenuItem('用户管理', PAGE_ADMIN, '')
+            this.MenuItem('用户管理', PAGE_ADMIN, '', 'users')
           } else {
-            this.MenuItem('用户搜索', PAGE_USER_SEARCH, '')
+            this.MenuItem('用户搜索', PAGE_USER_SEARCH, '', 'search')
           }
 
           Text('系统')
@@ -813,20 +926,18 @@ export struct ProfileTab {
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .padding({ left: 2, top: 8 })
-          this.MenuItem('模型 API', PAGE_API_CONFIG, '')
+          this.MenuItem('模型 API', PAGE_API_CONFIG, '', 'api')
         }
         .width('90%')
 
-        Button('退出登录')
-          .width('90%')
-          .height(44)
-          .backgroundColor($r('app.color.app_card_bg'))
-          .fontColor($r('app.color.app_danger'))
-          .border({ width: 1, color: $r('app.color.app_danger') })
-          .margin({ top: 8, bottom: 30 })
-          .onClick((): void => {
+        Row() {
+          this.IconTextButton('logout', '退出登录', $r('app.color.app_danger'), $r('app.color.app_card_bg'), (): void => {
             this.handleLogout();
           })
+        }
+        .width('90%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 8, bottom: 30 })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
@@ -855,13 +966,9 @@ export struct ProfileTab {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.app_text_primary'))
-              Button('更换头像')
-                .height(32)
-                .backgroundColor($r('app.color.app_primary_soft'))
-                .fontColor($r('app.color.app_primary'))
-                .onClick((): void => {
-                  this.chooseAvatar();
-                })
+              this.IconTextButton('camera', '头像', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+                this.chooseAvatar();
+              })
             }
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
@@ -890,14 +997,9 @@ export struct ProfileTab {
               this.editPhone = val;
             })
 
-          Button('保存')
-            .width('100%')
-            .height(42)
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.submitEditProfile();
-            })
+          this.IconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+            this.submitEditProfile();
+          })
         }
         .width('90%')
         .padding(16)
@@ -943,14 +1045,9 @@ export struct ProfileTab {
             this.confirmPassword = val;
           })
 
-        Button('保存')
-          .width('100%')
-          .height(42)
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
-          .onClick((): void => {
-            this.submitChangePassword();
-          })
+        this.IconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+          this.submitChangePassword();
+        })
       }
       .width('90%')
       .padding(16)
@@ -981,20 +1078,16 @@ export struct ProfileTab {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        Button('刷新')
-          .height(36)
-          .padding({ left: 12, right: 12 })
-          .backgroundColor($r('app.color.app_primary_soft'))
-          .fontColor($r('app.color.app_primary'))
-          .onClick((): void => {
-            this.loadMessages();
-          })
+        this.IconButton('refresh', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+          this.loadMessages();
+        })
 
-        Button('清空消息')
+        Button() {
+          this.AppSymbol('trash', $r('app.color.app_danger'), 18)
+        }
+          .width(36)
           .height(36)
-          .padding({ left: 12, right: 12 })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
-          .fontColor($r('app.color.app_danger'))
           .border({ width: 1, color: $r('app.color.app_border') })
           .enabled(this.messageCount() > 0)
           .opacity(this.messageCount() > 0 ? 1 : 0.45)
@@ -1047,23 +1140,13 @@ export struct ProfileTab {
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
 
-              Button('同意')
-                .height(32)
-                .padding({ left: 10, right: 10 })
-                .backgroundColor($r('app.color.app_success'))
-                .fontColor(Color.White)
-                .onClick((): void => {
-                  this.respondInvite(invite.group_id, 'accept');
-                })
+              this.IconButton('save', Color.White, $r('app.color.app_success'), (): void => {
+                this.respondInvite(invite.group_id, 'accept');
+              })
 
-              Button('拒绝')
-                .height(32)
-                .padding({ left: 10, right: 10 })
-                .backgroundColor($r('app.color.app_danger'))
-                .fontColor(Color.White)
-                .onClick((): void => {
-                  this.respondInvite(invite.group_id, 'reject');
-                })
+              this.IconButton('close', Color.White, $r('app.color.app_danger'), (): void => {
+                this.respondInvite(invite.group_id, 'reject');
+              })
             }
             .width('100%')
             .padding(14)
@@ -1156,14 +1239,9 @@ export struct ProfileTab {
             this.newGroupName = val;
           })
 
-        Button('创建小组')
-          .width('100%')
-          .height(42)
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
-          .onClick((): void => {
-            this.createGroup();
-          })
+        this.IconTextButton('groupAdd', '创建', Color.White, $r('app.color.app_primary'), (): void => {
+          this.createGroup();
+        })
       }
       .width('90%')
       .padding(16)
@@ -1216,14 +1294,9 @@ export struct ProfileTab {
               this.llmModel = val;
             })
 
-          Button('保存')
-            .width('100%')
-            .height(42)
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.submitSaveApiConfig();
-            })
+          this.IconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+            this.submitSaveApiConfig();
+          })
         }
         .width('90%')
         .padding(16)
@@ -1290,13 +1363,9 @@ export struct ProfileTab {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
-          Button('关闭')
-            .height(34)
-            .backgroundColor($r('app.color.app_card_subtle_bg'))
-            .fontColor($r('app.color.app_text_primary'))
-            .onClick((): void => {
-              this.closeUserDetail();
-            })
+          this.IconButton('close', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+            this.closeUserDetail();
+          })
         }
         .width('100%')
 
@@ -1355,14 +1424,9 @@ export struct ProfileTab {
                     this.resetConfirmPassword = val;
                   })
 
-                Button('初始化密码')
-                  .width('100%')
-                  .height(40)
-                  .backgroundColor($r('app.color.app_primary'))
-                  .fontColor(Color.White)
-                  .onClick((): void => {
-                    this.resetSelectedUserPassword();
-                  })
+                this.IconTextButton('key', '初始化', Color.White, $r('app.color.app_primary'), (): void => {
+                  this.resetSelectedUserPassword();
+                })
               }
               .width('100%')
               .padding(12)
@@ -1379,22 +1443,34 @@ export struct ProfileTab {
                     .width('100%')
 
                   Row({ space: 8 }) {
-                    Button('设为管理员')
+                    Button() {
+                      Row({ space: 5 }) {
+                        this.AppSymbol('users', Color.White, 16)
+                        Text('管理员')
+                          .fontSize(13)
+                          .fontColor(Color.White)
+                      }
+                    }
                       .layoutWeight(1)
                       .height(38)
                       .backgroundColor($r('app.color.app_primary'))
-                      .fontColor(Color.White)
                       .enabled(this.selectedUser.role !== 'admin')
                       .opacity(this.selectedUser.role !== 'admin' ? 1 : 0.5)
                       .onClick((): void => {
                         this.updateSelectedUserRole('admin');
                       })
 
-                    Button('设为普通用户')
+                    Button() {
+                      Row({ space: 5 }) {
+                        this.AppSymbol('info', Color.White, 16)
+                        Text('普通用户')
+                          .fontSize(13)
+                          .fontColor(Color.White)
+                      }
+                    }
                       .layoutWeight(1)
                       .height(38)
                       .backgroundColor($r('app.color.app_primary'))
-                      .fontColor(Color.White)
                       .enabled(this.selectedUser.role !== 'user')
                       .opacity(this.selectedUser.role !== 'user' ? 1 : 0.5)
                       .onClick((): void => {
@@ -1423,34 +1499,42 @@ export struct ProfileTab {
 
                 if (this.deleteConfirm) {
                   Row({ space: 8 }) {
-                    Button('取消')
+                    Button() {
+                      Row({ space: 5 }) {
+                        this.AppSymbol('close', $r('app.color.app_text_primary'), 16)
+                        Text('取消')
+                          .fontSize(13)
+                          .fontColor($r('app.color.app_text_primary'))
+                      }
+                    }
                       .layoutWeight(1)
                       .height(38)
                       .backgroundColor($r('app.color.app_card_subtle_bg'))
-                      .fontColor($r('app.color.app_text_primary'))
+                      .border({ width: 1, color: $r('app.color.app_border') })
                       .onClick((): void => {
                         this.deleteConfirm = false;
                       })
 
-                    Button('确认删除')
+                    Button() {
+                      Row({ space: 5 }) {
+                        this.AppSymbol('trash', Color.White, 16)
+                        Text('删除')
+                          .fontSize(13)
+                          .fontColor(Color.White)
+                      }
+                    }
                       .layoutWeight(1)
                       .height(38)
                       .backgroundColor($r('app.color.app_danger'))
-                      .fontColor(Color.White)
                       .onClick((): void => {
                         this.deleteSelectedUser();
                       })
                   }
                   .width('100%')
                 } else {
-                  Button('删除用户')
-                    .width('100%')
-                    .height(38)
-                    .backgroundColor($r('app.color.app_danger'))
-                    .fontColor(Color.White)
-                    .onClick((): void => {
-                      this.deleteSelectedUser();
-                    })
+                  this.IconTextButton('trash', '删除用户', Color.White, $r('app.color.app_danger'), (): void => {
+                    this.deleteSelectedUser();
+                  })
                 }
               }
               .width('100%')
@@ -1493,14 +1577,9 @@ export struct ProfileTab {
               this.searchKeyword = val;
             })
 
-          Button('搜索')
-            .height(40)
-            .padding({ left: 14, right: 14 })
-            .backgroundColor($r('app.color.app_primary_soft'))
-            .fontColor($r('app.color.app_primary'))
-            .onClick((): void => {
-              this.searchPublicUsers();
-            })
+          this.IconButton('search', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+            this.searchPublicUsers();
+          })
         }
         .width('90%')
 
@@ -1543,14 +1622,9 @@ export struct ProfileTab {
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
 
-                Button('查看')
-                  .height(34)
-                  .padding({ left: 12, right: 12 })
-                  .backgroundColor($r('app.color.app_primary_soft'))
-                  .fontColor($r('app.color.app_primary'))
-                  .onClick((): void => {
-                    this.openReadonlyUserDetail(item);
-                  })
+                this.IconButton('view', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+                  this.openReadonlyUserDetail(item);
+                })
               }
               .width('100%')
               .padding(14)
@@ -1593,23 +1667,13 @@ export struct ProfileTab {
               this.searchKeyword = val;
             })
 
-          Button('搜索')
-            .height(40)
-            .padding({ left: 14, right: 14 })
-            .backgroundColor($r('app.color.app_primary_soft'))
-            .fontColor($r('app.color.app_primary'))
-            .onClick((): void => {
-              this.searchUsers();
-            })
+          this.IconButton('search', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+            this.searchUsers();
+          })
 
-          Button('创建')
-            .height(40)
-            .padding({ left: 14, right: 14 })
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.createUserDialogController.open();
-            })
+          this.IconButton('groupAdd', Color.White, $r('app.color.app_primary'), (): void => {
+            this.createUserDialogController.open();
+          })
         }
         .width('90%')
 
@@ -1652,14 +1716,9 @@ export struct ProfileTab {
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
 
-                Button('查看')
-                  .height(34)
-                  .padding({ left: 12, right: 12 })
-                  .backgroundColor($r('app.color.app_primary_soft'))
-                  .fontColor($r('app.color.app_primary'))
-                  .onClick((): void => {
-                    this.openUserDetail(item);
-                  })
+                this.IconButton('view', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+                  this.openUserDetail(item);
+                })
               }
               .width('100%')
               .padding(14)

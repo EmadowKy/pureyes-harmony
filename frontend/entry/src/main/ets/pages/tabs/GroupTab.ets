@@ -52,17 +52,33 @@ export struct RenameGroupDialog {
         .borderRadius(8)
 
       Row({ space: 20 }) {
-        Button('取消')
+        Button() {
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.app_text_primary')])
+            Text('取消')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_primary'))
+          }
+        }
           .onClick((): void => {
             this.controller.close();
           })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
-          .fontColor($r('app.color.app_text_primary'))
           .border({ width: 1, color: $r('app.color.app_border') })
 
-        Button('保存')
+        Button() {
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(16)
+              .fontColor([Color.White])
+            Text('保存')
+              .fontSize(14)
+              .fontColor(Color.White)
+          }
+        }
           .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
           .onClick((): void => {
             this.confirm(this.groupName);
             this.controller.close();
@@ -315,6 +331,70 @@ export struct GroupTab {
     this.showMemberDetail = false;
   }
 
+  @Builder AppSymbol(name: string, color: ResourceColor, size: number) {
+    if (name === 'close') {
+      SymbolGlyph($r('sys.symbol.xmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'send') {
+      SymbolGlyph($r('sys.symbol.paperplane'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'refresh') {
+      SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'view') {
+      SymbolGlyph($r('sys.symbol.eye'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'trash') {
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'edit') {
+      SymbolGlyph($r('sys.symbol.pencil_line'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'leave') {
+      SymbolGlyph($r('sys.symbol.arrowshape_right_fill'))
+        .fontSize(size)
+        .fontColor([color])
+    } else {
+      SymbolGlyph($r('sys.symbol.checkmark'))
+        .fontSize(size)
+        .fontColor([color])
+    }
+  }
+
+  @Builder IconButton(name: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      this.AppSymbol(name, color, 18)
+    }
+    .width(36)
+    .height(36)
+    .backgroundColor(background)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick(action)
+  }
+
+  @Builder IconTextButton(name: string, label: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      Row({ space: 5 }) {
+        this.AppSymbol(name, color, 16)
+        Text(label)
+          .fontSize(14)
+          .fontColor(color)
+      }
+      .alignItems(VerticalAlign.Center)
+    }
+    .height(36)
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(background)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick(action)
+  }
+
   @Builder DetailRow(label: string, value: string) {
     Row({ space: 12 }) {
       Text(label)
@@ -365,13 +445,9 @@ export struct GroupTab {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
-          Button('关闭')
-            .height(34)
-            .backgroundColor($r('app.color.app_card_subtle_bg'))
-            .fontColor($r('app.color.app_text_primary'))
-            .onClick((): void => {
-              this.closeMemberDetail();
-            })
+          this.IconButton('close', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+            this.closeMemberDetail();
+          })
         }
         .width('100%')
 
@@ -405,14 +481,9 @@ export struct GroupTab {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        Button('发送')
-          .height(36)
-          .padding({ left: 14, right: 14 })
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
-          .onClick((): void => {
-            this.submitInvite();
-          })
+        this.IconButton('send', Color.White, $r('app.color.app_primary'), (): void => {
+          this.submitInvite();
+        })
       }
       .width('100%')
 
@@ -455,14 +526,8 @@ export struct GroupTab {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
-          Button(this.selectedInviteEmpId === candidate.emp_id ? '已选择' : '选择')
-            .width(64)
-            .height(32)
-            .fontSize(12)
-            .padding({ left: 0, right: 0 })
-            .backgroundColor(this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary_soft') : $r('app.color.app_primary'))
-            .fontColor(this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary') : Color.White)
-            .onClick((): void => {
+          this.IconButton('check', this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary') : Color.White,
+            this.selectedInviteEmpId === candidate.emp_id ? $r('app.color.app_primary_soft') : $r('app.color.app_primary'), (): void => {
               this.selectInviteCandidate(candidate);
             })
         }
@@ -489,15 +554,9 @@ export struct GroupTab {
           .fontColor($r('app.color.app_text_primary'))
           .layoutWeight(1)
 
-        Button('刷新')
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .backgroundColor($r('app.color.app_card_subtle_bg'))
-          .fontColor($r('app.color.app_text_primary'))
-          .border({ width: 1, color: $r('app.color.app_border') })
-          .onClick((): void => {
-            this.loadGroup();
-          })
+        this.IconButton('refresh', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+          this.loadGroup();
+        })
       }
       .width('90%')
 
@@ -543,25 +602,14 @@ export struct GroupTab {
               })
 
               Column({ space: 8 }) {
-                Button('查看')
-                  .height(32)
-                  .padding({ left: 12, right: 12 })
-                  .backgroundColor($r('app.color.app_primary_soft'))
-                  .fontColor($r('app.color.app_primary'))
-                  .onClick((): void => {
-                    this.openMemberDetail(member);
-                  })
+                this.IconButton('view', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+                  this.openMemberDetail(member);
+                })
 
                 if (this.group.is_creator && !member.is_creator) {
-                  Button(member.status === 'pending' ? '撤回' : '移除')
-                    .height(32)
-                    .padding({ left: 12, right: 12 })
-                    .backgroundColor($r('app.color.app_card_subtle_bg'))
-                    .fontColor('#B91C1C')
-                    .border({ width: 1, color: $r('app.color.app_border') })
-                    .onClick((): void => {
-                      this.removeMember(member);
-                    })
+                  this.IconButton('trash', '#B91C1C', $r('app.color.app_card_subtle_bg'), (): void => {
+                    this.removeMember(member);
+                  })
                 }
               }
             }
@@ -598,24 +646,13 @@ export struct GroupTab {
           .layoutWeight(1)
 
           if (this.group.is_creator) {
-            Button('改名')
-              .height(36)
-              .padding({ left: 14, right: 14 })
-              .backgroundColor($r('app.color.app_primary_soft'))
-              .fontColor($r('app.color.app_primary'))
-              .onClick((): void => {
-                this.renameDialogController.open();
-              })
+            this.IconButton('edit', $r('app.color.app_primary'), $r('app.color.app_primary_soft'), (): void => {
+              this.renameDialogController.open();
+            })
           } else if (this.group.id !== 0) {
-            Button('退出')
-              .height(36)
-              .padding({ left: 14, right: 14 })
-              .backgroundColor($r('app.color.app_card_bg'))
-              .fontColor($r('app.color.app_danger'))
-              .border({ width: 1, color: $r('app.color.app_danger') })
-              .onClick((): void => {
-                this.leaveGroup();
-              })
+            this.IconTextButton('leave', '退出', $r('app.color.app_danger'), $r('app.color.app_card_bg'), (): void => {
+              this.leaveGroup();
+            })
           }
         }
         .width('90%')
