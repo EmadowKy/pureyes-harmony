@@ -1,0 +1,15 @@
+{
+  "name": "pureyes-docs",
+  "version": "1.0.0",
+  "description": "Pureyes (清眸) 鸿蒙多模态视觉监控与分析系统官方文档",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.0.0",
+    "mermaid": "^10.9.0",
+    "vitepress-plugin-mermaid": "^2.0.1"
+  }
+}
