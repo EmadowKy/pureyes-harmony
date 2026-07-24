@@ -81,3 +81,13 @@ graph TD
 | **时空向量数据库** | `database.py` | 存储与查询目标位置、时刻及 ReID 余弦相似度特征向量。 |
 | **Agent 思考与工具箱** | `agents.py` | ReAct JSON 格式解析、3 大 AI 工具定义与系统提示词构造。 |
 | **Agent 循环运行器** | `runner.py` | 驱动思考-工具调用-观察-得出结论的多轮交互并返回结果。 |
+
+---
+
+## 5. 轻量化模型权重与资产配置
+
+引擎运行依赖以下轻量化模型权重与配置文件：
+
+- **YOLOv8 目标检测权重 (`yolov8n.pt`)**：置于 `backend/yolov8n.pt` 或根目录，负责画面实体的 Bounding Box 标注。
+- **OSNet 重识别模型 (`osnet_x1_0.pth` / `osnet_x1_0.onnx`)**：置于 `models/` 目录，由 `convert_osnet.py` / `osnet_def.py` 驱动，生成 512 维 Person ReID 特征向量。
+- **ByteTrack 配置文件 (`bytetrack_fixed.yaml`)**：置于 `backend/app/mva_v2/bytetrack_fixed.yaml`，去除 GMC 全局光流杂音，维持跨帧 TrackID 稳定。
