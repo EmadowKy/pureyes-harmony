@@ -1,43 +1,47 @@
-# Web Framework
+# ==========================================
+# Pureyes (清眸) 后端全量 Python 依赖清单
+# 注：PyTorch / Torchvision 推荐根据 GPU 类型使用独立 CUDA Wheel 安装
+# ==========================================
+
+# Web 框架与数据库
 Flask==2.3.3
 Flask-CORS==4.0.0
 Flask-SQLAlchemy==3.1.1
 Flask-JWT-Extended==4.6.0
+gunicorn==23.0.0
 
-# Authentication & Security
+# 身份认证与安全
 PyJWT==2.8.0
-werkzeug>=3.0.0
+Werkzeug>=3.0.0
 
-# Video Processing
+# 视频与图像处理
 opencv-python==4.8.1.78
 numpy<2.0.0
 Pillow>=10.0.0
 
-# Configuration
+# 系统配置与工具
 PyYAML>=6.0.1
-
-# Utilities
 requests>=2.31.0
 python-dotenv==1.0.1
 
 # ==========================================
-# MVA V2 - 按需即时处理引擎 (JIT Pipeline)
+# AI 视觉分析引擎核心依赖 (MVA)
 # ==========================================
 
-# 目标检测 (YOLOv8-Nano, 首次运行自动下载权重)
+# YOLOv8 目标检测网络
 ultralytics>=8.2.0
 
-# 多目标追踪 (内置 ByteTrack 算法)
+# ByteTrack 目标追踪工具
 supervision>=0.21.0
 
-# ONNX 推理引擎 (加载 OSNet ReID 模型, 纯 CPU 极速推理)
+# ONNX 推理引擎 (用于加载 OSNet 行人重识别权重)
 onnxruntime>=1.17.0
 
-# 语义嵌入 (CLIP 文本/图像向量提取)
-transformers>=4.40.0
-
-# 本地嵌入式向量数据库 (时空特征存储与检索)
+# 嵌入式时空特征向量数据库
 lancedb>=0.6.0
 
-# 结构化输出约束 (Agent 路由策略与反馈格式)
+# 数据校验与结构化解析
 pydantic>=2.0.0
+
+# 多模态视觉模型 Tokenizer / 特征提取
+transformers>=4.40.0
