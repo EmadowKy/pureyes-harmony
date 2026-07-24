@@ -1,7 +1,7 @@
 import http from '@ohos.net.http';
 
-export const OFFICIAL_SERVER_URL = 'https://api.pureyes.top/api';
-export const OFFICIAL_BASE_HOST = 'https://api.pureyes.top';
+export const OFFICIAL_SERVER_URL = 'http://116.62.178.139:8000/api';
+export const OFFICIAL_BASE_HOST = 'http://116.62.178.139:8000';
 
 // 初始化持久化存储，确保跨应用退出/重启仍然保留服务器地址偏好
 try {
