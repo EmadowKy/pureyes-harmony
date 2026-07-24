@@ -247,7 +247,7 @@ def add_monitor(group_id):
     if not name:
         return fail(message="monitor name is required", code=4002, http_status=400)
 
-    monitor = Monitor(group_id=group_id, name=name, stream_url=stream_url)
+    monitor = Monitor(group_id=group_id, name=name, stream_url=stream_url, status="online" if stream_url else "offline")
     db.session.add(monitor)
     db.session.commit()
 

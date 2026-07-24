@@ -82,14 +82,10 @@ def create_app():
             print("Super Admin (admin/admin) created.")
 
         # Start background stream recording service
-        import atexit
-        from app.core.recorder import start_all_recordings, stop_all_recordings
-        from app.video_stream_routes import stop_all_live_converters
+        from app.core.recorder import start_all_recordings
         from app.monitors.routes import start_cover_refresh_loop
         if os.environ.get("PUREYES_DISABLE_BACKGROUND") != "1":
             start_all_recordings(app)
             start_cover_refresh_loop(app)
-            atexit.register(stop_all_recordings)
-            atexit.register(stop_all_live_converters)
 
     return app
