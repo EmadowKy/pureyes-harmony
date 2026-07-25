@@ -304,7 +304,7 @@ export struct MonitorTab {
           const rawUrl = ((item['stream_url'] as string) || '').trim();
           monitor.raw_stream_url = rawUrl;
           const coverUrl = ((item['cover_url'] as string) || '').trim();
-          monitor.cover_url = coverUrl ? this.buildHttpUrl(coverUrl) : '';
+          monitor.cover_url = coverUrl ? this.buildHttpUrl(coverUrl) : this.buildHttpUrl(`/api/monitors/${monitor.id}/cover`);
           if (!rawUrl) {
             monitor.stream_url = '';
           } else if (rawUrl.startsWith('rtsp://') || rawUrl.startsWith('rtmp://')) {
@@ -376,6 +376,87 @@ export struct MonitorTab {
         }
       }
     });
+  }
+
+  @Builder MonitorSymbol(name: string, color: ResourceColor, size: number) {
+    if (name === 'back') {
+      SymbolGlyph($r('sys.symbol.chevron_left'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'add') {
+      SymbolGlyph($r('sys.symbol.plus'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'open') {
+      SymbolGlyph($r('sys.symbol.eye'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'edit') {
+      SymbolGlyph($r('sys.symbol.pencil_line'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'delete') {
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'save') {
+      SymbolGlyph($r('sys.symbol.checkmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'cancel') {
+      SymbolGlyph($r('sys.symbol.xmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'jump') {
+      SymbolGlyph($r('sys.symbol.arrowshape_right_fill'))
+        .fontSize(size)
+        .fontColor([color])
+    } else {
+      SymbolGlyph($r('sys.symbol.camera'))
+        .fontSize(size)
+        .fontColor([color])
+    }
+  }
+
+  @Builder MonitorIconButton(name: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      this.MonitorSymbol(name, color, 18)
+    }
+    .width(38)
+    .height(38)
+    .padding(0)
+    .backgroundColor(background)
+    .borderRadius(12)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick(action)
+  }
+
+  @Builder MonitorCover(monitor: MonitorInfo) {
+    Stack({ alignContent: Alignment.Center }) {
+      Column({ space: 6 }) {
+        this.MonitorSymbol('camera', $r('app.color.app_text_secondary'), 28)
+        Text('封面生成中')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.app_card_subtle_bg'))
+
+      Image(monitor.cover_url)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+    }
+    .width('100%')
+    .height(100)
+    .borderRadius({ topLeft: 8, topRight: 8 })
+    .clip(true)
+    .backgroundColor(Color.Gray)
+    .onClick((): void => {
+      this.openMonitor(monitor);
+    })
   }
 
   async deleteMonitor(monitor: MonitorInfo): Promise<void> {
@@ -550,12 +631,9 @@ export struct MonitorTab {
     Column() {
       if (this.selectedMonitorId !== 0) {
         Row() {
-          Button('返回')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.resetSelection();
-            })
+          this.MonitorIconButton('back', Color.White, $r('app.color.app_primary'), (): void => {
+            this.resetSelection();
+          })
           Column({ space: 2 }) {
             Text(this.selectedMonitorName)
               .fontSize(20)
@@ -643,12 +721,9 @@ export struct MonitorTab {
             .onChange((value: string): void => {
               this.jumpTimeText = value;
             })
-          Button('跳转')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.jumpToTime();
-            })
+          this.MonitorIconButton('jump', Color.White, $r('app.color.app_primary'), (): void => {
+            this.jumpToTime();
+          })
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12 })
@@ -757,12 +832,9 @@ export struct MonitorTab {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
             .layoutWeight(1)
-          Button('添加监控')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.addMonitorDialogController.open();
-            })
+          this.MonitorIconButton('add', Color.White, $r('app.color.app_primary'), (): void => {
+            this.addMonitorDialogController.open();
+          })
         }
         .width('90%')
         .padding({ top: 20, bottom: 10 })
@@ -783,15 +855,7 @@ export struct MonitorTab {
             ForEach(this.monitors, (monitor: MonitorInfo): void => {
               GridItem() {
                 Column({ space: 8 }) {
-                  Image(monitor.cover_url ? monitor.cover_url : $r('app.media.foreground'))
-                    .width('100%')
-                    .height(100)
-                    .objectFit(ImageFit.Cover)
-                    .borderRadius({ topLeft: 8, topRight: 8 })
-                    .backgroundColor(Color.Gray)
-                    .onClick((): void => {
-                      this.openMonitor(monitor);
-                    })
+                  this.MonitorCover(monitor)
 
                   if (this.editingMonitorId === monitor.id) {
                     TextInput({ placeholder: '监控名称', text: this.editingMonitorName })
@@ -810,27 +874,15 @@ export struct MonitorTab {
                       .onChange((val: string): void => {
                         this.editingMonitorUrl = val;
                       })
-                    Row({ space: 8 }) {
-                      Button('保存')
-                        .layoutWeight(1)
-                        .height(34)
-                        .fontSize(12)
-                        .padding({ left: 0, right: 0 })
-                        .backgroundColor($r('app.color.app_primary'))
-                        .fontColor(Color.White)
-                        .onClick((): void => {
-                          this.submitEditMonitor(monitor.id);
-                        })
-                      Button('取消')
-                        .layoutWeight(1)
-                        .height(34)
-                        .fontSize(12)
-                        .padding({ left: 0, right: 0 })
-                        .backgroundColor($r('app.color.app_card_subtle_bg'))
-                        .fontColor($r('app.color.app_text_primary'))
-                        .onClick((): void => {
-                          this.cancelEditMonitor();
-                        })
+                    Row({ space: 10 }) {
+                      Blank()
+                      this.MonitorIconButton('save', Color.White, $r('app.color.app_primary'), (): void => {
+                        this.submitEditMonitor(monitor.id);
+                      })
+                      this.MonitorIconButton('cancel', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+                        this.cancelEditMonitor();
+                      })
+                      Blank()
                     }
                     .width('100%')
                     .padding({ left: 8, right: 8, bottom: 8 })
@@ -850,41 +902,18 @@ export struct MonitorTab {
                       .width('100%')
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Column({ space: 6 }) {
-                      Row({ space: 8 }) {
-                        Button('打开')
-                          .layoutWeight(1)
-                          .height(32)
-                          .fontSize(12)
-                          .padding({ left: 0, right: 0 })
-                          .backgroundColor($r('app.color.app_primary'))
-                          .fontColor(Color.White)
-                          .onClick((): void => {
-                            this.openMonitor(monitor);
-                          })
-                        Button('编辑')
-                          .layoutWeight(1)
-                          .height(32)
-                          .fontSize(12)
-                          .padding({ left: 0, right: 0 })
-                          .backgroundColor($r('app.color.app_card_subtle_bg'))
-                          .fontColor($r('app.color.app_text_primary'))
-                          .onClick((): void => {
-                            this.openEditMonitor(monitor);
-                          })
-                      }
-                      .width('100%')
-
-                      Button('删除')
-                        .width('100%')
-                        .height(32)
-                        .fontSize(12)
-                        .padding({ left: 0, right: 0 })
-                        .backgroundColor('#C00000')
-                        .fontColor(Color.White)
-                        .onClick((): void => {
-                          this.confirmDeleteMonitor(monitor);
-                        })
+                    Row({ space: 10 }) {
+                      Blank()
+                      this.MonitorIconButton('open', Color.White, $r('app.color.app_primary'), (): void => {
+                        this.openMonitor(monitor);
+                      })
+                      this.MonitorIconButton('edit', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+                        this.openEditMonitor(monitor);
+                      })
+                      this.MonitorIconButton('delete', Color.White, '#C00000', (): void => {
+                        this.confirmDeleteMonitor(monitor);
+                      })
+                      Blank()
                     }
                     .width('100%')
                     .padding({ left: 8, right: 8, bottom: 8 })
