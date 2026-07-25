@@ -3160,30 +3160,49 @@ struct WorkspaceDetail {
             }
           }
 
-          // ===== Bottom Tab Bar (Three Tabs: 片段 | 人脸 | 问答) =====
+          // ===== Bottom Tab Bar (仿照 Index.ets 首页底栏 1:1 精英胶囊设计) =====
           Row() {
             // Tab 0: 片段
-            Column() {
+            Column({ space: 3 }) {
               Stack() {
-                Rect({ width: 22, height: 16 })
-                  .fill(Color.Transparent)
-                  .stroke(this.currentSubTab === 0 ? '#3B82F6' : '#9CA3AF')
-                  .strokeWidth(2)
-                  .strokeLineJoin(LineJoinStyle.Round)
-                Polygon({ width: 6, height: 8 })
-                  .points([[0, 0], [0, 8], [6, 4]])
-                  .fill(this.currentSubTab === 0 ? '#3B82F6' : '#9CA3AF')
-                  .margin({ left: 2 })
+                Stack() {
+                  Rect({ width: 22, height: 16 })
+                    .fill(Color.Transparent)
+                    .stroke(this.currentSubTab === 0 ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+                    .strokeWidth(2)
+                    .strokeLineJoin(LineJoinStyle.Round)
+                  Polygon({ width: 6, height: 8 })
+                    .points([[0, 0], [0, 8], [6, 4]])
+                    .fill(this.currentSubTab === 0 ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+                    .margin({ left: 2 })
+                }
+                .width(28)
+                .height(28)
               }
-              .width(22)
-              .height(22)
-              .margin({ bottom: 4 })
+              .width(50)
+              .height(40)
+              .borderRadius(16)
+              .backgroundColor(this.currentSubTab === 0 ? $r('app.color.app_nav_item_bg') : Color.Transparent)
+              .shadow(this.currentSubTab === 0 ? {
+                radius: 14,
+                color: $r('app.color.app_nav_shadow'),
+                offsetX: 0,
+                offsetY: 5
+              } : {
+                radius: 0,
+                color: Color.Transparent,
+                offsetX: 0,
+                offsetY: 0
+              })
 
               Text('片段')
-                .fontSize(11)
-                .fontColor(this.currentSubTab === 0 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
+                .fontSize(12)
+                .fontWeight(this.currentSubTab === 0 ? FontWeight.Medium : FontWeight.Regular)
+                .fontColor(this.currentSubTab === 0 ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
             }
-            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .height(64)
+            .justifyContent(FlexAlign.Center)
             .layoutWeight(1)
             .onClick((): void => {
               this.currentSubTab = 0;
@@ -3193,18 +3212,42 @@ struct WorkspaceDetail {
             })
 
             // Tab 1: 人脸 (片段与问答中间)
-            Column() {
-              Circle({ width: 18, height: 18 })
-                .fill(Color.Transparent)
-                .stroke(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
-                .strokeWidth(2)
-                .margin({ bottom: 4 })
+            Column({ space: 3 }) {
+              Stack() {
+                Column() {
+                  Circle({ width: 14, height: 14 })
+                    .fill(Color.Transparent)
+                    .stroke(this.currentSubTab === 1 ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+                    .strokeWidth(2)
+                }
+                .width(28)
+                .height(28)
+                .justifyContent(FlexAlign.Center)
+              }
+              .width(50)
+              .height(40)
+              .borderRadius(16)
+              .backgroundColor(this.currentSubTab === 1 ? $r('app.color.app_nav_item_bg') : Color.Transparent)
+              .shadow(this.currentSubTab === 1 ? {
+                radius: 14,
+                color: $r('app.color.app_nav_shadow'),
+                offsetX: 0,
+                offsetY: 5
+              } : {
+                radius: 0,
+                color: Color.Transparent,
+                offsetX: 0,
+                offsetY: 0
+              })
 
               Text('人脸')
-                .fontSize(11)
-                .fontColor(this.currentSubTab === 1 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
+                .fontSize(12)
+                .fontWeight(this.currentSubTab === 1 ? FontWeight.Medium : FontWeight.Regular)
+                .fontColor(this.currentSubTab === 1 ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
             }
-            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .height(64)
+            .justifyContent(FlexAlign.Center)
             .layoutWeight(1)
             .onClick((): void => {
               this.currentSubTab = 1;
@@ -3214,28 +3257,47 @@ struct WorkspaceDetail {
             })
 
             // Tab 2: 问答
-            Column() {
+            Column({ space: 3 }) {
               Stack() {
-                Rect({ width: 20, height: 14 })
-                  .fill(Color.Transparent)
-                  .stroke(this.currentSubTab === 2 ? '#3B82F6' : '#9CA3AF')
-                  .strokeWidth(2)
-                  .strokeLineJoin(LineJoinStyle.Round)
-                  .borderRadius(2)
-                Polygon({ width: 5, height: 5 })
-                  .points([[5, 0], [0, 5], [5, 5]])
-                  .fill(this.currentSubTab === 2 ? '#3B82F6' : '#9CA3AF')
-                  .offset({ x: -5, y: 7 })
+                Stack() {
+                  Rect({ width: 20, height: 14 })
+                    .fill(Color.Transparent)
+                    .stroke(this.currentSubTab === 2 ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+                    .strokeWidth(2)
+                    .strokeLineJoin(LineJoinStyle.Round)
+                    .borderRadius(2)
+                  Polygon({ width: 5, height: 5 })
+                    .points([[5, 0], [0, 5], [5, 5]])
+                    .fill(this.currentSubTab === 2 ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
+                    .offset({ x: -5, y: 7 })
+                }
+                .width(28)
+                .height(28)
               }
-              .width(22)
-              .height(22)
-              .margin({ bottom: 4 })
+              .width(50)
+              .height(40)
+              .borderRadius(16)
+              .backgroundColor(this.currentSubTab === 2 ? $r('app.color.app_nav_item_bg') : Color.Transparent)
+              .shadow(this.currentSubTab === 2 ? {
+                radius: 14,
+                color: $r('app.color.app_nav_shadow'),
+                offsetX: 0,
+                offsetY: 5
+              } : {
+                radius: 0,
+                color: Color.Transparent,
+                offsetX: 0,
+                offsetY: 0
+              })
 
               Text('问答')
-                .fontSize(11)
-                .fontColor(this.currentSubTab === 2 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
+                .fontSize(12)
+                .fontWeight(this.currentSubTab === 2 ? FontWeight.Medium : FontWeight.Regular)
+                .fontColor(this.currentSubTab === 2 ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
             }
-            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .height(64)
+            .justifyContent(FlexAlign.Center)
             .layoutWeight(1)
             .onClick((): void => {
               this.currentSubTab = 2;
@@ -3245,16 +3307,11 @@ struct WorkspaceDetail {
             })
           }
           .width('100%')
-          .height(56)
-          .backgroundColor('#F9FAFB')
-          .border({ width: { top: 1 }, color: '#E5E7EB' })
-          .padding({ top: 5, bottom: 5 })
+          .height(88)
+          .padding({ top: 6, bottom: 20 })
+          .backgroundColor($r('app.color.app_nav_bar_bg'))
         }
-        .width('100%')
-        .layoutWeight(1)
       }
-      .width('100%')
-      .layoutWeight(1)
     }
     .width('100%')
     .height('100%')
