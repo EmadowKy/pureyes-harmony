@@ -571,7 +571,7 @@ export struct MonitorTab {
   async jumpToTime(): Promise<void> {
     const isoTime = this.parseDateTime(this.jumpTimeText);
     if (!isoTime) {
-      promptAction.showToast({ message: '请输入有效时间，例如 2026-07-12 12:30:00', duration: 2000 });
+      promptAction.showToast({ message: '请输入有效时间格式 (YYYY-MM-DD HH:mm:ss)', duration: 2000 });
       return;
     }
     const targetDate = new Date(isoTime);

@@ -173,25 +173,27 @@ struct Login {
         }
       }
 
-      // 3. 用户名/工号输入框
-      TextInput({ placeholder: '请输入工号 (例如: admin)', text: this.empId })
+      // 3. 用户名/工号输入框（接入鸿蒙系统密码管理器自动填充）
+      TextInput({ placeholder: '请输入工号', text: this.empId })
         .width('80%')
         .height(50)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .borderRadius(10)
+        .textContentType(TextContentType.USER_NAME)
         .onChange((val: string): void => {
           this.empId = val;
         })
 
-      // 4. 密码输入框
-      TextInput({ placeholder: '请输入密码 (例如: admin)', text: this.pass })
+      // 4. 密码输入框（接入鸿蒙系统密码保管箱安全保存与快速填充）
+      TextInput({ placeholder: '请输入密码', text: this.pass })
         .type(InputType.Password)
         .width('80%')
         .height(50)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .borderRadius(10)
+        .textContentType(TextContentType.PASSWORD)
         .onChange((val: string): void => {
           this.pass = val;
         })

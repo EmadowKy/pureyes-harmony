@@ -522,7 +522,7 @@ struct MonitorTimeRangeDialog {
               .fontColor($r('app.color.app_text_secondary'))
               .alignSelf(ItemAlign.Start)
 
-            TextInput({ text: this.remarkText, placeholder: '例：西门夜间人员进出记录' })
+            TextInput({ text: this.remarkText, placeholder: '请输入片段备注/说明' })
               .height(40)
               .fontSize(13)
               .onChange((val: string): void => {
@@ -829,7 +829,7 @@ struct VideoRangeDialog {
           .backgroundColor($r('app.color.app_page_bg'))
           .borderRadius(8)
 
-          TextInput({ placeholder: '请输入片段备注，例如：大门经过车辆', text: this.remarkText })
+          TextInput({ placeholder: '请输入片段备注', text: this.remarkText })
             .width('100%')
             .height(45)
             .fontColor($r('app.color.app_text_primary'))
@@ -3012,7 +3012,7 @@ struct WorkspaceDetail {
                   .fontSize(14)
                   .fontColor($r('app.color.app_text_primary'))
                   .alignSelf(ItemAlign.Start)
-                TextArea({ placeholder: '请输入问题，例如：画面里有没有人经过？有几个人？', text: this.questionText })
+                TextArea({ placeholder: '请输入要分析提问的具体问题', text: this.questionText })
                   .height(80)
                   .fontColor($r('app.color.app_text_primary'))
                   .backgroundColor($r('app.color.app_input_bg'))

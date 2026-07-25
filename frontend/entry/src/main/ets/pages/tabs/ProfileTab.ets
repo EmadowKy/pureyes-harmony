@@ -213,6 +213,7 @@ export struct ProfileTab {
   @State llmApiKey: string = '';
   @State llmBaseUrl: string = '';
   @State llmModel: string = '';
+  @State isApiKeyConfigured: boolean = false;
 
   createUserDialogController: CustomDialogController = new CustomDialogController({
     builder: CreateUserDialog({
@@ -526,6 +527,7 @@ export struct ProfileTab {
     const res = await HttpUtil.put('/users/me', payload);
     if (res.code === 0) {
       promptAction.showToast({ message: 'API 配置保存成功', duration: 2000 });
+      this.isApiKeyConfigured = !!(this.llmApiKey && this.llmApiKey.trim().length > 0);
       this.loadProfile();
     } else {
       promptAction.showToast({ message: res.message || 'API 配置保存失败', duration: 2000 });
@@ -1303,18 +1305,43 @@ export struct ProfileTab {
         this.PageHeader('模型 API')
 
         Column({ space: 12 }) {
-          TextInput({ placeholder: 'API KEY (如: sk-xxx)', text: this.llmApiKey })
-            .width('100%')
-            .height(42)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_input_bg'))
-            .border({ width: 1, color: $r('app.color.app_border') })
-            .borderRadius(8)
-            .onChange((val: string): void => {
-              this.llmApiKey = val;
+          Row({ space: 8 }) {
+            TextInput({
+              placeholder: 'API KEY',
+              text: this.isApiKeyConfigured ? '••••••••••••••••••••' : this.llmApiKey
             })
+              .type(InputType.Password)
+              .enabled(!this.isApiKeyConfigured)
+              .layoutWeight(1)
+              .height(42)
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor(this.isApiKeyConfigured ? '#F3F4F6' : $r('app.color.app_input_bg'))
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(8)
+              .onChange((val: string): void => {
+                if (!this.isApiKeyConfigured) {
+                  this.llmApiKey = val;
+                }
+              })
 
-          TextInput({ placeholder: 'BASE URL (如: https://.../compatible-mode/v1)', text: this.llmBaseUrl })
+            if (this.isApiKeyConfigured) {
+              Button('重置 Key')
+                .height(42)
+                .fontSize(12)
+                .backgroundColor('#FEF2F2')
+                .fontColor('#EF4444')
+                .border({ width: 1, color: '#FCA5A5' })
+                .borderRadius(8)
+                .onClick((): void => {
+                  this.llmApiKey = '';
+                  this.isApiKeyConfigured = false;
+                  promptAction.showToast({ message: '已重置 API Key，请输入新 Key 后保存', duration: 1500 });
+                })
+            }
+          }
+          .width('100%')
+
+          TextInput({ placeholder: 'BASE URL', text: this.llmBaseUrl })
             .width('100%')
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
@@ -1325,7 +1352,7 @@ export struct ProfileTab {
               this.llmBaseUrl = val;
             })
 
-          TextInput({ placeholder: 'MODEL (如: qwen3.7-plus)', text: this.llmModel })
+          TextInput({ placeholder: 'MODEL 模型名称', text: this.llmModel })
             .width('100%')
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
