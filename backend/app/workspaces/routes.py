@@ -1,5 +1,6 @@
 import uuid
 import time
+import re
 from datetime import datetime
 from flask import request, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -260,6 +261,32 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
             running_tasks[task_id]['traceback'] = tb_str
 
 
+def _get_video_duration(video_path):
+    from app.core.config import get_ffmpeg_path
+    import subprocess
+    try:
+        cmd = [
+            get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', video_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        d = float(res.stdout.strip())
+        if d > 0:
+            return round(d, 2)
+    except Exception:
+        pass
+    try:
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        cap.release()
+        if frame_count > 0 and fps > 0:
+            return round(frame_count / fps, 2)
+    except Exception:
+        pass
+    return 60.0
+
 
 @workspaces_bp.get("/example-videos")
 @jwt_required()
@@ -273,24 +300,12 @@ def get_example_videos():
     if not os.path.exists(example_dir) or not os.path.isdir(example_dir):
         return success(data=[])
         
-    from app.core.config import get_ffmpeg_path
-    import subprocess
-    
     video_files = [f for f in os.listdir(example_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
     results = []
     
     for vf in video_files:
         path = os.path.join(example_dir, vf)
-        duration = 0.0
-        try:
-            cmd = [
-                get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1', path
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            duration = float(res.stdout.strip())
-        except Exception as e:
-            print(f"[Workspace QA] Failed to get duration of {vf}: {e}")
+        duration = _get_video_duration(path)
             
         results.append({
             "name": vf,
@@ -535,6 +550,307 @@ def delete_qa_record(task_id):
     return success(message="record deleted")
 
 
+def parse_time_to_ts(time_str):
+    time_str = (time_str or "").strip()
+    match = re.match(r'^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})', time_str)
+    if not match:
+        raise ValueError(f"时间格式无效: {time_str}，请使用 YYYY-MM-DD HH:mm:ss 格式")
+    dt = datetime(
+        int(match.group(1)), int(match.group(2)), int(match.group(3)),
+        int(match.group(4)), int(match.group(5)), int(match.group(6))
+    )
+    return dt.timestamp(), dt
+
+
+def slice_and_concat_monitor_stream(monitor_id, start_time_str, end_time_str, output_path):
+    """
+    根据起止时间戳范围查找监控录像切片，进行连续性与完整性校验。
+    如果包含缺失，返回 (False, 错误提示)；若无缺失，使用 FFmpeg 进行拼接与精密截取。
+    """
+    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    mon_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "streams", str(monitor_id)))
+
+    if not os.path.exists(mon_dir) or not os.path.isdir(mon_dir):
+        return False, "该监控设备暂未产生任何后台录像文件", 0.0
+
+    try:
+        start_ts, start_dt = parse_time_to_ts(start_time_str)
+        end_ts, end_dt = parse_time_to_ts(end_time_str)
+    except ValueError as ve:
+        return False, str(ve), 0.0
+
+    if end_ts <= start_ts:
+        return False, "结束时间必须大于起始时间", 0.0
+
+    target_duration = end_ts - start_ts
+    if target_duration > 7200:
+        return False, "单次截取的时间跨度不能超过 2 小时", 0.0
+
+    video_files = [f for f in os.listdir(mon_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
+    if not video_files:
+        return False, "该监控设备目录下无录像切片文件", 0.0
+
+    file_info_list = []
+    for vf in video_files:
+        path = os.path.join(mon_dir, vf)
+        base = os.path.splitext(vf)[0]
+        try:
+            f_dt = datetime.strptime(base, "%Y%m%d_%H%M%S")
+            f_start = f_dt.timestamp()
+            f_dur = _get_video_duration(path)
+            f_end = f_start + f_dur
+            file_info_list.append({
+                'file': vf,
+                'path': path,
+                'start_ts': f_start,
+                'end_ts': f_end,
+                'duration': f_dur
+            })
+        except Exception:
+            continue
+
+    if not file_info_list:
+        return False, "未能识别出符合时间规范的监控切片", 0.0
+
+    file_info_list.sort(key=lambda x: x['start_ts'])
+
+    # 筛选与 [start_ts, end_ts] 相较重叠的文件
+    overlapping_files = []
+    for fi in file_info_list:
+        if fi['end_ts'] > start_ts and fi['start_ts'] < end_ts:
+            overlapping_files.append(fi)
+
+    if not overlapping_files:
+        return False, f"所选时间段（{start_time_str} ~ {end_time_str}）内监控录像存在缺失（未找到录像文件）", 0.0
+
+    # 连续性与覆盖完整性校验
+    # 1. 检查开端是否覆盖到 start_ts
+    first_file = overlapping_files[0]
+    if first_file['start_ts'] > start_ts + 3.0:
+        return False, f"所选时间段起始部分录像存在缺失（缺失起点: {start_time_str}）", 0.0
+
+    # 2. 检查末尾是否覆盖到 end_ts
+    last_file = overlapping_files[-1]
+    if last_file['end_ts'] < end_ts - 3.0:
+        return False, f"所选时间段末尾部分录像存在缺失（缺失终点: {end_time_str}）", 0.0
+
+    # 3. 检查中间相连接的缝隙 (Gaps)
+    for i in range(len(overlapping_files) - 1):
+        curr_f = overlapping_files[i]
+        next_f = overlapping_files[i + 1]
+        if next_f['start_ts'] - curr_f['end_ts'] > 3.5:
+            gap_dt = datetime.fromtimestamp(curr_f['end_ts'])
+            missing_gap_time = gap_dt.strftime("%Y-%m-%d %H:%M:%S")
+            return False, f"所选时间段内监控录像存在中途缺失（缺失时间点约: {missing_gap_time}）", 0.0
+
+    # 校验通过！使用 FFmpeg 进行拼接与精准裁剪
+    from app.core.config import get_ffmpeg_path
+    import subprocess
+    ffmpeg_bin = get_ffmpeg_path("ffmpeg")
+
+    first_offset = max(0.0, start_ts - first_file['start_ts'])
+
+    if len(overlapping_files) == 1:
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-ss", f"{first_offset:.3f}",
+            "-t", f"{target_duration:.3f}",
+            "-i", first_file['path'],
+            "-c:v", "libx264", "-preset", "veryfast",
+            "-c:a", "aac",
+            output_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if res.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) <= 1000:
+            return False, f"FFmpeg 裁剪失败: {res.stderr}", 0.0
+        return True, "ok", target_duration
+
+    else:
+        concat_list_path = os.path.join(os.path.dirname(output_path), f"concat_{uuid.uuid4().hex[:6]}.txt")
+        try:
+            with open(concat_list_path, "w", encoding="utf-8") as f:
+                for fi in overlapping_files:
+                    clean_p = fi['path'].replace("\\", "/")
+                    f.write(f"file '{clean_p}'\n")
+
+            cmd = [
+                ffmpeg_bin, "-y",
+                "-ss", f"{first_offset:.3f}",
+                "-t", f"{target_duration:.3f}",
+                "-f", "concat", "-safe", "0",
+                "-i", concat_list_path,
+                "-c:v", "libx264", "-preset", "veryfast",
+                "-c:a", "aac",
+                output_path
+            ]
+            print(f"[Monitor Stream Concat] Executing: {' '.join(cmd)}")
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if res.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) <= 1000:
+                return False, f"FFmpeg 拼接切片失败: {res.stderr}", 0.0
+            return True, "ok", target_duration
+
+        finally:
+            if os.path.exists(concat_list_path):
+                try:
+                    os.remove(concat_list_path)
+                except Exception:
+                    pass
+
+
+@workspaces_bp.get("/<int:workspace_id>/video-sources")
+@jwt_required()
+def get_workspace_video_sources(workspace_id):
+    """
+    获取工作区可用于截取的视频源（包含同小组的监控设备、用户上传视频及示例视频）。
+    按监控设备为单位展示，隐藏底层一分钟切片细节。
+    """
+    emp_id = get_jwt_identity()
+    workspace = Workspace.query.get(workspace_id)
+    if not workspace:
+        return fail(message="workspace not found", code=5003, http_status=404)
+
+    member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
+    if not member:
+        return fail(message="not a group member", code=5001, http_status=403)
+
+    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    results = []
+
+    # 1. 查询同小组下的监控设备 (Monitors)
+    from app.models.monitor import Monitor
+    group_monitors = Monitor.query.filter_by(group_id=workspace.group_id).all()
+    streams_base = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "streams"))
+
+    for mon in group_monitors:
+        mon_dir = os.path.join(streams_base, str(mon.id))
+        earliest_time_str = None
+        latest_time_str = None
+        has_recs = False
+        
+        if os.path.exists(mon_dir) and os.path.isdir(mon_dir):
+            video_files = [f for f in os.listdir(mon_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
+            video_files.sort(key=lambda x: x)
+            if video_files:
+                has_recs = True
+                try:
+                    f_first = video_files[0].replace(".mp4", "").replace(".avi", "").replace(".mov", "")
+                    dt_first = datetime.strptime(f_first, "%Y%m%d_%H%M%S")
+                    earliest_time_str = dt_first.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    earliest_time_str = video_files[0]
+                    
+                try:
+                    f_last = video_files[-1].replace(".mp4", "").replace(".avi", "").replace(".mov", "")
+                    dt_last = datetime.strptime(f_last, "%Y%m%d_%H%M%S")
+                    latest_time_str = dt_last.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    latest_time_str = video_files[-1]
+
+        results.append({
+            "id": f"monitor_{mon.id}",
+            "name": f"监控:{mon.name}",
+            "source_type": "monitor",
+            "monitor_id": mon.id,
+            "monitor_name": mon.name,
+            "has_recordings": has_recs,
+            "earliest_time": earliest_time_str or "无录像记录",
+            "latest_time": latest_time_str or "无录像记录"
+        })
+
+    # 2. 查询用户上传的视频 (Uploaded Videos)
+    upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads"))
+    if os.path.exists(upload_dir) and os.path.isdir(upload_dir):
+        uploaded_files = [f for f in os.listdir(upload_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
+        uploaded_files.sort(key=lambda x: os.path.getmtime(os.path.join(upload_dir, x)), reverse=True)
+        for uf in uploaded_files[:30]:
+            uf_path = os.path.join(upload_dir, uf)
+            duration = _get_video_duration(uf_path)
+            results.append({
+                "id": f"upload_{uf}",
+                "name": f"已上传:{uf}",
+                "raw_filename": uf,
+                "filepath": f"storage/uploads/{uf}",
+                "url": f"storage/uploads/{uf}",
+                "duration": duration,
+                "source_type": "upload",
+                "monitor_id": None,
+                "monitor_name": ""
+            })
+
+    # 3. 示例视频备用 (Example Videos)
+    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+    if os.path.exists(example_dir) and os.path.isdir(example_dir):
+        ex_files = [f for f in os.listdir(example_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
+        for ef in ex_files:
+            ef_path = os.path.join(example_dir, ef)
+            duration = _get_video_duration(ef_path)
+            results.append({
+                "id": f"example_{ef}",
+                "name": f"示例:{ef}",
+                "raw_filename": ef,
+                "filepath": f"../example/{ef}",
+                "url": f"example/{ef}",
+                "duration": duration,
+                "source_type": "example",
+                "monitor_id": None,
+                "monitor_name": ""
+            })
+
+    return success(data=results)
+
+
+@workspaces_bp.post("/<int:workspace_id>/upload-video")
+@jwt_required()
+def upload_workspace_video(workspace_id):
+    """
+    直接上传本地视频到工作区存储库。
+    """
+    emp_id = get_jwt_identity()
+    workspace = Workspace.query.get(workspace_id)
+    if not workspace:
+        return fail(message="workspace not found", code=5003, http_status=404)
+
+    member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
+    if not member:
+        return fail(message="not a group member", code=5001, http_status=403)
+
+    if 'file' not in request.files:
+        return fail(message="no file provided", code=5010, http_status=400)
+
+    file = request.files['file']
+    if not file or file.filename == '':
+        return fail(message="empty file", code=5011, http_status=400)
+
+    allowed_exts = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+    if not file.filename.lower().endswith(allowed_exts):
+        return fail(message="unsupported video format", code=5012, http_status=400)
+
+    BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads"))
+    os.makedirs(upload_dir, exist_ok=True)
+
+    from werkzeug.utils import secure_filename
+    orig_name = file.filename
+    clean_name = secure_filename(orig_name) or "video.mp4"
+    saved_filename = f"{uuid.uuid4().hex[:6]}_{clean_name}"
+    save_path = os.path.join(upload_dir, saved_filename)
+
+    file.save(save_path)
+    duration = _get_video_duration(save_path)
+
+    video_info = {
+        "id": f"upload_{saved_filename}",
+        "name": f"已上传:{orig_name}",
+        "raw_filename": saved_filename,
+        "filepath": f"storage/uploads/{saved_filename}",
+        "url": f"storage/uploads/{saved_filename}",
+        "duration": duration,
+        "source_type": "upload"
+    }
+
+    return success(message="video uploaded successfully", data=video_info, http_status=201)
+
+
 @workspaces_bp.post("/<int:workspace_id>/segments")
 @jwt_required()
 def create_video_segment(workspace_id):
@@ -548,7 +864,13 @@ def create_video_segment(workspace_id):
         return fail(message="not a group member", code=5001, http_status=403)
 
     data = request.get_json() or {}
+    source_type = data.get("source_type", "upload")
+    monitor_id = data.get("monitor_id")
+    start_time = data.get("start_time")
+    end_time = data.get("end_time")
+
     video_name = data.get("video_name")
+    filepath_param = data.get("filepath")
     start_offset = data.get("start_offset")
     end_offset = data.get("end_offset")
     remark = data.get("remark") or ""
@@ -556,30 +878,102 @@ def create_video_segment(workspace_id):
     sample_fps = float(data.get("sample_fps", 1.0))
     resolution = str(data.get("resolution", "1080P"))
 
-    if not video_name or start_offset is None or end_offset is None:
-        return fail(message="video_name, start_offset, and end_offset are required", code=5006, http_status=400)
-
-    start_offset = float(start_offset)
-    end_offset = float(end_offset)
-    duration = max(0.1, end_offset - start_offset)
-
     from app.monitors.slicer import SLICE_OUTPUT_BASE
     from app.core.config import get_ffmpeg_path
     import subprocess
 
     BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
     os.makedirs(SLICE_OUTPUT_BASE, exist_ok=True)
 
-    example_video_path = os.path.join(example_dir, video_name)
-    if not os.path.exists(example_video_path):
-        return fail(message=f"example video file {video_name} not found", code=5007, http_status=404)
+    sim_filename = f"slice_{workspace_id}_{uuid.uuid4().hex[:8]}.mp4"
+    sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
 
-    # 检测原画分辨率
+    # ================= 模式 1: 监控设备按起止日期时间截取 =================
+    if source_type == "monitor" or (monitor_id and start_time and end_time):
+        if not monitor_id or not start_time or not end_time:
+            return fail(message="monitor_id, start_time, and end_time are required for monitor slicing", code=5014, http_status=400)
+
+        ok, msg, seg_duration = slice_and_concat_monitor_stream(monitor_id, start_time, end_time, sim_output_path)
+        if not ok:
+            return fail(message=msg, code=5015, http_status=400)
+
+        from app.models.monitor import Monitor
+        mon_obj = Monitor.query.get(monitor_id)
+        mon_name = mon_obj.name if mon_obj else f"监控设备#{monitor_id}"
+        display_video_name = f"{mon_name} ({start_time} - {end_time})"
+
+        segment = WorkspaceVideoSegment(
+            workspace_id=workspace_id,
+            video_name=display_video_name,
+            start_offset=0.0,
+            end_offset=seg_duration,
+            duration=seg_duration,
+            remark=remark,
+            filepath=f"storage/slices/{sim_filename}",
+            status="pending" if enable_preprocess else "none",
+            sample_fps=sample_fps,
+            resolution=resolution,
+            orig_resolution="1080P"
+        )
+        db.session.add(segment)
+        db.session.commit()
+
+        if enable_preprocess:
+            app = current_app._get_current_object()
+            t_analysis = threading.Thread(
+                target=extract_segment_features_bg,
+                args=(app, segment.filepath, os.path.basename(segment.filepath), segment.duration, sample_fps, resolution)
+            )
+            t_analysis.daemon = True
+            t_analysis.start()
+
+        return success(message="segment created from monitor", data=segment.to_dict(), http_status=201)
+
+    # ================= 模式 2: 上传/示例视频文件偏移量裁剪 =================
+    if (not video_name and not filepath_param) or start_offset is None or end_offset is None:
+        return fail(message="video_name/filepath, start_offset, and end_offset are required", code=5006, http_status=400)
+
+    start_offset = float(start_offset)
+    end_offset = float(end_offset)
+    duration = max(0.1, end_offset - start_offset)
+
+    src_video_path = None
+    if filepath_param:
+        abs_p = os.path.abspath(os.path.join(BACKEND_DIR, filepath_param))
+        if os.path.exists(abs_p) and os.path.isfile(abs_p):
+            src_video_path = abs_p
+
+    if not src_video_path and video_name:
+        cand_direct = os.path.abspath(os.path.join(BACKEND_DIR, video_name))
+        if os.path.exists(cand_direct) and os.path.isfile(cand_direct):
+            src_video_path = cand_direct
+
+        if not src_video_path:
+            cand_up = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads", video_name))
+            if os.path.exists(cand_up):
+                src_video_path = cand_up
+
+        if not src_video_path:
+            streams_base = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "streams"))
+            if os.path.exists(streams_base):
+                for root, dirs, files in os.walk(streams_base):
+                    if video_name in files:
+                        src_video_path = os.path.join(root, video_name)
+                        break
+
+        if not src_video_path:
+            example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+            cand_ex = os.path.join(example_dir, video_name)
+            if os.path.exists(cand_ex):
+                src_video_path = cand_ex
+
+    if not src_video_path or not os.path.exists(src_video_path):
+        return fail(message=f"source video file {video_name or filepath_param} not found", code=5007, http_status=404)
+
     orig_res = "1080P"
     try:
         import cv2
-        cap = cv2.VideoCapture(example_video_path)
+        cap = cv2.VideoCapture(src_video_path)
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
         if h >= 2160:
@@ -593,16 +987,13 @@ def create_video_segment(workspace_id):
     except Exception:
         orig_res = "1080P"
 
-    sim_filename = f"slice_{workspace_id}_{uuid.uuid4().hex[:8]}.mp4"
-    sim_output_path = os.path.join(SLICE_OUTPUT_BASE, sim_filename)
-
     try:
         ffmpeg_bin = get_ffmpeg_path("ffmpeg")
         cmd = [
             ffmpeg_bin, "-y",
             "-ss", f"{start_offset:.3f}",
             "-t", f"{duration:.3f}",
-            "-i", example_video_path,
+            "-i", src_video_path,
             "-c:v", "copy",
             "-c:a", "aac",
             "-map", "0:v",
@@ -615,10 +1006,9 @@ def create_video_segment(workspace_id):
             print(f"[Workspace API Slicing ERROR] exit code {result.returncode}. Stderr:\n{result.stderr}")
             return fail(message="FFmpeg slicing failed", code=5008, http_status=500)
 
-        # Save to database
         segment = WorkspaceVideoSegment(
             workspace_id=workspace_id,
-            video_name=video_name,
+            video_name=video_name or os.path.basename(src_video_path),
             start_offset=start_offset,
             end_offset=end_offset,
             duration=duration,
@@ -632,7 +1022,6 @@ def create_video_segment(workspace_id):
         db.session.add(segment)
         db.session.commit()
 
-        # Trigger background JIT feature extraction only if enable_preprocess is True
         if enable_preprocess:
             app = current_app._get_current_object()
             t_analysis = threading.Thread(

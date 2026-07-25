@@ -205,9 +205,17 @@ export function formatAnswerToPlainText(answerText: string): string {
 }
 
 export class ExampleVideoInfo {
+  id: string = '';
   name: string = '';
   url: string = '';
+  filepath: string = '';
   duration: number = 0;
+  source_type: string = 'monitor';
+  monitor_id: number = 0;
+  monitor_name: string = '';
+  has_recordings: boolean = false;
+  earliest_time: string = '';
+  latest_time: string = '';
   isSelected: boolean = false;
   startOffset: number = 0;
   endOffset: number = 0;
@@ -221,6 +229,323 @@ export class ProgressGroup {
   isCollapsed: boolean = false;
   details: Array<string> = [];
   badgeText: string = '';
+}
+
+@CustomDialog
+struct MonitorTimeRangeDialog {
+  controller: CustomDialogController
+  activeVideo: ExampleVideoInfo = new ExampleVideoInfo();
+  @State startTimeText: string = '';
+  @State endTimeText: string = '';
+  @State remarkText: string = '';
+  @State enablePreprocess: boolean = true;
+  @State selectedFps: number = 1.0;
+  @State selectedResolution: string = '1080P';
+
+  confirm: (startTime: string, endTime: string, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string) => void =
+    (_start: string, _end: string, _remark: string, _enable: boolean, _fps: number, _res: string): void => {};
+
+  aboutToAppear(): void {
+    if (this.activeVideo.latest_time && this.activeVideo.latest_time.length > 10 && this.activeVideo.latest_time.indexOf(':') !== -1) {
+      this.endTimeText = this.activeVideo.latest_time;
+      this.startTimeText = this.computeShiftedTime(this.activeVideo.latest_time, -3);
+    } else {
+      const now = new Date();
+      this.endTimeText = this.formatDateTime(now);
+      now.setMinutes(now.getMinutes() - 3);
+      this.startTimeText = this.formatDateTime(now);
+    }
+    this.enablePreprocess = true;
+    this.selectedFps = 1.0;
+    this.selectedResolution = '1080P';
+  }
+
+  computeShiftedTime(baseStr: string, minutes: number): string {
+    const match = baseStr.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (!match) return baseStr;
+    const d = new Date(
+      Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+      Number(match[4]), Number(match[5]), Number(match[6])
+    );
+    d.setMinutes(d.getMinutes() + minutes);
+    return this.formatDateTime(d);
+  }
+
+  formatDateTime(d: Date): string {
+    const pad = (n: number): string => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  build() {
+    Column({ space: 12 }) {
+      Text(`截取监控视频 (${this.activeVideo.monitor_name || this.activeVideo.name})`)
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
+
+      Scroll() {
+        Column({ space: 14 }) {
+          Row() {
+            Text('录像可用时间段:')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(`${this.activeVideo.earliest_time} ~ ${this.activeVideo.latest_time}`)
+              .fontSize(11)
+              .fontColor('#1E40AF')
+              .fontWeight(FontWeight.Medium)
+              .margin({ left: 6 })
+          }
+          .width('100%')
+
+          Row({ space: 6 }) {
+            Text('快捷填充:')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+
+            Button('最近1分钟')
+              .fontSize(11)
+              .height(26)
+              .backgroundColor('#EFF6FF')
+              .fontColor('#1E40AF')
+              .onClick((): void => {
+                const base = (this.activeVideo.latest_time && this.activeVideo.latest_time.indexOf(':') !== -1) ? this.activeVideo.latest_time : this.formatDateTime(new Date());
+                this.endTimeText = base;
+                this.startTimeText = this.computeShiftedTime(base, -1);
+              })
+
+            Button('最近3分钟')
+              .fontSize(11)
+              .height(26)
+              .backgroundColor('#EFF6FF')
+              .fontColor('#1E40AF')
+              .onClick((): void => {
+                const base = (this.activeVideo.latest_time && this.activeVideo.latest_time.indexOf(':') !== -1) ? this.activeVideo.latest_time : this.formatDateTime(new Date());
+                this.endTimeText = base;
+                this.startTimeText = this.computeShiftedTime(base, -3);
+              })
+
+            Button('最近5分钟')
+              .fontSize(11)
+              .height(26)
+              .backgroundColor('#EFF6FF')
+              .fontColor('#1E40AF')
+              .onClick((): void => {
+                const base = (this.activeVideo.latest_time && this.activeVideo.latest_time.indexOf(':') !== -1) ? this.activeVideo.latest_time : this.formatDateTime(new Date());
+                this.endTimeText = base;
+                this.startTimeText = this.computeShiftedTime(base, -5);
+              })
+          }
+          .width('100%')
+
+          Column({ space: 6 }) {
+            Text('起始日期时间 (YYYY-MM-DD HH:mm:ss):')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_primary'))
+              .alignSelf(ItemAlign.Start)
+
+            TextInput({ text: this.startTimeText, placeholder: '2026-07-25 10:00:00' })
+              .height(40)
+              .fontSize(13)
+              .onChange((val: string): void => {
+                this.startTimeText = val;
+              })
+
+            Text('结束日期时间 (YYYY-MM-DD HH:mm:ss):')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_primary'))
+              .alignSelf(ItemAlign.Start)
+              .margin({ top: 6 })
+
+            TextInput({ text: this.endTimeText, placeholder: '2026-07-25 10:05:00' })
+              .height(40)
+              .fontSize(13)
+              .onChange((val: string): void => {
+                this.endTimeText = val;
+              })
+          }
+          .width('100%')
+
+          // AI 预处理设置板块 (浅蓝色背景卡片)
+          Column({ space: 10 }) {
+            Row() {
+              Column({ space: 2 }) {
+                Text('开启 AI 特征提取与识别预处理')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1E40AF')
+                Text('截取后将在后台自动识别图像物体及行为')
+                  .fontSize(11)
+                  .fontColor('#3B82F6')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.enablePreprocess })
+                .selectedColor($r('app.color.app_primary'))
+                .onChange((isOn: boolean): void => {
+                  this.enablePreprocess = isOn;
+                })
+            }
+            .width('100%')
+
+            if (this.enablePreprocess) {
+              // 采样帧率设置
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理采样帧率 (FPS):')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(`${this.selectedFps.toFixed(1)} FPS`)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  Button('0.5 FPS')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedFps === 0.5 ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedFps = 0.5; })
+
+                  Button('1.0 FPS (推荐)')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1.2)
+                    .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedFps === 1.0 ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedFps = 1.0; })
+
+                  Button('2.0 FPS')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedFps === 2.0 ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedFps = 2.0; })
+                }
+                .width('100%')
+              }
+              .width('100%')
+
+              // 预处理画质清晰度选择 (480P, 720P, 1080P, 4K)
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理画质清晰度:')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(this.selectedResolution)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  Button('480P')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '480P' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '480P'; })
+
+                  Button('720P')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '720P' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '720P'; })
+
+                  Button('1080P (推荐)')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1.3)
+                    .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '1080P' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '1080P'; })
+
+                  Button('4K')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '4K' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '4K'; })
+                }
+                .width('100%')
+              }
+              .width('100%')
+              .margin({ top: 2 })
+            }
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor('#EFF6FF')
+          .borderRadius(10)
+          .border({ width: 1, color: '#DBEAFE' })
+
+          Column({ space: 4 }) {
+            Text('片段备注/说明 (可选):')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+              .alignSelf(ItemAlign.Start)
+
+            TextInput({ text: this.remarkText, placeholder: '例：西门夜间人员进出记录' })
+              .height(40)
+              .fontSize(13)
+              .onChange((val: string): void => {
+                this.remarkText = val;
+              })
+          }
+          .width('100%')
+        }
+      }
+      .constraintSize({ maxHeight: '75%' })
+
+      Row({ space: 12 }) {
+        Button('取消')
+          .fontSize(13)
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor('#F3F4F6')
+          .fontColor('#374151')
+          .onClick((): void => {
+            this.controller.close();
+          })
+
+        Button('确认拼接截取')
+          .fontSize(13)
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor($r('app.color.app_primary'))
+          .fontColor(Color.White)
+          .onClick((): void => {
+            this.confirm(
+              this.startTimeText,
+              this.endTimeText,
+              this.remarkText,
+              this.enablePreprocess,
+              this.selectedFps,
+              this.selectedResolution
+            );
+            this.controller.close();
+          })
+      }
+      .width('100%')
+    }
+    .padding(16)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(12)
+  }
 }
 
 @CustomDialog
@@ -338,14 +663,21 @@ struct VideoRangeDialog {
               this.remarkText = value;
             })
 
-          // 视频特征预处理开关拉杆
-          Column({ space: 8 }) {
+          // 视频特征预处理设置板块 (浅蓝色背景卡片)
+          Column({ space: 10 }) {
             Row() {
-              Text('视频特征预处理')
-                .fontSize(14)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('app.color.app_text_primary'))
-              Blank()
+              Column({ space: 2 }) {
+                Text('开启 AI 特征提取与识别预处理')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1E40AF')
+                Text('截取后将在后台自动识别图像物体及行为')
+                  .fontSize(11)
+                  .fontColor('#3B82F6')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
               Toggle({ type: ToggleType.Switch, isOn: this.enablePreprocess })
                 .selectedColor($r('app.color.app_primary'))
                 .onChange((isOn: boolean): void => {
@@ -353,118 +685,111 @@ struct VideoRangeDialog {
                 })
             }
             .width('100%')
-            .alignItems(VerticalAlign.Center)
 
             if (this.enablePreprocess) {
-              Column({ space: 10 }) {
-                // A. 采样率选择 (0.5, 1, 2)
-                Column({ space: 4 }) {
-                  Text('帧采样率')
-                    .fontSize(11)
-                    .fontColor('#6B7280')
-                    .width('100%')
-
-                  Row({ space: 8 }) {
-                    Button('0.5 帧/秒')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 0.5 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 0.5;
-                      })
-
-                    Button('1 帧/秒 (推荐)')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 1.0 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 1.0;
-                      })
-
-                    Button('2 帧/秒')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 2.0 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 2.0;
-                      })
-                  }
-                  .width('100%')
+              // 采样帧率
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理采样帧率 (FPS):')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(`${this.selectedFps.toFixed(1)} FPS`)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
                 }
+                .width('100%')
 
-                // B. 画质清晰度选择 (480P, 720P, 1080P, 4K)
-                Column({ space: 4 }) {
-                  Text('画质清晰度')
+                Row({ space: 6 }) {
+                  Button('0.5 FPS')
                     .fontSize(11)
-                    .fontColor('#6B7280')
-                    .width('100%')
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedFps === 0.5 ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedFps = 0.5; })
 
-                  Row({ space: 6 }) {
-                    Button('480P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '480P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '480P';
-                      })
+                  Button('1.0 FPS (推荐)')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1.2)
+                    .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedFps === 1.0 ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedFps = 1.0; })
 
-                    Button('720P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '720P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '720P';
-                      })
-
-                    Button('1080P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '1080P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '1080P';
-                      })
-
-                    Button('4K')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '4K' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '4K';
-                      })
-                  }
-                  .width('100%')
+                  Button('2.0 FPS')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedFps === 2.0 ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedFps = 2.0; })
                 }
-
-                // C. 灰色提示文字
-                Text('提示：精度越高/视频越长，预处理时间将会越长')
-                  .fontSize(11)
-                  .fontColor('#9CA3AF')
-                  .width('100%')
+                .width('100%')
               }
               .width('100%')
-              .padding(10)
-              .backgroundColor('#F9FAFB')
-              .borderRadius(8)
+
+              // 预处理画质清晰度
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理画质清晰度:')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(this.selectedResolution)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  Button('480P')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '480P' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '480P'; })
+
+                  Button('720P')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '720P' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '720P'; })
+
+                  Button('1080P (推荐)')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1.3)
+                    .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '1080P' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '1080P'; })
+
+                  Button('4K')
+                    .fontSize(11)
+                    .height(28)
+                    .layoutWeight(1)
+                    .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#FFFFFF')
+                    .fontColor(this.selectedResolution === '4K' ? Color.White : '#1F2937')
+                    .onClick((): void => { this.selectedResolution = '4K'; })
+                }
+                .width('100%')
+              }
+              .width('100%')
+              .margin({ top: 2 })
             }
           }
           .width('100%')
-          .padding(10)
-          .backgroundColor('#F9FAFB')
-          .borderRadius(8)
+          .padding(12)
+          .backgroundColor('#EFF6FF')
+          .borderRadius(10)
+          .border({ width: 1, color: '#DBEAFE' })
 
           Row({ space: 20 }) {
             Button('取消')
@@ -1057,6 +1382,17 @@ struct WorkspaceDetail {
     autoCancel: true
   })
 
+  monitorRangeDialogController: CustomDialogController = new CustomDialogController({
+    builder: MonitorTimeRangeDialog({
+      activeVideo: this.activeVideo,
+      confirm: (start: string, end: string, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string): void => {
+        this.submitCreateMonitorSegment(start, end, remark, enablePreprocess, sampleFps, resolution);
+      }
+    }),
+    customStyle: true,
+    autoCancel: true
+  })
+
   detailDialogController: CustomDialogController = new CustomDialogController({
     builder: SegmentDetailDialog({
       segment: this.selectedSegment,
@@ -1119,7 +1455,6 @@ struct WorkspaceDetail {
       const mapped: Array<WorkspaceVideoSegment> = [];
       let hasProcessing = false;
       
-      // 记录用户当前已经在 UI 中勾选了哪些片段
       const selectedIds = new Set<number>();
       for (let i = 0; i < this.segments.length; i++) {
         if (this.segments[i].isSelected) {
@@ -1146,12 +1481,10 @@ struct WorkspaceDetail {
         s.resolution = (item['resolution'] as string) || '1080P';
         s.orig_resolution = (item['orig_resolution'] as string) || '1080P';
         
-        // 恢复之前已被勾选的状态
         if (selectedIds.has(s.id)) {
           s.isSelected = true;
         }
 
-        // 实时更新当前正在查看的片段对象，触发弹窗 UI 响应式重绘
         if (this.selectedSegment && this.selectedSegment.id === s.id) {
           this.selectedSegment = s;
         }
@@ -1163,7 +1496,6 @@ struct WorkspaceDetail {
       }
       this.segments = mapped;
       
-      // 如果存在尚未处理完毕的片段，则进行每 1.5 秒一次的自动轮询
       if (hasProcessing) {
         setTimeout(() => {
           this.loadSegments();
@@ -1175,16 +1507,24 @@ struct WorkspaceDetail {
   }
 
   async loadExampleVideos(): Promise<void> {
-    const res = await HttpUtil.get('/workspaces/example-videos');
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/video-sources`);
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const mapped: Array<ExampleVideoInfo> = [];
       for (let i = 0; i < listObj.length; i++) {
         const item = listObj[i];
         const v = new ExampleVideoInfo();
+        v.id = (item['id'] as string) || '';
         v.name = item['name'] as string;
         v.url = item['url'] as string;
+        v.filepath = (item['filepath'] as string) || '';
         v.duration = (item['duration'] as number) || 0;
+        v.source_type = (item['source_type'] as string) || 'monitor';
+        v.monitor_id = (item['monitor_id'] as number) || 0;
+        v.monitor_name = (item['monitor_name'] as string) || '';
+        v.has_recordings = (item['has_recordings'] as boolean) || false;
+        v.earliest_time = (item['earliest_time'] as string) || '';
+        v.latest_time = (item['latest_time'] as string) || '';
         v.isSelected = false;
         v.startOffset = 0;
         v.endOffset = v.duration;
@@ -1199,12 +1539,51 @@ struct WorkspaceDetail {
   handleExampleVideoClick(index: number): void {
     const video = this.exampleVideos[index];
     this.activeIndex = index;
-    this.activeVideo.name = video.name;
-    this.activeVideo.url = BASE_HOST + "/api/video/" + video.url;
-    this.activeVideo.duration = video.duration;
-    this.activeVideo.startOffset = 0;
-    this.activeVideo.endOffset = video.duration;
-    this.rangeDialogController.open();
+    this.activeVideo = video;
+    
+    if (video.source_type === 'monitor') {
+      this.monitorRangeDialogController.open();
+    } else {
+      const path = video.filepath || video.url;
+      this.activeVideo.url = BASE_HOST + "/api/video/" + path;
+      this.activeVideo.filepath = path;
+      this.activeVideo.duration = video.duration;
+      this.activeVideo.startOffset = 0;
+      this.activeVideo.endOffset = video.duration;
+      this.rangeDialogController.open();
+    }
+  }
+
+  async submitCreateMonitorSegment(startTime: string, endTime: string, remark: string, enablePreprocess: boolean = true, sampleFps: number = 1.0, resolution: string = '1080P'): Promise<void> {
+    class MonitorSegmentPayload {
+      source_type: string = 'monitor';
+      monitor_id: number = 0;
+      start_time: string = '';
+      end_time: string = '';
+      remark: string = '';
+      enable_preprocess: boolean = true;
+      sample_fps: number = 1.0;
+      resolution: string = '1080P';
+    }
+    const payload = new MonitorSegmentPayload();
+    payload.source_type = 'monitor';
+    payload.monitor_id = this.activeVideo.monitor_id;
+    payload.start_time = startTime;
+    payload.end_time = endTime;
+    payload.remark = remark;
+    payload.enable_preprocess = enablePreprocess;
+    payload.sample_fps = sampleFps;
+    payload.resolution = resolution;
+
+    promptAction.showToast({ message: '正在校验录像完整性并拼接截取...', duration: 2000 });
+    const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/segments`, payload);
+    if (res.code === 0) {
+      promptAction.showToast({ message: '监控片段拼接截取成功', duration: 1500 });
+      this.showSelectExampleVideo = false;
+      this.loadSegments();
+    } else {
+      promptAction.showToast({ message: res.message || '截取失败，请检查录像完整性', duration: 3500 });
+    }
   }
 
   async submitCreateSegment(index: number, start: number, end: number, remark: string, enablePreprocess: boolean = true, sampleFps: number = 1.0, resolution: string = '1080P'): Promise<void> {
@@ -1212,6 +1591,7 @@ struct WorkspaceDetail {
     
     class SegmentPayload {
       video_name: string = '';
+      filepath: string = '';
       start_offset: number = 0;
       end_offset: number = 0;
       remark: string = '';
@@ -1221,6 +1601,7 @@ struct WorkspaceDetail {
     }
     const payload = new SegmentPayload();
     payload.video_name = video.name;
+    payload.filepath = video.filepath || video.url;
     payload.start_offset = start;
     payload.end_offset = end;
     payload.remark = remark;
@@ -2020,15 +2401,25 @@ struct WorkspaceDetail {
             if (this.showSelectExampleVideo) {
               // Video Selection grid for adding fragment
               Column({ space: 10 }) {
-                Row() {
-                  Text('选择监控源视频')
-                    .fontSize(18)
+                Row({ space: 8 }) {
+                  Text('选择视频源（监控录像 / 上传视频）')
+                    .fontSize(16)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.app_text_primary'))
                     .layoutWeight(1)
+
+                  Button('刷新')
+                    .fontSize(12)
+                    .height(32)
+                    .backgroundColor($r('app.color.app_primary'))
+                    .fontColor(Color.White)
+                    .onClick((): void => {
+                      this.loadExampleVideos();
+                    })
                   
-                  Button('返回片段页')
-                    .fontSize(13)
+                  Button('返回')
+                    .fontSize(12)
+                    .height(32)
                     .backgroundColor('#666666')
                     .fontColor(Color.White)
                     .onClick((): void => {
@@ -2037,6 +2428,7 @@ struct WorkspaceDetail {
                 }
                 .width('100%')
                 .padding({ bottom: 10 })
+                .alignItems(VerticalAlign.Center)
 
                 if (this.exampleVideos.length > 0) {
                   Grid() {
@@ -2045,6 +2437,9 @@ struct WorkspaceDetail {
                         VideoItemCard({
                           name: video.name,
                           duration: video.duration,
+                          sourceType: video.source_type,
+                          earliestTime: video.earliest_time,
+                          latestTime: video.latest_time,
                           onCardClick: (): void => {
                             this.handleExampleVideoClick(index);
                           }
@@ -2059,12 +2454,12 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                 } else {
                   Column() {
-                    Text('未在 example 目录下发现原视频')
+                    Text('暂未搜索到同小组监控录像或已上传视频')
                       .fontSize(14)
                       .fontColor($r('app.color.app_text_muted'))
                       .margin({ bottom: 10 })
-                    Button('刷新')
-                      .width(80)
+                    Button('重新刷新')
+                      .width(100)
                       .height(35)
                       .fontSize(13)
                       .backgroundColor($r('app.color.app_primary'))
@@ -2488,6 +2883,9 @@ struct WorkspaceDetail {
 struct VideoItemCard {
   @Prop name: string = '';
   @Prop duration: number = 0;
+  @Prop sourceType: string = 'monitor';
+  @Prop earliestTime: string = '';
+  @Prop latestTime: string = '';
   onCardClick: () => void = (): void => {};
 
   build() {
@@ -2498,9 +2896,20 @@ struct VideoItemCard {
           .height(95)
           .linearGradient({
             angle: 135,
-            colors: [['#E0F2FE', 0.0], ['#bae6fd', 1.0]]
+            colors: this.sourceType === 'monitor' ? [['#DBEAFE', 0.0], ['#BFDBFE', 1.0]] : (this.sourceType === 'upload' ? [['#D1FAE5', 0.0], ['#A7F3D0', 1.0]] : [['#F3E8FF', 0.0], ['#E9D5FF', 1.0]])
           })
           .borderRadius({ topLeft: 8, topRight: 8 })
+
+        // 视频源分类徽章
+        Text(this.sourceType === 'monitor' ? '监控设备' : (this.sourceType === 'upload' ? '上传视频' : '示例视频'))
+          .fontSize(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.sourceType === 'monitor' ? '#1E40AF' : (this.sourceType === 'upload' ? '#065F46' : '#6B21A8'))
+          .backgroundColor(this.sourceType === 'monitor' ? '#EFF6FF' : (this.sourceType === 'upload' ? '#ECFDF5' : '#F5F3FF'))
+          .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+          .borderRadius(4)
+          .margin({ left: 6, top: 6 })
+          .alignSelf(ItemAlign.Start)
 
         Image($r('app.media.startIcon'))
           .width(28)
@@ -2508,23 +2917,41 @@ struct VideoItemCard {
           .alignSelf(ItemAlign.Center)
           .opacity(0.8)
 
-        Text(this.formatDuration(this.duration))
-          .fontSize(10)
-          .fontColor(Color.White)
-          .backgroundColor('rgba(0, 0, 0, 0.65)')
-          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
-          .borderRadius(3)
-          .margin(5)
+        if (this.sourceType !== 'monitor') {
+          Text(this.formatDuration(this.duration))
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('rgba(0, 0, 0, 0.65)')
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius(3)
+            .margin(5)
+        } else {
+          Text(this.latestTime.length > 5 ? '持续录像中' : '无录像')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('rgba(30, 64, 175, 0.75)')
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius(3)
+            .margin(5)
+        }
       }
       .width('100%')
 
-      Column() {
+      Column({ space: 2 }) {
         Text(this.name)
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.app_text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        if (this.sourceType === 'monitor' && this.earliestTime && this.earliestTime.length >= 16 && this.latestTime && this.latestTime.length >= 16) {
+          Text(`可用: ${this.earliestTime.slice(11, 16)} - ${this.latestTime.slice(11, 16)}`)
+            .fontSize(10)
+            .fontColor($r('app.color.app_text_muted'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
       }
       .padding(8)
       .alignItems(HorizontalAlign.Start)
