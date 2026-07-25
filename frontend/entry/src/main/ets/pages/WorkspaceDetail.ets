@@ -2783,11 +2783,12 @@ struct WorkspaceDetail {
                               .fontColor($r('app.color.app_text_primary'))
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
-}
-                          .fontSize(12)
-                          .fontColor('#9CA3AF')
-                          .maxLines(1)
-                          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                            Text('来自监控：' + seg.video_name)
+                              .fontSize(12)
+                              .fontColor('#9CA3AF')
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                             if (seg.status === 'processing' || seg.status === 'pending') {
                               Row() {
@@ -3191,18 +3192,39 @@ struct WorkspaceDetail {
               this.loadSegments();
             })
 
+            // Tab 1: 人脸 (片段与问答中间)
             Column() {
-              // Custom Chat/Q&A outline icon (1:1 aspect ratio)
+              Circle({ width: 18, height: 18 })
+                .fill(Color.Transparent)
+                .stroke(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
+                .strokeWidth(2)
+                .margin({ bottom: 4 })
+
+              Text('人脸')
+                .fontSize(11)
+                .fontColor(this.currentSubTab === 1 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
+            }
+            .alignItems(HorizontalAlign.Center)
+            .layoutWeight(1)
+            .onClick((): void => {
+              this.currentSubTab = 1;
+              this.showCreateQA = false;
+              this.showSelectExampleVideo = false;
+              this.loadFaceGroups();
+            })
+
+            // Tab 2: 问答
+            Column() {
               Stack() {
                 Rect({ width: 20, height: 14 })
                   .fill(Color.Transparent)
-                  .stroke(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
+                  .stroke(this.currentSubTab === 2 ? '#3B82F6' : '#9CA3AF')
                   .strokeWidth(2)
                   .strokeLineJoin(LineJoinStyle.Round)
                   .borderRadius(2)
                 Polygon({ width: 5, height: 5 })
                   .points([[5, 0], [0, 5], [5, 5]])
-                  .fill(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
+                  .fill(this.currentSubTab === 2 ? '#3B82F6' : '#9CA3AF')
                   .offset({ x: -5, y: 7 })
               }
               .width(22)
@@ -3211,12 +3233,12 @@ struct WorkspaceDetail {
 
               Text('问答')
                 .fontSize(11)
-                .fontColor(this.currentSubTab === 1 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
+                .fontColor(this.currentSubTab === 2 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
             }
             .alignItems(HorizontalAlign.Center)
             .layoutWeight(1)
             .onClick((): void => {
-              this.currentSubTab = 1;
+              this.currentSubTab = 2;
               this.showCreateQA = false;
               this.showSelectExampleVideo = false;
               this.loadQARecords();
@@ -3231,6 +3253,8 @@ struct WorkspaceDetail {
         .width('100%')
         .layoutWeight(1)
       }
+      .width('100%')
+      .layoutWeight(1)
     }
     .width('100%')
     .height('100%')

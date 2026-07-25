@@ -14,6 +14,9 @@ export class QARecordInfo {
   answer: string = '';
   status: string = '';
   created_at: string = '';
+  error_msg: string = '';
+  video_count: number = 0;
+  video_paths: Array<string> = [];
 }
 
 export class SelectableVideo {
