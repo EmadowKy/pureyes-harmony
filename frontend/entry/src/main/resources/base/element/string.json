@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "label"
+    },
+    {
+      "name": "privacy_window_reason",
+      "value": "用于保护监控画面、人脸信息与AI问答数据不被非法截屏或录屏泄漏"
     }
   ]
 }

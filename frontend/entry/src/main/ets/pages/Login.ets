@@ -180,7 +180,7 @@ struct Login {
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .borderRadius(10)
-        .textContentType(TextContentType.USER_NAME)
+        .contentType(ContentType.USER_NAME)
         .onChange((val: string): void => {
           this.empId = val;
         })
@@ -193,7 +193,7 @@ struct Login {
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
         .borderRadius(10)
-        .textContentType(TextContentType.PASSWORD)
+        .contentType(ContentType.PASSWORD)
         .onChange((val: string): void => {
           this.pass = val;
         })

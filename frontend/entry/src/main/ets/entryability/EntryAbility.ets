@@ -28,6 +28,15 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+
+      // 开启鸿蒙系统原生 Window 隐私防截屏/防录屏模式
+      windowStage.getMainWindow().then((win: window.Window): void => {
+        win.setWindowPrivacyMode(true).then((): void => {
+          hilog.info(DOMAIN, 'PrivacyMode', 'Succeeded in setting window privacy mode to true.');
+        }).catch((pErr: Object): void => {
+          hilog.error(DOMAIN, 'PrivacyMode', 'Failed to set window privacy mode. Cause: %{public}s', JSON.stringify(pErr));
+        });
+      });
     });
   }
 
