@@ -221,6 +221,29 @@ export class ExampleVideoInfo {
   endOffset: number = 0;
 }
 
+export class WorkspaceFaceGroupInfo {
+  id: number = 0;
+  workspace_id: number = 0;
+  name: string = '';
+  avatar_path: string = '';
+  avatar_url: string = '';
+  record_count: number = 0;
+}
+
+export class WorkspaceFaceRecordInfo {
+  id: number = 0;
+  workspace_id: number = 0;
+  group_id: number = 0;
+  segment_id: number = 0;
+  segment_filepath: string = '';
+  crop_path: string = '';
+  crop_url: string = '';
+  video_name: string = '';
+  start_time_offset: number = 0;
+  end_time_offset: number = 0;
+  time_range_str: string = '';
+}
+
 export class ProgressGroup {
   id: string = '';
   title: string = '';
@@ -541,6 +564,158 @@ struct MonitorTimeRangeDialog {
           })
       }
       .width('100%')
+    }
+    .padding(16)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(12)
+  }
+}
+
+@CustomDialog
+struct FaceImagePreviewDialog {
+  controller: CustomDialogController
+  imageUrl: string = '';
+
+  build() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('查看高清人脸特写')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+        Blank()
+        Button('✕')
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor('rgba(255, 255, 255, 0.25)')
+          .width(30)
+          .height(30)
+          .borderRadius(15)
+          .onClick((): void => {
+            this.controller.close();
+          })
+      }
+      .width('100%')
+
+      Image(this.imageUrl)
+        .width('95%')
+        .objectFit(ImageFit.Contain)
+        .borderRadius(8)
+    }
+    .padding(16)
+    .backgroundColor('rgba(0, 0, 0, 0.88)')
+    .borderRadius(12)
+  }
+}
+
+@CustomDialog
+struct FaceDetailDialog {
+  controller: CustomDialogController
+  group: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  records: Array<WorkspaceFaceRecordInfo> = [];
+  onRecordClick: (record: WorkspaceFaceRecordInfo) => void = (_r): void => {};
+  onPreviewImage: (imageUrl: string) => void = (_url): void => {};
+
+  build() {
+    Column({ space: 12 }) {
+      Row() {
+        Image(this.group.avatar_url ? (BASE_HOST + this.group.avatar_url) : $r('app.media.startIcon'))
+          .width(42)
+          .height(42)
+          .borderRadius(21)
+          .objectFit(ImageFit.Cover)
+
+        Column({ space: 2 }) {
+          Text(this.group.name)
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+          Text(`在当前工作区共识别到 ${this.records.length} 条时间段记录`)
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 10 })
+
+        Blank()
+
+        Button('关闭')
+          .fontSize(12)
+          .height(30)
+          .backgroundColor('#F3F4F6')
+          .fontColor('#374151')
+          .onClick((): void => {
+            this.controller.close();
+          })
+      }
+      .width('100%')
+      .padding({ bottom: 6 })
+
+      Divider().color('#E5E7EB')
+
+      if (this.records.length > 0) {
+        Scroll() {
+          Column({ space: 10 }) {
+            ForEach(this.records, (rec: WorkspaceFaceRecordInfo): void => {
+              Row({ space: 12 }) {
+                // 左边：这个人脸在这一段的图片，点击可以查看大图
+                Image(rec.crop_url ? (BASE_HOST + rec.crop_url) : $r('app.media.startIcon'))
+                  .width(64)
+                  .height(64)
+                  .borderRadius(8)
+                  .objectFit(ImageFit.Cover)
+                  .border({ width: 1, color: '#DBEAFE' })
+                  .onClick((): void => {
+                    if (rec.crop_url) {
+                      this.onPreviewImage(BASE_HOST + rec.crop_url);
+                    }
+                  })
+
+                // 右边：显示了视频备注和时间段，点击可以展示视频并跳转到起始时间
+                Column({ space: 5 }) {
+                  Text(rec.video_name || '未命名视频片段')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#1E40AF')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                  Row() {
+                    Text('出现时间段: ')
+                      .fontSize(12)
+                      .fontColor($r('app.color.app_text_secondary'))
+                    Text(rec.time_range_str)
+                      .fontSize(12)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor('#2563EB')
+                  }
+
+                  Text('点击播放视频并精准跳转到起始时间 ➔')
+                    .fontSize(10)
+                    .fontColor('#6B7280')
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                .onClick((): void => {
+                  this.onRecordClick(rec);
+                  this.controller.close();
+                })
+              }
+              .width('100%')
+              .padding(10)
+              .backgroundColor('#F8FAFC')
+              .borderRadius(8)
+              .border({ width: 1, color: '#E2E8F0' })
+            })
+          }
+        }
+        .constraintSize({ maxHeight: '70%' })
+      } else {
+        Text('暂无识别记录')
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_muted'))
+          .margin(20)
+      }
     }
     .padding(16)
     .backgroundColor($r('app.color.app_card_bg'))
@@ -1339,12 +1514,17 @@ struct WorkspaceDetail {
   workspaceId: number = 0;
   workspaceName: string = '';
 
-  @State currentSubTab: number = 0; // 0: 片段, 1: 问答
+  @State currentSubTab: number = 0; // 0: 片段, 1: 人脸, 2: 问答
   @State segments: Array<WorkspaceVideoSegment> = [];
   @State exampleVideos: Array<ExampleVideoInfo> = [];
   @State showSelectExampleVideo: boolean = false;
   @State activeVideo: ExampleVideoInfo = new ExampleVideoInfo();
   @State activeIndex: number = 0;
+
+  @State faceGroups: Array<WorkspaceFaceGroupInfo> = [];
+  @State selectedFaceGroup: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  @State activeFaceGroupRecords: Array<WorkspaceFaceRecordInfo> = [];
+  @State previewImageUrl: string = '';
 
   @State qaRecords: Array<QARecordInfo> = [];
   @State showCreateQA: boolean = false;
@@ -1390,6 +1570,28 @@ struct WorkspaceDetail {
       }
     }),
     customStyle: true,
+    autoCancel: true
+  })
+
+  faceDetailDialogController: CustomDialogController = new CustomDialogController({
+    builder: FaceDetailDialog({
+      group: this.selectedFaceGroup,
+      records: this.activeFaceGroupRecords,
+      onRecordClick: (rec: WorkspaceFaceRecordInfo): void => {
+        this.jumpToFaceRecordVideo(rec);
+      },
+      onPreviewImage: (url: string): void => {
+        this.previewImageUrl = url;
+        this.faceImagePreviewDialogController.open();
+      }
+    }),
+    autoCancel: true
+  })
+
+  faceImagePreviewDialogController: CustomDialogController = new CustomDialogController({
+    builder: FaceImagePreviewDialog({
+      imageUrl: this.previewImageUrl
+    }),
     autoCancel: true
   })
 
@@ -1439,7 +1641,78 @@ struct WorkspaceDetail {
       this.workspaceName = params['workspaceName'] as string;
     }
     this.loadSegments();
+    this.loadFaceGroups();
     this.loadQARecords();
+  }
+
+  async loadFaceGroups(): Promise<void> {
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces`);
+    if (res.code === 0 && res.data) {
+      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      const mapped: Array<WorkspaceFaceGroupInfo> = [];
+      for (let i = 0; i < listObj.length; i++) {
+        const item = listObj[i];
+        const g = new WorkspaceFaceGroupInfo();
+        g.id = item['id'] as number;
+        g.workspace_id = item['workspace_id'] as number;
+        g.name = (item['name'] as string) || '';
+        g.avatar_path = (item['avatar_path'] as string) || '';
+        g.avatar_url = (item['avatar_url'] as string) || '';
+        g.record_count = (item['record_count'] as number) || 0;
+        mapped.push(g);
+      }
+      this.faceGroups = mapped;
+    } else {
+      this.faceGroups = [];
+    }
+  }
+
+  async openFaceGroupDetail(group: WorkspaceFaceGroupInfo): Promise<void> {
+    this.selectedFaceGroup = group;
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces/${group.id}/records`);
+    if (res.code === 0 && res.data) {
+      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      const mapped: Array<WorkspaceFaceRecordInfo> = [];
+      for (let i = 0; i < listObj.length; i++) {
+        const item = listObj[i];
+        const r = new WorkspaceFaceRecordInfo();
+        r.id = item['id'] as number;
+        r.workspace_id = item['workspace_id'] as number;
+        r.group_id = item['group_id'] as number;
+        r.segment_id = (item['segment_id'] as number) || 0;
+        r.segment_filepath = (item['segment_filepath'] as string) || '';
+        r.crop_path = (item['crop_path'] as string) || '';
+        r.crop_url = (item['crop_url'] as string) || '';
+        r.video_name = (item['video_name'] as string) || '';
+        r.start_time_offset = (item['start_time_offset'] as number) || 0;
+        r.end_time_offset = (item['end_time_offset'] as number) || 0;
+        r.time_range_str = (item['time_range_str'] as string) || '';
+        mapped.push(r);
+      }
+      this.activeFaceGroupRecords = mapped;
+      this.faceDetailDialogController.open();
+    } else {
+      promptAction.showToast({ message: '获取人脸识别轨迹失败', duration: 1500 });
+    }
+  }
+
+  jumpToFaceRecordVideo(rec: WorkspaceFaceRecordInfo): void {
+    if (!rec.segment_filepath) {
+      promptAction.showToast({ message: '对应视频文件已不存在', duration: 2000 });
+      return;
+    }
+
+    const s = new WorkspaceVideoSegment();
+    s.id = rec.segment_id;
+    s.video_name = rec.video_name;
+    s.filepath = rec.segment_filepath;
+    s.start_offset = 0;
+    s.end_offset = rec.end_time_offset + 5;
+    s.duration = rec.end_time_offset + 5;
+
+    this.selectedSegment = s;
+    this.jumpSeconds = rec.start_time_offset;
+    this.timestampPreviewDialogController.open();
   }
 
   aboutToDisappear(): void {
@@ -1495,6 +1768,7 @@ struct WorkspaceDetail {
         mapped.push(s);
       }
       this.segments = mapped;
+      this.loadFaceGroups();
       
       if (hasProcessing) {
         setTimeout(() => {
@@ -2509,12 +2783,11 @@ struct WorkspaceDetail {
                               .fontColor($r('app.color.app_text_primary'))
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                            Text('来自监控：' + seg.video_name)
-                              .fontSize(12)
-                              .fontColor('#9CA3AF')
-                              .maxLines(1)
-                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+}
+                          .fontSize(12)
+                          .fontColor('#9CA3AF')
+                          .maxLines(1)
+                          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                             if (seg.status === 'processing' || seg.status === 'pending') {
                               Row() {
@@ -2575,6 +2848,71 @@ struct WorkspaceDetail {
               .width('100%')
               .layoutWeight(1)
             }
+
+          } else if (this.currentSubTab === 1) {
+            // ================== "人脸" Tab Content ==================
+            Column({ space: 12 }) {
+              Row() {
+                Text('工作区人脸识别与检索')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.app_text_primary'))
+                  .layoutWeight(1)
+
+                Button('刷新')
+                  .fontSize(12)
+                  .height(30)
+                  .backgroundColor('#EFF6FF')
+                  .fontColor('#1E40AF')
+                  .onClick((): void => {
+                    this.loadFaceGroups();
+                  })
+              }
+              .width('90%')
+              .padding({ top: 10, bottom: 4 })
+
+              if (this.faceGroups.length > 0) {
+                Grid() {
+                  ForEach(this.faceGroups, (group: WorkspaceFaceGroupInfo): void => {
+                    GridItem() {
+                      FaceGroupCard({
+                        group: group,
+                        onCardClick: (): void => {
+                          this.openFaceGroupDetail(group);
+                        }
+                      })
+                    }
+                  })
+                }
+                .columnsTemplate('1fr 1fr')
+                .columnsGap(12)
+                .rowsGap(12)
+                .width('90%')
+                .layoutWeight(1)
+              } else {
+                Column({ space: 12 }) {
+                  Image($r('app.media.startIcon'))
+                    .width(60)
+                    .height(60)
+                    .opacity(0.3)
+                  Text('暂未识别到人脸卡片')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.app_text_secondary'))
+                  Text('截取视频片段时开启“AI 特征提取与识别预处理”，系统将自动识别画面人脸，并将同一人脸在不同时间段的轨迹自动归类聚合。')
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_text_muted'))
+                    .textAlign(TextAlign.Center)
+                    .padding({ left: 30, right: 30 })
+                }
+                .width('100%')
+                .layoutWeight(1)
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
 
           } else {
             // ================== "问答" Tab Content ==================
@@ -2731,38 +3069,59 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                   .justifyContent(FlexAlign.Start)
                 } else {
-                  List({ space: 15 }) {
+                  List({ space: 12 }) {
                     ForEach(this.qaRecords, (record: QARecordInfo): void => {
                       ListItem() {
-                        Column({ space: 8 }) {
-                          Text('Q: ' + record.question)
-                            .fontWeight(FontWeight.Bold)
-                            .fontSize(15)
-                            .fontColor($r('app.color.app_text_primary'))
+                        Row() {
+                          Column({ space: 4 }) {
+                            Text(record.question)
+                              .fontSize(15)
+                              .fontWeight(FontWeight.Bold)
+                              .fontColor($r('app.color.app_text_primary'))
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                          Text('A: ' + (record.status === 'processing' ? '分析中...' : (record.answer ? formatAnswerToPlainText(record.answer) : record.status)))
-                            .fontColor(record.status === 'processing' ? '#007DFF' : $r('app.color.app_text_secondary'))
-                            .fontSize(14)
+                            Text('创建时间：' + record.created_at)
+                              .fontSize(12)
+                              .fontColor('#9CA3AF')
 
-                          Text('创建时间: ' + record.created_at)
-                            .fontSize(12)
-                            .fontColor($r('app.color.app_text_muted'))
+                            if (record.status === 'processing' || record.status === 'pending') {
+                              Text('AI 检索分析中...')
+                                .fontSize(12)
+                                .fontColor($r('app.color.app_primary'))
+                            } else if (record.status === 'failed') {
+                              Text('分析失败: ' + record.error_msg)
+                                .fontSize(12)
+                                .fontColor(Color.Red)
+                                .maxLines(1)
+                                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            } else {
+                              Text('包含片段：' + record.video_count + ' 个')
+                                .fontSize(12)
+                                .fontColor('#10B981')
+                            }
+                          }
+                          .alignItems(HorizontalAlign.Start)
+                          .layoutWeight(1)
+
+                          Image($r('app.media.startIcon'))
+                            .width(20)
+                            .height(20)
+                            .opacity(0.5)
                         }
-                        .alignItems(HorizontalAlign.Start)
                         .width('100%')
                         .padding(15)
                         .backgroundColor($r('app.color.app_card_bg'))
                         .borderRadius(10)
-                        .shadow({ radius: 5, color: $r('app.color.app_shadow') })
+                        .shadow({ radius: 4, color: $r('app.color.app_shadow') })
                         .onClick((): void => {
                           this.activeTaskId = record.id;
                           this.activeTaskQuestion = record.question;
                           this.activeTaskAnswer = record.answer;
                           this.activeTaskStatus = record.status;
-                          this.activeTaskProgress = [];
-                          this.progressGroups = [];
-                          this.manualCollapsedState = {};
-                          if (record.status === 'processing') {
+                          this.activeTaskVideoPaths = record.video_paths;
+
+                          if (record.status === 'processing' || record.status === 'pending') {
                             this.startPollingStatus(record.id);
                           } else {
                             this.fetchSingleStatus(record.id);
@@ -2800,10 +3159,10 @@ struct WorkspaceDetail {
             }
           }
 
-          // ===== Bottom Tab Bar =====
+          // ===== Bottom Tab Bar (Three Tabs: 片段 | 人脸 | 问答) =====
           Row() {
+            // Tab 0: 片段
             Column() {
-              // Custom Video/Segment outline icon (1:1 aspect ratio)
               Stack() {
                 Rect({ width: 22, height: 16 })
                   .fill(Color.Transparent)
@@ -2970,5 +3329,60 @@ struct VideoItemCard {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+}
+
+@Component
+struct FaceGroupCard {
+  @Prop group: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  onCardClick: () => void = (): void => {};
+
+  build() {
+    Column() {
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        Column()
+          .width('100%')
+          .height(115)
+          .linearGradient({
+            angle: 135,
+            colors: [['#EFF6FF', 0.0], ['#DBEAFE', 1.0]]
+          })
+          .borderRadius({ topLeft: 8, topRight: 8 })
+
+        Image(this.group.avatar_url ? (BASE_HOST + this.group.avatar_url) : $r('app.media.startIcon'))
+          .width('100%')
+          .height(115)
+          .objectFit(ImageFit.Cover)
+          .borderRadius({ topLeft: 8, topRight: 8 })
+
+        Text(`${this.group.record_count} 条时间段记录`)
+          .fontSize(10)
+          .fontColor(Color.White)
+          .backgroundColor('rgba(30, 64, 175, 0.85)')
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .borderRadius(4)
+          .margin(6)
+      }
+      .width('100%')
+
+      Column({ space: 2 }) {
+        Text(this.group.name)
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .padding(8)
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(8)
+    .shadow({ radius: 3, color: $r('app.color.app_shadow') })
+    .onClick((): void => {
+      this.onCardClick();
+    })
   }
 }

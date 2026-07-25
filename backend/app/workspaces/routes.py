@@ -100,6 +100,13 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
             
             db_client.flush()
 
+            # 执行新增工序：人脸识别检测、归类与连贯时间段聚合
+            try:
+                if seg:
+                    process_segment_face_recognition(seg.workspace_id, seg.id, abs_filepath, seg.video_name or seg.filepath, sample_fps)
+            except Exception as face_err:
+                print(f"[FACE EXTRACTION ERROR] {face_err}")
+
             # 更新状态为 completed
             db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({
                 "status": "completed",
@@ -115,6 +122,181 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
                 "error_msg": str(e)
             })
             db.session.commit()
+
+def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, video_name, sample_fps=1.0):
+    """
+    预处理工序：人脸识别分类与连贯时间段聚合
+    1. 逐帧检测截取人脸
+    2. 将连续或间隔很短 (<= 3.5s) 的检测帧合成为一条包含起止时间段的轨迹记录
+    3. 与工作区现有人脸库进行归类聚类 (Group Classifier)
+    """
+    try:
+        import cv2
+        import numpy as np
+        import os
+        from datetime import datetime
+        from app.core.db import db
+        from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+
+        if not os.path.exists(abs_filepath):
+            return
+
+        BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        face_storage_dir = os.path.join(BACKEND_DIR, "storage", "faces")
+        os.makedirs(face_storage_dir, exist_ok=True)
+
+        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+
+        cap = cv2.VideoCapture(abs_filepath)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = 30.0
+
+        frame_interval = max(1, int(fps / sample_fps))
+        frame_idx = 0
+
+        raw_hits = []
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+
+            if frame_idx % frame_interval == 0:
+                timestamp = frame_idx / fps
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+
+                for (x, y, w, h) in faces:
+                    pad_w = int(w * 0.15)
+                    pad_h = int(h * 0.15)
+                    h_img, w_img = frame.shape[:2]
+
+                    x1 = max(0, x - pad_w)
+                    y1 = max(0, y - pad_h)
+                    x2 = min(w_img, x + w + pad_w)
+                    y2 = min(h_img, y + h + pad_h)
+
+                    face_crop = frame[y1:y2, x1:x2]
+                    if face_crop.shape[0] < 10 or face_crop.shape[1] < 10:
+                        continue
+
+                    hsv = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
+                    hist = cv2.calcHist([hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+                    cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+
+                    raw_hits.append({
+                        'timestamp': timestamp,
+                        'crop_img': face_crop,
+                        'hist': hist
+                    })
+
+            frame_idx += 1
+
+        cap.release()
+
+        if not raw_hits:
+            return
+
+        # 连贯时间段聚合算法
+        aggregated_tracks = []
+        if raw_hits:
+            curr_track = [raw_hits[0]]
+            for i in range(1, len(raw_hits)):
+                prev_hit = curr_track[-1]
+                hit = raw_hits[i]
+
+                sim = cv2.compareHist(prev_hit['hist'], hit['hist'], cv2.HISTCMP_CORREL)
+                if (hit['timestamp'] - prev_hit['timestamp'] <= 3.5) and (sim >= 0.40):
+                    curr_track.append(hit)
+                else:
+                    aggregated_tracks.append(curr_track)
+                    curr_track = [hit]
+            if curr_track:
+                aggregated_tracks.append(curr_track)
+
+        # 聚类归类
+        existing_groups = WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).all()
+        group_hists = {}
+        for g in existing_groups:
+            if g.avatar_path:
+                full_avatar_path = os.path.join(BACKEND_DIR, g.avatar_path)
+                if os.path.exists(full_avatar_path):
+                    av_img = cv2.imread(full_avatar_path)
+                    if av_img is not None:
+                        av_hsv = cv2.cvtColor(av_img, cv2.COLOR_BGR2HSV)
+                        av_hist = cv2.calcHist([av_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+                        cv2.normalize(av_hist, av_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+                        group_hists[g.id] = av_hist
+
+        for track in aggregated_tracks:
+            start_sec = track[0]['timestamp']
+            end_sec = track[-1]['timestamp']
+            
+            if end_sec == start_sec:
+                end_sec = start_sec + 1.5
+
+            def format_time_str(sec):
+                m = int(sec // 60)
+                s = int(sec % 60)
+                return f"{m:02d}:{s:02d}"
+
+            start_str = format_time_str(start_sec)
+            end_str = format_time_str(end_sec)
+
+            best_hit = track[len(track) // 2]
+            crop_filename = f"crop_ws{workspace_id}_seg{segment_id}_{int(start_sec)}_{uuid.uuid4().hex[:6]}.jpg"
+            rel_crop_path = os.path.join("storage", "faces", crop_filename)
+            abs_crop_path = os.path.join(BACKEND_DIR, rel_crop_path)
+            cv2.imwrite(abs_crop_path, best_hit['crop_img'])
+
+            matched_group_id = None
+            max_sim = -1.0
+            for g_id, av_hist in group_hists.items():
+                sim = cv2.compareHist(best_hit['hist'], av_hist, cv2.HISTCMP_CORREL)
+                if sim > max_sim:
+                    max_sim = sim
+                    matched_group_id = g_id
+
+            if matched_group_id is None or max_sim < 0.55:
+                next_num = len(WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).all()) + 1
+                group_name = f"人脸 #{next_num}"
+                
+                avatar_filename = f"avatar_ws{workspace_id}_g{next_num}_{uuid.uuid4().hex[:6]}.jpg"
+                rel_avatar_path = os.path.join("storage", "faces", avatar_filename)
+                abs_avatar_path = os.path.join(BACKEND_DIR, rel_avatar_path)
+                cv2.imwrite(abs_avatar_path, best_hit['crop_img'])
+
+                new_group = WorkspaceFaceGroup(
+                    workspace_id=workspace_id,
+                    name=group_name,
+                    avatar_path=rel_avatar_path
+                )
+                db.session.add(new_group)
+                db.session.flush()
+
+                matched_group_id = new_group.id
+                group_hists[matched_group_id] = best_hit['hist']
+
+            record = WorkspaceFaceRecord(
+                workspace_id=workspace_id,
+                group_id=matched_group_id,
+                segment_id=segment_id,
+                crop_path=rel_crop_path,
+                video_name=video_name,
+                start_time_offset=round(start_sec, 2),
+                end_time_offset=round(end_sec, 2),
+                start_time_str=start_str,
+                end_time_str=end_str
+            )
+            db.session.add(record)
+
+        db.session.commit()
+        print(f"[FACE RECOGNITION] Successfully processed face recognition for segment {segment_id}. Detected {len(aggregated_tracks)} tracks.")
+
+    except Exception as err:
+        print(f"[FACE RECOGNITION ERROR] Failed to process face recognition: {err}")
 
 def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
     with app.app_context():
@@ -1157,4 +1339,25 @@ def delete_segment_features(segment_id):
     segment.error_msg = None
     db.session.commit()
 
-    return success(message="features deleted", data=segment.to_dict())
+    return success(message="features cleared", data=segment.to_dict())
+
+# ========================================================
+# 工作区人脸分类模块 API (Workspace Face Classification APIs)
+# ========================================================
+
+@workspaces_bp.get("/<int:workspace_id>/faces")
+@jwt_required()
+def get_workspace_faces(workspace_id):
+    from app.models.face import WorkspaceFaceGroup
+    groups = WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).order_by(WorkspaceFaceGroup.id.asc()).all()
+    res = [g.to_dict() for g in groups]
+    return success(data=res)
+
+
+@workspaces_bp.get("/<int:workspace_id>/faces/<int:group_id>/records")
+@jwt_required()
+def get_face_group_records(workspace_id, group_id):
+    from app.models.face import WorkspaceFaceRecord
+    records = WorkspaceFaceRecord.query.filter_by(workspace_id=workspace_id, group_id=group_id).order_by(WorkspaceFaceRecord.id.asc()).all()
+    res = [r.to_dict() for r in records]
+    return success(data=res)
