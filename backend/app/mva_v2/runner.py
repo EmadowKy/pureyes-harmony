@@ -18,65 +18,51 @@ class MVA2Runner:
         self.tools = ReActTools(self.db)
         self.max_feedback_loops = 10  # 支持最大 10 轮 ReAct 循环
 
-    async def execute_on_demand(self, video_path: str, video_id: str, start_sec: float, end_sec: float, user_query: str, progress_callback: Optional[Callable] = None, segment_meta: Optional[Dict[str, Any]] = None) -> str:
+    async def execute_on_demand_multi(self, video_items: List[Dict[str, Any]], user_query: str, progress_callback: Optional[Callable] = None) -> str:
         logger.info("="*60)
-        logger.info(f"MVA V2 (ReAct Agent) Runner started for query: '{user_query}'")
+        logger.info(f"MVA V2 Multi-Video Agent Runner started for query: '{user_query}' with {len(video_items)} videos")
         logger.info("="*60)
-        
-        meta = segment_meta or {}
-        seg_status = meta.get("status", "completed" if any(rec['video_id'] == video_id for rec in self.db.records) else "none")
-        sample_fps = meta.get("sample_fps", 1.0)
-        resolution = meta.get("resolution", "1080P")
-        orig_resolution = meta.get("orig_resolution", "1080P")
-        duration = max(0.1, end_sec - start_sec)
 
-        # ==========================================
-        # 阶段零：即时提权与入库 (JIT Ingestion)
-        # ==========================================
-        # 检查数据库中是否已存在该视频片段的特征信息
-        has_records = any(rec['video_id'] == video_id for rec in self.db.records)
-        
-        if not has_records:
-            if progress_callback:
-                progress_callback({
-                    "stage": "jit_ingestion",
-                    "status": "started",
-                    "message": "检测到未提前提取特征视频，正在进行即时全扫描与目标追踪..."
-                })
-            
-            logger.info(f"--- Phase 0: JIT Feature Extraction for {video_id} ---")
-            await self.pipeline.process_clip(video_path, video_id, start_sec, end_sec, sample_fps=sample_fps, resolution=resolution)
-            
-            if progress_callback:
-                progress_callback({
-                    "stage": "jit_ingestion",
-                    "status": "completed",
-                    "message": f"视频片段即时扫描完毕，提取 {len([r for r in self.db.records if r['video_id'] == video_id])} 条结构化数据"
-                })
-        else:
-            logger.info(f"--- Phase 0: Skipping JIT Ingestion, records already exist for {video_id} ---")
-            if progress_callback:
-                progress_callback({
-                    "stage": "jit_ingestion",
-                    "status": "completed",
-                    "message": "检测到该视频片段已完成预处理，直接调取库特征分析"
-                })
-        
-        # ==========================================
-        # ReAct (Thought-Action-Observation) 主循环
-        # ==========================================
-        from app.mva.utils import Qwen_VL
-        
+        # 阶段零：即时扫描与全特征入库
+        for idx, item in enumerate(video_items, 1):
+            v_path = item["video_path"]
+            v_id = item["video_id"]
+            start_s = item.get("start_sec", 0.0)
+            end_s = item.get("end_sec", item.get("duration", 0.0))
+            meta = item.get("meta", {})
+            sample_fps = meta.get("sample_fps", 1.0)
+            resolution = meta.get("resolution", "1080P")
+
+            has_records = any(rec['video_id'] == v_id for rec in self.db.records)
+            if not has_records:
+                if progress_callback:
+                    progress_callback({
+                        "stage": "jit_ingestion",
+                        "status": "started",
+                        "message": f"正在扫描视频 {idx}/{len(video_items)} ({item['remark']})..."
+                    })
+                await self.pipeline.process_clip(v_path, v_id, start_s, end_s, sample_fps=sample_fps, resolution=resolution)
+
+        # 阶段一：组装全多视频元数据 Prompt
+        videos_meta_text = []
+        for idx, item in enumerate(video_items, 1):
+            videos_meta_text.append(
+                f"  - 视频 {idx} (序号: \"{idx}\", 视频名称/备注: \"{item['remark']}\", 文件名: \"{item['video_id']}\", 时长: {item['duration']:.1f}秒, 绝对路径: \"{os.path.abspath(item['video_path'])}\")"
+            )
+        videos_summary_str = "\n".join(videos_meta_text)
+
         meta_prompt = (
-            f"【当前关联切片片段预处理状态元数据】:\n"
-            f"- 视频文件名: '{video_id}'\n"
-            f"- 物理片段总时长: {duration:.1f} 秒\n"
-            f"- 是否已进行特征预处理: {'是 (已结构化入库)' if seg_status == 'completed' or has_records else '否 (未预处理/即时全扫描)'}\n"
-            f"- 配置帧采样率: {sample_fps} 帧/秒\n"
-            f"- 配置画质分辨率: {resolution} (视频原画分辨率: {orig_resolution})\n"
+            f"【当前用户选择参与对比分析的视频片段列表 (共 {len(video_items)} 个)】:\n"
+            f"{videos_summary_str}\n\n"
+            f"【时间戳输出强制格式规范】:\n"
+            f"在最终回答 final_answer 中，凡是提到某视频的具体时间节点，必须**严格使用格式化标签**：\n"
+            f"`[video:\"视频序号\", time:\"MM:SS\"]`\n"
+            f"示例：\n"
+            f"- 视频 1 的 2 分 33 秒处 -> `[video:\"1\", time:\"02:33\"]`\n"
+            f"- 视频 2 的 0 分 00 秒处 -> `[video:\"2\", time:\"00:00\"]`\n"
+            f"（注意：视频序号必须是对应上面列表中的数字字符串 \"1\", \"2\"，必须包含英文方括号与双引号，前端依赖此格式生成蓝色可点击跳转播放链接！）"
         )
 
-        # 初始化消息上下文，植入 ReAct 系统提示词
         messages = [
             {
                 "role": "system",
@@ -84,59 +70,51 @@ class MVA2Runner:
             },
             {
                 "role": "user",
-                "content": f"{meta_prompt}\n"
-                           f"视频文件的绝对路径 (video_path): '{os.path.abspath(video_path)}'\n"
-                           f"用户提出的问题 (question): '{user_query}'\n\n"
-                           f"请开始你的推理。请一步一步思考，使用工具链搜集客观事实，不要瞎猜。"
+                "content": f"{meta_prompt}\n\n"
+                           f"用户提出的分析问题 (question): '{user_query}'\n\n"
+                           f"请开始你的跨视频对比与推演。请一步一步思考，使用工具搜集事实线索，不要瞎猜。"
             }
         ]
-        
-        temp_files_to_clean = []
+
+        from app.mva.utils import Qwen_VL, api_config
+
         final_answer_result = None
-        
         for iteration in range(self.max_feedback_loops):
             loop_idx = iteration + 1
             logger.info(f"--- ReAct Iteration {loop_idx} / {self.max_feedback_loops} ---")
-            
+
             if progress_callback:
                 progress_callback({
                     "stage": "reasoning",
                     "status": "running",
-                    "message": f"Agent 正在思考决策 (第 {loop_idx} 轮)...",
+                    "message": f"Agent 正在跨视频联想推理 (第 {loop_idx} 轮)...",
                     "data": {
                         "iteration": loop_idx,
                         "phase": "thinking"
                     }
                 })
-            
-            # 如果是最后一轮，强制要求模型输出 final_answer 结束任务
+
             if loop_idx == self.max_feedback_loops:
-                logger.info("Reached maximum iterations (10). Forcing final answer...")
                 messages.append({
                     "role": "user",
-                    "content": "【重要指令】当前问答决策已达最大限制（10轮）。请不要再调用任何工具。根据目前你搜集到的所有观察线索，请立刻给出你对用户提问的最终中文推演回答，并严格按照格式输出包含 thought 和 final_answer 的 JSON。"
+                    "content": "【重要指令】决策已达最大上限。请根据搜集到的所有客观线索，立刻总结输出 final_answer JSON，并严格遵守 [video:\"序号\", time:\"MM:SS\"] 时间戳格式。"
                 })
 
-            # 调用云端多模态大模型
             try:
-                # 这一步会根据 routes.py 注入的 LLM 密钥去调用 Qwen-VL
-                from app.mva.utils import api_config
                 setattr(api_config, 'loop_idx', loop_idx)
                 vlm_response = Qwen_VL(messages)
             except Exception as e:
-                logger.error(f"VLM call failed in ReAct loop: {e}")
-                final_answer_result = f"多模态推理失败，在大模型调用过程中报错: {str(e)}"
+                logger.error(f"VLM call failed: {e}")
+                final_answer_result = f"多模态推理失败: {str(e)}"
                 break
-                
-            # 解析大模型回复的 JSON 动作
+
             thought, tool_name, tool_params, final_answer = ReActParser.parse_response(vlm_response)
-            
-            # 把大模型的推理回复追加到上下文（保证大模型有先前的 Thought 记忆）
+
             messages.append({
                 "role": "assistant",
                 "content": vlm_response
             })
-            
+
             if final_answer:
                 logger.info(f"ReAct Loop converged! Final Answer: {final_answer}")
                 if progress_callback:
@@ -251,59 +229,67 @@ class MVA2Runner:
                     os.remove(temp_img)
             except Exception as clean_err:
                 logger.warning(f"Failed to remove temp image {temp_img}: {clean_err}")
-                
-        if final_answer_result is None:
-            logger.warning("Max loops reached without final answer. Running fallback final answer extraction...")
+        
+        if not final_answer_result:
             try:
-                messages.append({
-                    "role": "user",
-                    "content": "当前推理已被强行终止，请不要输出任何 JSON 和工具名，直接用一句话简短总结上述推演线索给出最终的中文回答。"
-                })
-                # 设置 is_final_answer = True 以开启 streaming
-                from app.mva.utils import api_config
-                setattr(api_config, 'is_final_answer', True)
-                fallback_resp = Qwen_VL(messages)
-                
-                # 尝试再次解析 final_answer，如果不是 JSON 格式则直接将返回文本当作答案
-                _, _, _, final_answer = ReActParser.parse_response(fallback_resp)
-                final_answer_result = final_answer or fallback_resp
+                for msg in reversed(messages):
+                    if msg.get("role") == "assistant":
+                        c = msg.get("content", "")
+                        _, _, _, fa = ReActParser.parse_response(c)
+                        if fa:
+                            final_answer_result = fa
+                            break
+                        if c:
+                            final_answer_result = c
+                            break
             except Exception as fallback_err:
-                final_answer_result = f"分析步骤已达最大限制，强制提取回答时出错: {str(fallback_err)}"
-            
+                final_answer_result = f"分析步骤已达最大限制，提取回答时出错: {str(fallback_err)}"
+
         return final_answer_result
 
+    async def execute_on_demand(self, video_path: str, video_id: str, start_sec: float, end_sec: float, user_query: str, progress_callback: Optional[Callable] = None, segment_meta: Optional[Dict[str, Any]] = None) -> str:
+        """
+        向后兼容旧版单视频调用接口，自动包装并转发给多视频 Agent。
+        """
+        meta = segment_meta or {}
+        duration = max(0.1, end_sec - start_sec)
+        remark = meta.get("remark") or meta.get("video_name") or video_id
+        
+        video_item = {
+            "video_path": video_path,
+            "video_id": video_id,
+            "remark": remark,
+            "duration": duration,
+            "start_sec": start_sec,
+            "end_sec": end_sec,
+            "meta": meta
+        }
+        return await self.execute_on_demand_multi([video_item], user_query, progress_callback)
+
     def run_on_sample(self, sample: Dict[str, Any], video_base_dir: str, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        import os
+        import os, cv2
         question = sample.get("question", "")
         video_filenames = sample.get("video_paths", sample.get("videos", []))
         segment_metas = sample.get("segment_metas", [])
-        
+
         if not video_filenames:
             return {"error": "No video paths provided", "success": False}
-        
+
         full_video_paths = [os.path.join(video_base_dir, v) for v in video_filenames]
-        
+
         if progress_callback:
             progress_callback({
                 "stage": "model_initialization",
                 "status": "completed",
-                "message": "MVA V2 按需分析引擎（ReAct 智能代理）已就绪"
+                "message": "MVA V2 按需分析引擎（多视频跨时空 Agent）已就绪"
             })
-        
-        all_answers = []
-        
+
+        video_items = []
         for idx, video_path in enumerate(full_video_paths):
             video_id = os.path.basename(video_path)
             meta = segment_metas[idx] if idx < len(segment_metas) else {}
-            
-            if progress_callback:
-                progress_callback({
-                    "stage": "processing",
-                    "status": "running",
-                    "message": f"正在分析视频片段 {idx + 1}/{len(full_video_paths)}: {video_id}"
-                })
-            
-            import cv2
+            remark = meta.get("remark") or meta.get("video_name") or f"视频片段 {idx + 1}"
+
             cap = cv2.VideoCapture(video_path)
             fps = cap.get(cv2.CAP_PROP_FPS)
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
