@@ -77,7 +77,8 @@ class MVA2Runner:
         ]
 
         from app.mva.utils import Qwen_VL, api_config
-
+        
+        temp_files_to_clean = []
         final_answer_result = None
         for iteration in range(self.max_feedback_loops):
             loop_idx = iteration + 1
@@ -132,6 +133,7 @@ class MVA2Runner:
                 break
                 
             if tool_name:
+                tool_params = tool_params or {}
                 logger.info(f"Agent decided to call Tool: {tool_name} with params: {tool_params}")
                 
                 # 实时向前端通知 Agent 当前的思考和做出的行动
@@ -155,9 +157,9 @@ class MVA2Runner:
                     if tool_name == "spatiotemporal_search":
                         q_type = tool_params.get("query_type", "semantic")
                         q_text = tool_params.get("query_text", "")
-                        v_id = tool_params.get("video_id", video_id)
+                        v_id = tool_params.get("video_id") or video_items[0]["video_id"]
                         res = self.tools.spatiotemporal_search(q_type, q_text, v_id)
-                        observation = f"系统观察反馈 (检索结果):\n{json.dumps(res, ensure_ascii=False)}"
+                        observation = f"系统观察反馈 (特征库检索结果):\n{json.dumps(res, ensure_ascii=False)}"
                         
                         # 构造纯文本观察追加给消息上下文
                         messages.append({
@@ -166,9 +168,19 @@ class MVA2Runner:
                         })
                         
                     elif tool_name == "read_frame_image":
-                        v_path = tool_params.get("video_path", video_path)
+                        v_id = tool_params.get("video_id")
+                        v_path = tool_params.get("video_path")
+                        if not v_path:
+                            for vi in video_items:
+                                if v_id and (v_id == vi["video_id"] or v_id in vi["video_path"]):
+                                    v_path = vi["video_path"]
+                                    v_id = vi["video_id"]
+                                    break
+                            if not v_path:
+                                v_path = video_items[0]["video_path"]
+                                v_id = video_items[0]["video_id"]
+                                
                         t_sec = float(tool_params.get("timestamp_sec", 0.0))
-                        v_id = tool_params.get("video_id", video_id)
                         
                         img_path = self.tools.read_frame_image(v_path, t_sec, v_id)
                         if img_path and os.path.exists(img_path):
@@ -178,20 +190,20 @@ class MVA2Runner:
                                 "role": "user",
                                 "content": [
                                     {"type": "image", "image": img_path},
-                                    {"type": "text", "text": f"系统观察反馈: 截取到视频在 {t_sec}s 的监控画面图像如上，其中红色框为本地 CV 辅助锁定的目标。请继续根据画面内容推演决策。"}
+                                    {"type": "text", "text": f"系统观察反馈: 已成功截取到视频在 {t_sec}s 的监控帧图像如上。请结合画面细节继续推演决策。"}
                                 ]
                             })
-                            observation = f"已成功提取并看到了 {t_sec}s 的画面。"
+                            observation = f"已成功提取并看到了 {t_sec}s 的监控画面。"
                         else:
-                            observation = "错误: 无法截取该时间戳的视频帧画面。"
+                            observation = f"错误: 无法截取视频在 {t_sec}s 的监控帧图像。"
                             messages.append({
                                 "role": "user",
                                 "content": observation
                             })
                             
                     elif tool_name == "get_video_metadata":
-                        v_path = tool_params.get("video_path", video_path)
-                        res = self.tools.get_video_metadata(v_path)
+                        v_p = tool_params.get("video_path") or video_items[0]["video_path"]
+                        res = self.tools.get_video_metadata(v_p)
                         observation = f"系统观察反馈 (视频元数据):\n{json.dumps(res, ensure_ascii=False)}"
                         messages.append({
                             "role": "user",
@@ -296,24 +308,25 @@ class MVA2Runner:
             duration = frame_count / fps if fps > 0 else 0
             cap.release()
             
-            start_sec = 0.0
-            end_sec = duration
-            
-            try:
-                answer = asyncio.run(
-                    self.execute_on_demand(video_path, video_id, start_sec, end_sec, question, progress_callback, segment_meta=meta)
-                )
-                all_answers.append(answer)
-            except Exception as e:
-                logger.error(f"Error processing {video_path}: {e}")
-                all_answers.append(f"处理视频 {video_id} 时出错: {str(e)}")
-        
-        if len(all_answers) == 1:
-            final_answer = all_answers[0]
-        else:
-            final_answer = "\n\n".join([
-                f"[视频片段 {i+1}] {ans}" for i, ans in enumerate(all_answers)
-            ])
+            video_items.append({
+                "video_path": video_path,
+                "video_id": video_id,
+                "remark": remark,
+                "duration": duration,
+                "start_sec": 0.0,
+                "end_sec": duration,
+                "meta": meta
+            })
+
+        try:
+            final_answer = asyncio.run(
+                self.execute_on_demand_multi(video_items, question, progress_callback)
+            )
+        except Exception as e:
+            logger.error(f"Error processing multi-videos: {e}")
+            import traceback
+            traceback.print_exc()
+            final_answer = f"分析多视频时发生异常: {str(e)}"
         
         return {
             "predicted_answer": final_answer,
