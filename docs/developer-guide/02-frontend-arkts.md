@@ -97,3 +97,15 @@ SymbolIcon($r('sys.symbol.plus_circle'))
   .fontSize(24)
   .fontColor([$r('sys.color.ohos_id_color_emphasize')])
 ```
+
+---
+
+## 5. 鸿蒙星盾安全与隐私特性集成
+
+前端在构建通用业务的同时，深度集成了 HarmonyOS 官方主推的星盾安全与隐私特性：
+
+1. **密码保管箱与自动填充** (`Login.ets`)：
+   使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框，打通鸿蒙密码保管箱加密存储与生物特征（指纹/人脸）解锁填充。
+2. **窗口隐私防窥防截屏/录屏** (`EntryAbility.ets`)：
+   配置 `ohos.permission.PRIVACY_WINDOW` 并调用 `win.setWindowPrivacyMode(true)`，阻断截屏录屏与后台卡片预览泄漏。
+
