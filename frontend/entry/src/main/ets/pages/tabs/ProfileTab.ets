@@ -513,6 +513,28 @@ export struct ProfileTab {
     }
   }
 
+  confirmResetApiKey(): void {
+    AlertDialog.show({
+      title: '重置 API Key 确认',
+      message: '重置后已保存的 API Key 将被清空，您需要重新输入新的 Key 并点击保存才能生效。是否确认重置？',
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: '确认重置',
+        fontColor: Color.Red,
+        action: (): void => {
+          this.llmApiKey = '';
+          this.isApiKeyConfigured = false;
+          promptAction.showToast({ message: '已清空 API Key，请输入新 Key 后点击保存', duration: 2000 });
+        }
+      }
+    });
+  }
+
   async submitSaveApiConfig(): Promise<void> {
     class ApiConfigPayload {
       llm_api_key: string = '';
@@ -1325,18 +1347,24 @@ export struct ProfileTab {
               })
 
             if (this.isApiKeyConfigured) {
-              Button('重置 Key')
-                .height(42)
-                .fontSize(12)
-                .backgroundColor('#FEF2F2')
-                .fontColor('#EF4444')
-                .border({ width: 1, color: '#FCA5A5' })
-                .borderRadius(8)
-                .onClick((): void => {
-                  this.llmApiKey = '';
-                  this.isApiKeyConfigured = false;
-                  promptAction.showToast({ message: '已重置 API Key，请输入新 Key 后保存', duration: 1500 });
-                })
+              Button({ type: ButtonType.Normal, stateEffect: true }) {
+                Row({ space: 4 }) {
+                  SymbolGlyph($r('sys.symbol.trash'))
+                    .fontSize(14)
+                    .fontColor([Color.Red])
+                  Text('清空 Key')
+                    .fontSize(12)
+                    .fontColor('#EF4444')
+                }
+                .padding({ left: 8, right: 8 })
+              }
+              .height(42)
+              .backgroundColor('#FEF2F2')
+              .border({ width: 1, color: '#FCA5A5' })
+              .borderRadius(8)
+              .onClick((): void => {
+                this.confirmResetApiKey();
+              })
             }
           }
           .width('100%')

@@ -2009,6 +2009,51 @@ struct WorkspaceDetail {
     }
   }
 
+  // ===== 确认并删除问答记录 =====
+  confirmDeleteQARecord(taskId: string): void {
+    AlertDialog.show({
+      title: '确认删除问答记录',
+      message: '删除后该问答记录及其关联的推理结果将无法恢复，是否确认删除？',
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: '确认删除',
+        fontColor: Color.Red,
+        action: (): void => {
+          this.executeDeleteQARecord(taskId);
+        }
+      }
+    });
+  }
+
+  async executeDeleteQARecord(taskId: string): Promise<void> {
+    try {
+      const res = await HttpUtil.del('/workspaces/qa/' + taskId);
+      if (res.code === 0 || res.code === 200) {
+        promptAction.showToast({ message: '问答记录已成功删除' });
+        if (this.pollIntervalId) {
+          clearInterval(this.pollIntervalId);
+          this.pollIntervalId = 0;
+        }
+        this.activeTaskId = '';
+        this.activeTaskQuestion = '';
+        this.activeTaskAnswer = '';
+        this.activeTaskStatus = '';
+        this.activeTaskProgress = [];
+        this.progressGroups = [];
+        this.loadQARecords();
+      } else {
+        promptAction.showToast({ message: res.message || '删除失败' });
+      }
+    } catch (err) {
+      promptAction.showToast({ message: '删除网络请求异常: ' + String(err) });
+    }
+  }
+
   async fetchSingleStatus(taskId: string): Promise<void> {
     const res = await HttpUtil.get(`/workspaces/qa/${taskId}/status`);
     if (res.code === 0 && res.data) {
@@ -2372,14 +2417,30 @@ struct WorkspaceDetail {
           .layoutWeight(1)
 
         if (this.activeTaskId !== '') {
-          // Status Badge on the right
-          Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
-            .fontSize(12)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
-            .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
-            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-            .borderRadius(12)
+          Row({ space: 8 }) {
+            // Status Badge on the right
+            Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
+              .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
+              .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+              .borderRadius(12)
+
+            // 🗑️ 删除图标按钮
+            Button({ type: ButtonType.Normal, stateEffect: true }) {
+              SymbolGlyph($r('sys.symbol.trash'))
+                .fontSize(16)
+                .fontColor([Color.Red])
+            }
+            .width(30)
+            .height(30)
+            .backgroundColor('#FEE2E2')
+            .borderRadius(15)
+            .onClick((): void => {
+              this.confirmDeleteQARecord(this.activeTaskId);
+            })
+          }
         }
       }
       .width('100%')

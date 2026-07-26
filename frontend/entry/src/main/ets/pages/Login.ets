@@ -23,13 +23,10 @@ struct Login {
 
   async aboutToAppear(): Promise<void> {
     await SecurityUtil.initSecureState();
-    if (this.isCustomServer && this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
-      this.serverUrl = this.customServerUrlStorage;
-    } else if (this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0) {
-      this.serverUrl = this.customServerUrlStorage;
-    } else {
-      this.serverUrl = OFFICIAL_SERVER_URL;
-    }
+    // 强制默认开启官方公网服务器模式，杜绝底层安全库残存的旧本地地址干扰
+    this.isCustomServer = false;
+    this.serverUrl = OFFICIAL_SERVER_URL;
+    this.applyCurrentServerConfig();
     this.testConnection();
   }
 
@@ -48,21 +45,29 @@ struct Login {
     this.testResultText = res.message;
     this.isTestSuccess = res.success;
     this.isServerOk = res.success;
+  }
 
-    if (res.success) {
-      if (this.isCustomServer) {
-        this.customServerUrlStorage = this.serverUrl;
-        SecurityUtil.setSecureProp('custom_server_url', this.serverUrl);
-        SecurityUtil.setSecureProp('is_custom_server', 'true');
-      } else {
-        SecurityUtil.setSecureProp('is_custom_server', 'false');
-      }
-      updateBaseHost();
+  applyCurrentServerConfig(): void {
+    if (this.isCustomServer) {
+      const cleanUrl = (this.serverUrl || '').trim();
+      this.customServerUrlStorage = cleanUrl;
+      AppStorage.setOrCreate('is_custom_server', true);
+      AppStorage.setOrCreate('custom_server_url', cleanUrl);
+      SecurityUtil.setSecureProp('custom_server_url', cleanUrl);
+      SecurityUtil.setSecureProp('is_custom_server', 'true');
+    } else {
+      this.serverUrl = OFFICIAL_SERVER_URL;
+      AppStorage.setOrCreate('is_custom_server', false);
+      SecurityUtil.setSecureProp('is_custom_server', 'false');
     }
+    updateBaseHost();
   }
 
   async handleLogin(): Promise<void> {
     this.errorMsg = '';
+    
+    // 点击登录的第一时间，无缝同步更新保存当前页面的服务器地址配置
+    this.applyCurrentServerConfig();
 
     if (this.empId.length === 0 || this.pass.length === 0) {
       this.errorMsg = '请输入工号和密码';
@@ -219,8 +224,21 @@ struct Login {
           this.handleLogin();
         })
 
-      // 5. 登录界面下方的蓝字切换按钮
-      Text(this.isCustomServer ? '使用官方服务器' : '使用自定义服务器')
+      // 显示当前真实生效连接的目标服务器地址（消除歧义）
+      Row() {
+        SymbolGlyph($r('sys.symbol.info_circle'))
+          .fontSize(14)
+          .fontColor([$r('app.color.app_primary')])
+          .margin({ right: 4 })
+        Text(this.isCustomServer ? `当前目标: 自定义本地 (${this.serverUrl})` : `当前目标: 官方公网服务器 (http://116.62.178.139:8000)`)
+          .fontSize(12)
+          .fontColor($r('app.color.app_primary'))
+          .fontWeight(FontWeight.Medium)
+      }
+      .margin({ top: 2, bottom: 2 })
+
+      // 5. 登录界面下方的蓝字切换按钮（动作明确）
+      Text(this.isCustomServer ? '点击切换回 ➔ 官方公网服务器' : '点击切换为 ➔ 自定义本地服务器')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor('#2563EB')
@@ -229,7 +247,7 @@ struct Login {
           this.isCustomServer = !this.isCustomServer;
           if (!this.isCustomServer) {
             // 切回官方服务器
-            updateBaseHost();
+            this.applyCurrentServerConfig();
           } else {
             // 切到自定义服务器
             if (!this.serverUrl || this.serverUrl === OFFICIAL_SERVER_URL) {
@@ -239,6 +257,7 @@ struct Login {
                 this.serverUrl = OFFICIAL_SERVER_URL;
               }
             }
+            this.applyCurrentServerConfig();
           }
           this.testConnection();
         })

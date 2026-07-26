@@ -47,6 +47,7 @@ backend/*.sqlite3
 backend/storage/live/
 backend/storage/streams/
 backend/storage/slices/
+backend/storage/faces/
 backend/temp/
 backend/uploads/
 # Local backend runtime environment
@@ -56,3 +57,8 @@ backend/backend_stdout.log
 backend/backend_stderr.log
 backend/logs/
 backend/storage/monitor_covers/
+
+# Temporary Debug Logs & Cache
+__pycache__/
+*.pyc
+scratch/*.txt
