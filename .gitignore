@@ -37,6 +37,7 @@ backend/.venv/
 backend/venv/
 backend/env/
 backend/.env
+backend/.runtime/
 
 # Backend Databases & State
 backend/user.db

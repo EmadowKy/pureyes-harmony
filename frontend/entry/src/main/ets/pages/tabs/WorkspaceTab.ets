@@ -1,6 +1,9 @@
 import { HttpUtil } from '../../utils/http'
-import promptAction from '@ohos.promptAction'
-import router from '@ohos.router';
+
+interface ToastOptions {
+  message: string;
+  duration?: number;
+}
 
 export class WorkspaceInfo {
   id: number = 0;
@@ -34,41 +37,58 @@ struct CreateWorkspaceDialog {
   confirm: (name: string) => void = (_name: string): void => {};
   @State nameText: string = '';
 
+  showToast(options: ToastOptions): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(options);
+    } catch (error) {
+      console.warn('[UI] Toast display failed:', JSON.stringify(error));
+    }
+  }
+
   build() {
-    Column({ space: 15 }) {
+    Column({ space: 14 }) {
       Text('新建工作区')
-        .fontSize(18)
+        .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 10 })
+
+      Text('用一个工作区整理相关视频、片段和问答。')
+        .fontSize(13)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
 
       TextInput({ placeholder: '请输入工作区名称', text: this.nameText })
         .width('100%')
-        .height(45)
+        .height(44)
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
+        .borderRadius(8)
         .onChange((value: string): void => {
           this.nameText = value;
         })
 
-      Row({ space: 20 }) {
+      Row({ space: 10 }) {
         Button('取消')
-          .backgroundColor('#999999')
-          .fontColor(Color.White)
-          .width(100)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.app_text_primary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .layoutWeight(1)
           .height(40)
+          .borderRadius(8)
           .onClick((): void => {
             this.controller.close();
           })
 
-        Button('确认')
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
-          .width(100)
+        Button('创建')
+          .backgroundColor($r('app.color.app_surface_inverted'))
+          .fontColor($r('app.color.app_text_on_inverted'))
+          .layoutWeight(1)
           .height(40)
+          .borderRadius(8)
           .onClick((): void => {
             if (!this.nameText.trim()) {
-              promptAction.showToast({ message: '请输入名称', duration: 1500 });
+              this.showToast({ message: '请输入名称', duration: 1500 });
               return;
             }
             this.confirm(this.nameText);
@@ -76,10 +96,11 @@ struct CreateWorkspaceDialog {
           })
       }
     }
-    .padding(20)
+    .padding(22)
     .width('90%')
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(16)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(12)
   }
 }
 
@@ -87,6 +108,14 @@ struct CreateWorkspaceDialog {
 export struct WorkspaceTab {
   @Prop @Watch('onGroupChange') groupId: number = 0;
   @State workspaces: Array<WorkspaceInfo> = [];
+
+  showToast(options: ToastOptions): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(options);
+    } catch (error) {
+      console.warn('[UI] Toast display failed:', JSON.stringify(error));
+    }
+  }
 
   createDialogController: CustomDialogController = new CustomDialogController({
     builder: CreateWorkspaceDialog({
@@ -139,73 +168,143 @@ export struct WorkspaceTab {
 
     const res = await HttpUtil.post(`/workspaces/${this.groupId}`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '创建成功', duration: 1500 });
+      this.showToast({ message: '创建成功', duration: 1500 });
       this.loadWorkspaces();
     } else {
-      promptAction.showToast({ message: '创建失败: ' + (res.message || '未知错误'), duration: 2000 });
+      this.showToast({ message: '创建失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 
   build() {
     Column() {
-      // ===== Workspace List View =====
-      Row() {
-        Text('所有工作区')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
-          .layoutWeight(1)
+      Row({ space: 12 }) {
+        Column({ space: 3 }) {
+          Text('调查工作区')
+            .fontSize(26)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
 
-        Button('创建工作区')
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
+          Text(this.workspaces.length > 0 ? `${this.workspaces.length} 个进行中的调查` : '把相关视频、片段和问答归入同一条调查线')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Button() {
+          Row({ space: 7 }) {
+            Blank()
+              .width(3)
+              .height(18)
+              .backgroundColor($r('app.color.app_accent'))
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(16)
+              .fontColor([$r('app.color.app_text_on_inverted')])
+            Text('新建')
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_on_inverted'))
+          }
+        }
+          .height(40)
+          .padding({ left: 13, right: 13 })
+          .borderRadius(8)
+          .backgroundColor($r('app.color.app_surface_inverted'))
           .onClick((): void => {
             this.createDialogController.open();
           })
       }
-      .width('90%')
-      .padding({ top: 20, bottom: 10 })
+      .width('100%')
+      .padding({ left: 18, right: 18, top: 22, bottom: 16 })
 
       if (this.workspaces.length === 0) {
-        Column() {
-          Text('暂无工作区，请点击上方按钮创建')
-            .fontSize(16)
-            .fontColor($r('app.color.app_text_muted'))
-            .margin({ top: 80 })
+        Column({ space: 10 }) {
+          Stack() {
+            Image($r('app.media.business_workspace'))
+              .width(44)
+              .height(44)
+              .objectFit(ImageFit.Contain)
+          }
+          .width(64)
+          .height(64)
+          .borderRadius(14)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+
+          Text('从第一个工作区开始')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+
+          Text('导入视频、截取片段，然后围绕画面发起问答。')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_secondary'))
+            .textAlign(TextAlign.Center)
+            .width('78%')
         }
         .width('100%')
         .layoutWeight(1)
-        .justifyContent(FlexAlign.Start)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .padding({ bottom: 52 })
 
       } else {
-        List({ space: 15 }) {
+        List({ space: 12 }) {
           ForEach(this.workspaces, (ws: WorkspaceInfo): void => {
             ListItem() {
-              Row() {
-                Column({ space: 5 }) {
+              Row({ space: 12 }) {
+                Blank()
+                  .width(3)
+                  .height(54)
+                  .backgroundColor($r('app.color.app_selection'))
+
+                Image($r('app.media.business_workspace'))
+                  .width(34)
+                  .height(34)
+                  .objectFit(ImageFit.Contain)
+
+                Column({ space: 4 }) {
+                  Text(`工作区 #${ws.id}`)
+                    .fontSize(10)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.app_text_muted'))
+
                   Text(ws.name)
-                    .fontSize(18)
+                    .fontSize(17)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.app_text_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                  Text('问答数: ' + ws.qa_count.toString())
-                    .fontSize(14)
-                    .fontColor($r('app.color.app_text_secondary'))
+                  Row({ space: 5 }) {
+                    Image($r('app.media.business_ai_qa'))
+                      .width(16)
+                      .height(16)
+                      .objectFit(ImageFit.Contain)
+                    Text(`${ws.qa_count} 条问答记录`)
+                      .fontSize(12)
+                      .fontColor($r('app.color.app_text_secondary'))
+                  }
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
 
-                SymbolGlyph($r('sys.symbol.chevron_right'))
-                  .fontSize(18)
-                  .fontColor([$r('app.color.app_text_secondary')])
+                Row({ space: 4 }) {
+                  Text('打开')
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_text_secondary'))
+                  SymbolGlyph($r('sys.symbol.chevron_right'))
+                    .fontSize(14)
+                    .fontColor([$r('app.color.app_text_muted')])
+                }
               }
               .width('100%')
-              .padding(20)
+              .padding({ left: 15, right: 14, top: 15, bottom: 15 })
               .backgroundColor($r('app.color.app_card_bg'))
+              .border({ width: 1, color: $r('app.color.app_border') })
               .borderRadius(10)
-              .shadow({ radius: 5, color: $r('app.color.app_shadow') })
               .onClick((): void => {
-                router.pushUrl({
+                this.getUIContext().getRouter().pushUrl({
                   url: 'pages/WorkspaceDetail',
                   params: {
                     workspaceId: ws.id,
@@ -216,7 +315,8 @@ export struct WorkspaceTab {
             }
           })
         }
-        .width('90%')
+        .width('100%')
+        .padding({ left: 18, right: 18, bottom: 24 })
         .layoutWeight(1)
       }
     }

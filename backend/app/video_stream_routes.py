@@ -1,29 +1,99 @@
 """视频播放路由 - 提供视频文件访问服务（支持实时转码）"""
 
 import os
+import logging
 import subprocess
 import tempfile
 import uuid
 import time
 import threading
 import hashlib
+from urllib.parse import quote
 from flask import Blueprint, send_file, abort, Response, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 from concurrent.futures import ThreadPoolExecutor
 from app.core.config import get_ffmpeg_path
+from app.core.media_auth import media_access_identity, monitor_scope, path_scope
+from app.core.db import db
+from app.models.group import GroupMember
 
 video_stream_bp = Blueprint('video_stream', __name__, url_prefix='/api/video')
 
 current_file = os.path.abspath(__file__)
 BACKEND_DIR = os.path.dirname(os.path.dirname(current_file))
-
-print(f"[DEBUG] video_stream_routes.py current file: {current_file}")
-print(f"[DEBUG] video_stream_bp BACKEND_DIR: {BACKEND_DIR}")
+logger = logging.getLogger(__name__)
 
 executor = ThreadPoolExecutor(max_workers=2)
 transcoded_cache = {}
 MAX_CACHE_SIZE = 5
 OFFSET_CACHE_SIZE = 20
+
+
+def _is_group_member(group_id, emp_id):
+    return GroupMember.query.filter_by(
+        group_id=group_id,
+        emp_id=emp_id,
+        status="accepted",
+    ).first() is not None
+
+
+def _media_path_access_allowed(video_path):
+    normalized = (video_path or "").replace("\\", "/").lstrip("/")
+    emp_id = media_access_identity(path_scope(normalized))
+    if not emp_id:
+        return False
+
+    if normalized.startswith("example/"):
+        return True
+
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    from app.models.workspace import Workspace, WorkspaceVideoSegment
+
+    path_variants = {normalized, normalized.replace("/", "\\")}
+    if normalized.startswith("storage/slices/"):
+        segment = WorkspaceVideoSegment.query.filter(
+            WorkspaceVideoSegment.filepath.in_(path_variants)
+        ).first()
+        if not segment:
+            return False
+        workspace = db.session.get(Workspace, segment.workspace_id)
+        return bool(workspace and _is_group_member(workspace.group_id, emp_id))
+
+    if normalized.startswith("storage/uploads/"):
+        parts = normalized.split("/")
+        if len(parts) < 4 or not parts[2].isdigit():
+            return False
+        workspace = db.session.get(Workspace, int(parts[2]))
+        return bool(workspace and _is_group_member(workspace.group_id, emp_id))
+
+    if normalized.startswith("storage/streams/"):
+        parts = normalized.split("/")
+        if len(parts) < 4 or not parts[2].isdigit():
+            return False
+        monitor = db.session.get(Monitor, int(parts[2]))
+        return bool(monitor and _is_group_member(monitor.group_id, emp_id))
+
+    if normalized.startswith("storage/faces/"):
+        face_group = WorkspaceFaceGroup.query.filter(
+            WorkspaceFaceGroup.avatar_path.in_(path_variants)
+        ).first()
+        face_record = WorkspaceFaceRecord.query.filter(
+            WorkspaceFaceRecord.crop_path.in_(path_variants)
+        ).first()
+        workspace_id = face_group.workspace_id if face_group else (
+            face_record.workspace_id if face_record else None
+        )
+        workspace = db.session.get(Workspace, workspace_id) if workspace_id else None
+        return bool(workspace and _is_group_member(workspace.group_id, emp_id))
+
+    return False
+
+
+def _monitor_media_access_allowed(monitor):
+    if not monitor:
+        return False
+    emp_id = media_access_identity(monitor_scope(monitor.id))
+    return bool(emp_id and _is_group_member(monitor.group_id, emp_id))
 
 
 def _serve_offset_video(video_path: str, offset_seconds: int):
@@ -49,10 +119,10 @@ def _serve_offset_video(video_path: str, offset_seconds: int):
                 '-movflags', '+faststart',
                 output_path
             ]
-            print(f"[INFO] Creating accurate offset playback: offset={offset_seconds}, source={video_path}")
+            logger.info("Creating accurate offset playback at %s seconds", offset_seconds)
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
             if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                print(f"[ERROR] Offset slice failed: {result.stderr[-500:]}")
+                logger.error("Offset slice failed: %s", result.stderr[-500:])
                 return None
 
             cached_files = sorted(
@@ -67,8 +137,8 @@ def _serve_offset_video(video_path: str, offset_seconds: int):
                     pass
 
         return send_file(output_path, mimetype='video/mp4')
-    except Exception as e:
-        print(f"[ERROR] Offset playback exception: {e}")
+    except Exception:
+        logger.exception("Offset playback failed")
         return None
 
 
@@ -143,7 +213,7 @@ def _check_video_compatible(video_path: str) -> tuple:
     except subprocess.TimeoutExpired:
         return False, "ffprobe timeout", True
     except Exception as e:
-        print(f"[WARN] ffprobe error: {e}")
+        logger.warning("ffprobe failed: %s", e)
         return False, str(e), True
 
 
@@ -171,17 +241,17 @@ def _transcode_video(video_path: str, output_path: str) -> bool:
         )
 
         if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            print(f"[INFO] Transcoded successfully: {video_path} -> {output_path}")
+            logger.info("Video transcoding completed")
             return True
 
-        print(f"[ERROR] Transcode failed: {result.stderr[-500:]}")
+        logger.error("Video transcoding failed: %s", result.stderr[-500:])
         return False
 
     except subprocess.TimeoutExpired:
-        print(f"[ERROR] Transcode timeout: {video_path}")
+        logger.error("Video transcoding timed out")
         return False
-    except Exception as e:
-        print(f"[ERROR] Transcode exception: {e}")
+    except Exception:
+        logger.exception("Video transcoding raised an exception")
         return False
 
 
@@ -201,10 +271,10 @@ def serve_video(video_path):
         safe_video_path = _normalize_video_path(video_path)
         full_path = os.path.abspath(os.path.join(BACKEND_DIR, safe_video_path))
 
-        print(f"[DEBUG] Requested video: {video_path}")
-        print(f"[DEBUG] Normalized path: {safe_video_path}")
-        print(f"[DEBUG] Full path: {full_path}")
-        print(f"[DEBUG] File exists: {os.path.exists(full_path)}")
+        if not _media_path_access_allowed(safe_video_path):
+            abort(401, description="Media token required")
+
+        logger.debug("Authorized video request (exists=%s)", os.path.exists(full_path))
 
         if not full_path.startswith(BACKEND_DIR + os.sep) and full_path != BACKEND_DIR:
             abort(403, description="Access denied")
@@ -237,13 +307,13 @@ def serve_video(video_path):
         if cache_key in transcoded_cache:
             tc_path, tc_time = transcoded_cache[cache_key]
             if os.path.exists(tc_path):
-                print(f"[CACHE] Using cached transcoded: {tc_path}")
+                logger.debug("Using cached transcoded video")
                 return send_file(tc_path, mimetype='video/mp4')
             else:
                 del transcoded_cache[cache_key]
 
         is_compat, codec_info, needs_tc = _check_video_compatible(full_path)
-        print(f"[INFO] Video compatibility: {is_compat}, codec: {codec_info}, needs_transcode: {needs_tc}")
+        logger.debug("Video compatibility=%s codec=%s needs_transcode=%s", is_compat, codec_info, needs_tc)
 
         if is_compat and not force_transcode:
             return send_file(full_path, mimetype='video/mp4')
@@ -251,7 +321,7 @@ def serve_video(video_path):
         if not needs_tc and not force_transcode:
             return send_file(full_path, mimetype='video/mp4')
 
-        print(f"[INFO] Starting transcode for: {video_path}")
+        logger.info("Starting video transcoding")
 
         tc_filename = f"{uuid.uuid4().hex}.mp4"
         tc_dir = os.path.join(BACKEND_DIR, 'temp', 'transcoded')
@@ -279,9 +349,9 @@ def serve_video(video_path):
 
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Error serving video: {e}")
-        abort(500, description=f"Internal server error: {str(e)}")
+    except Exception:
+        logger.exception("Failed to serve video")
+        abort(500, description="Internal server error")
 
 
 @video_stream_bp.route('/example/<path:video_path>')
@@ -290,6 +360,8 @@ def serve_example_video(video_path):
     提供 example 目录下的视频访问服务。
     """
     try:
+        if not _media_path_access_allowed(f"example/{video_path}"):
+            abort(401, description="Media token required")
         example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
         full_path = os.path.abspath(os.path.join(example_dir, video_path))
         
@@ -303,9 +375,9 @@ def serve_example_video(video_path):
         return send_file(full_path, mimetype='video/mp4')
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Error serving example video: {e}")
-        abort(500, description=f"Internal server error: {str(e)}")
+    except Exception:
+        logger.exception("Failed to serve example video")
+        abort(500, description="Internal server error")
 
 
 from app.models.monitor import Monitor
@@ -321,7 +393,7 @@ def stop_all_live_converters():
     """
     global live_converters
     with live_converters_lock:
-        print("[LiveStream] Stopping all live transcoders...")
+        logger.info("Stopping all live transcoders")
         for monitor_id, proc in list(live_converters.items()):
             if proc.poll() is None:
                 try:
@@ -336,9 +408,11 @@ def stop_all_live_converters():
 
 @video_stream_bp.route('/live/<int:monitor_id>/index.m3u8')
 def live_stream_index(monitor_id):
-    monitor = Monitor.query.get(monitor_id)
+    monitor = db.session.get(Monitor, monitor_id)
     if not monitor or not monitor.stream_url:
         abort(404, description="Monitor or stream URL not found")
+    if not _monitor_media_access_allowed(monitor):
+        abort(401, description="Media token required")
         
     output_dir = os.path.join(LIVE_STREAM_BASE, str(monitor_id))
     os.makedirs(output_dir, exist_ok=True)
@@ -372,7 +446,7 @@ def live_stream_index(monitor_id):
             ])
             
             try:
-                print(f"[LiveStream] Starting live HLS converter for monitor {monitor_id}: {' '.join(cmd)}")
+                logger.info("Starting live HLS converter for monitor %s", monitor_id)
                 log_file_path = os.path.join(output_dir, "ffmpeg.log")
                 with open(log_file_path, "w", encoding="utf-8") as log_file:
                     proc = subprocess.Popen(
@@ -387,13 +461,13 @@ def live_stream_index(monitor_id):
             except (FileNotFoundError, OSError) as e:
                 # If WinError 2 (File not found) or OSError indicating command not found
                 if getattr(e, 'winerror', None) == 2 or getattr(e, 'errno', None) == 2 or "系统找不到指定的文件" in str(e):
-                    print("[LiveStream ERROR] 系统找不到 ffmpeg 可执行文件！请确认已将 FFmpeg 安装并加入系统 PATH 环境变量。")
+                    logger.error("FFmpeg executable was not found")
                     abort(500, description="FFmpeg 未安装或未加入系统环境变量 PATH，请参考 README 配置！")
                 else:
-                    print(f"[LiveStream] Failed to start live converter for monitor {monitor_id}: {e}")
+                    logger.exception("Failed to start live converter for monitor %s", monitor_id)
                     abort(500, description="Failed to launch live stream transcoder")
-            except Exception as e:
-                print(f"[LiveStream] Failed to start live converter for monitor {monitor_id}: {e}")
+            except Exception:
+                logger.exception("Failed to start live converter for monitor %s", monitor_id)
                 abort(500, description="Failed to launch live stream transcoder")
                 
     index_file = os.path.join(output_dir, "index.m3u8")
@@ -412,10 +486,23 @@ def live_stream_index(monitor_id):
                     ffmpeg_err = f.read()
             except Exception as read_err:
                 ffmpeg_err = f"Failed to read ffmpeg log: {read_err}"
-        print(f"[LiveStream ERROR] ffmpeg failed to generate HLS files. ffmpeg output:\n{ffmpeg_err}")
-        abort(404, description=f"M3U8 stream file not generated yet. FFmpeg stderr:\n{ffmpeg_err}")
+        logger.error("FFmpeg failed to generate HLS files: %s", ffmpeg_err[-1000:])
+        abort(404, description="M3U8 stream file not generated yet")
         
-    response = send_from_directory(output_dir, "index.m3u8", mimetype='application/x-mpegURL')
+    media_token = request.args.get("media_token") or ""
+    try:
+        with open(index_file, "r", encoding="utf-8") as playlist_file:
+            playlist_lines = playlist_file.readlines()
+    except OSError:
+        abort(404, description="Stream playlist not found")
+    rewritten_lines = []
+    for line in playlist_lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            separator = "&" if "?" in stripped else "?"
+            line = f"{stripped}{separator}media_token={quote(media_token, safe='')}\n"
+        rewritten_lines.append(line)
+    response = Response("".join(rewritten_lines), mimetype='application/x-mpegURL')
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -424,6 +511,9 @@ def live_stream_index(monitor_id):
 
 @video_stream_bp.route('/live/<int:monitor_id>/<filename>')
 def live_stream_segment(monitor_id, filename):
+    monitor = db.session.get(Monitor, monitor_id)
+    if not _monitor_media_access_allowed(monitor):
+        abort(401, description="Media token required")
     output_dir = os.path.join(LIVE_STREAM_BASE, str(monitor_id))
     # Security check: filename must not contain directory traversal
     if ".." in filename or "/" in filename or "\\" in filename:
@@ -444,6 +534,9 @@ def serve_thumbnail(video_path):
     try:
         safe_video_path = _normalize_video_path(video_path)
         full_path = os.path.abspath(os.path.join(BACKEND_DIR, safe_video_path))
+
+        if not _media_path_access_allowed(safe_video_path):
+            abort(401, description="Media token required")
 
         if not full_path.startswith(BACKEND_DIR + os.sep) and full_path != BACKEND_DIR:
             abort(403, description="Access denied")
@@ -466,13 +559,15 @@ def serve_thumbnail(video_path):
                 "-f", "image2",
                 thumb_path
             ]
-            print(f"[Thumbnail Generation] command: {' '.join(cmd)}")
+            logger.debug("Generating video thumbnail")
             subprocess.run(cmd, capture_output=True, timeout=5)
 
         if os.path.exists(thumb_path):
             return send_file(thumb_path, mimetype='image/jpeg')
         else:
             abort(500, description="Failed to generate thumbnail")
-    except Exception as e:
-        print(f"[Thumbnail Exception] {e}")
-        abort(500, description=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Thumbnail generation failed")
+        abort(500, description="Failed to generate thumbnail")

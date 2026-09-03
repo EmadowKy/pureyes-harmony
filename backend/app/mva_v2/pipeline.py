@@ -11,6 +11,8 @@ from dataclasses import dataclass
 import uuid
 import time
 import logging
+import math
+import threading
 from ultralytics import YOLO
 
 logging.basicConfig(level=logging.INFO)
@@ -45,13 +47,21 @@ class ProcessedFrame:
     skip_heavy_processing: bool = False
 
 class YoloDetector:
-    _shared_model = None
+    _inference_lock = threading.Lock()
 
     def __init__(self):
-        # 共享单例，避免重复装载 YOLO 模型与分配 CUDA 上下文
-        if YoloDetector._shared_model is None:
-            YoloDetector._shared_model = YOLO('yolov8n.pt')
-        self.model = YoloDetector._shared_model
+        # 每个视频保留独立的追踪器状态，避免并发/连续分析时 track_id 串到其他片段。
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        configured_path = os.environ.get("YOLO_MODEL_PATH")
+        candidates = [
+            configured_path,
+            os.path.join(backend_dir, "yolov8n.pt"),
+            os.path.join(os.path.dirname(backend_dir), "yolov8n.pt"),
+        ]
+        model_path = next((path for path in candidates if path and os.path.isfile(path)), None)
+        if not model_path:
+            raise FileNotFoundError("YOLO model not found; set YOLO_MODEL_PATH or place yolov8n.pt in backend/")
+        self.model = YOLO(model_path)
         self.target_classes = [0, 1, 2, 3, 5, 7]
         self.class_names = {
             0: "person", 
@@ -65,7 +75,8 @@ class YoloDetector:
 
     def detect(self, image: np.ndarray) -> List[BoundingBox]:
         # 启用禁用 GMC 的 ByteTrack 跨帧跟踪引擎，消除全局光流推算杂音日志
-        results = self.model.track(image, persist=True, verbose=False, tracker=self.tracker_cfg)
+        with YoloDetector._inference_lock:
+            results = self.model.track(image, persist=True, verbose=False, tracker=self.tracker_cfg)
         bboxes = []
         if not results:
             return bboxes
@@ -112,11 +123,21 @@ class ByteTracker:
 
 class FeatureExtractor:
     _shared_session = None
+    _session_lock = threading.Lock()
 
     def __init__(self):
         if FeatureExtractor._shared_session is not None:
             self.session = FeatureExtractor._shared_session
             return
+
+        with FeatureExtractor._session_lock:
+            if FeatureExtractor._shared_session is not None:
+                self.session = FeatureExtractor._shared_session
+                return
+
+            self._initialize_session()
+
+    def _initialize_session(self):
 
         # 寻找并初始化本地 OSNet ONNX 行人重识别模型
         backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -225,12 +246,25 @@ class JITVideoPipeline:
         """(已废弃，其功能并入 process_clip 串行执行)"""
         pass
 
-    async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None, sample_fps: float = 1.0, resolution: str = "1080P"):
+    async def process_clip(self, video_path: str, video_id: str, start_sec: float, end_sec: float, progress_callback: Optional[Callable[[int], None]] = None, sample_fps: float = 1.0, resolution: str = "1080P", workspace_id: Optional[int] = None):
         """按需立刻处理目标片段并阻塞等待完成 (支持动态采样率 sample_fps 与画质清晰度 resolution)"""
+        sample_fps = float(sample_fps)
+        start_sec = float(start_sec)
+        end_sec = float(end_sec)
+        if not os.path.isfile(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+        if not math.isfinite(sample_fps) or sample_fps <= 0:
+            raise ValueError("sample_fps must be a positive finite number")
+        if not math.isfinite(start_sec) or not math.isfinite(end_sec) or start_sec < 0 or end_sec <= start_sec:
+            raise ValueError("invalid clip time range")
+
         logger.info(f"[JIT] Fast-processing clip {video_id} from {start_sec}s to {end_sec}s with sample_fps={sample_fps}, resolution={resolution}...")
         cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            cap.release()
+            raise RuntimeError(f"Unable to open video: {video_path}")
         fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps <= 0:
+        if not math.isfinite(fps) or fps <= 0:
             fps = 30.0
         
         # 计算采样帧间隔
@@ -240,71 +274,82 @@ class JITVideoPipeline:
         end_frame_idx = int(end_sec * fps)
         total_frames_to_process = max(1, end_frame_idx - start_frame_idx)
         
-        frame_idx = 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_idx)
+        frame_idx = start_frame_idx
         prev_frame = None
         last_progress_pct = -1
         last_callback_time = 0.0
+        all_records = []
+        processed_sample_count = 0
 
-        while cap.isOpened() and frame_idx <= end_frame_idx:
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                break
+        try:
+            while cap.isOpened() and frame_idx <= end_frame_idx:
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    break
 
-            # 仅处理落在 [start_frame_idx, end_frame_idx] 区间且符合采样间隔的帧
-            if frame_idx >= start_frame_idx and (frame_idx - start_frame_idx) % frame_interval == 0:
-                # 按照画质分辨率设定对帧进行自适应缩放
-                h, w = frame.shape[:2]
-                target_h = 1080
-                if resolution == "480P":
-                    target_h = 480
-                elif resolution == "720P":
-                    target_h = 720
-                elif resolution == "1080P":
+                # 仅处理落在 [start_frame_idx, end_frame_idx] 区间且符合采样间隔的帧
+                if frame_idx >= start_frame_idx and (frame_idx - start_frame_idx) % frame_interval == 0:
+                    processed_sample_count += 1
+                    # 按照画质分辨率设定对帧进行自适应缩放
+                    h, w = frame.shape[:2]
                     target_h = 1080
-                elif resolution == "4K":
-                    target_h = 2160
-                
-                if h > target_h:
-                    scale = target_h / float(h)
-                    frame = cv2.resize(frame, (int(w * scale), target_h))
+                    if resolution == "480P":
+                        target_h = 480
+                    elif resolution == "720P":
+                        target_h = 720
+                    elif resolution == "4K":
+                        target_h = 2160
 
-                # 运动检测与 YOLO 追踪提取
-                has_motion = self._detect_motion(prev_frame, frame)
-                if has_motion:
-                    bboxes = self.detector.detect(frame)
-                    if bboxes:
-                        tracked_objs = self.tracker.update(bboxes, frame)
-                        tracklet_records = []
-                        for track in tracked_objs:
-                            reid_emb = self.extractor.extract_reid(track.image_crop)
-                            record = {
-                                "video_id": video_id,
-                                "timestamp": frame_idx / fps,
-                                "frame_idx": frame_idx,
-                                "track_id": track.track_id,
-                                "class_name": track.bbox.class_name,
-                                "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
-                                "reid_vector": reid_emb.tolist(),
-                                "clip_vector": [0.0] * 512
-                            }
-                            tracklet_records.append(record)
-                            
-                        if self.db_client and tracklet_records:
-                            self.db_client.insert(tracklet_records)
-                            
-                prev_frame = frame.copy()
-                
-                # 高效汇报进度：节流更新频率，避免 SQL 事务锁开销
-                if progress_callback:
-                    progress_pct = min(99, int((frame_idx - start_frame_idx) / total_frames_to_process * 100))
-                    now = time.time()
-                    if progress_pct != last_progress_pct and (now - last_callback_time >= 0.3 or progress_pct >= 99):
-                        last_progress_pct = progress_pct
-                        last_callback_time = now
-                        progress_callback(progress_pct)
-                
-            frame_idx += 1
-            
-        cap.release()
-        if progress_callback:
-            progress_callback(100)
+                    if h > target_h:
+                        scale = target_h / float(h)
+                        frame = cv2.resize(frame, (int(w * scale), target_h))
+
+                    # 运动检测与 YOLO 追踪提取
+                    has_motion = self._detect_motion(prev_frame, frame)
+                    if has_motion:
+                        bboxes = self.detector.detect(frame)
+                        if bboxes:
+                            tracked_objs = self.tracker.update(bboxes, frame)
+                            for track in tracked_objs:
+                                # OSNet 是行人重识别模型，不对车辆等类别生成误导性向量。
+                                reid_vector = []
+                                if track.bbox.class_name == "person":
+                                    try:
+                                        reid_vector = self.extractor.extract_reid(track.image_crop).tolist()
+                                    except Exception as reid_err:
+                                        logger.warning(f"Skipping invalid person ReID crop: {reid_err}")
+                                record = {
+                                    "video_id": video_id,
+                                    "workspace_id": workspace_id,
+                                    "timestamp": frame_idx / fps,
+                                    "frame_idx": frame_idx,
+                                    "track_id": track.track_id,
+                                    "class_name": track.bbox.class_name,
+                                    "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
+                                    "reid_vector": reid_vector,
+                                    "clip_vector": [0.0] * 512
+                                }
+                                all_records.append(record)
+
+                    prev_frame = frame.copy()
+
+                    # 高效汇报进度：节流更新频率，避免 SQL 事务锁开销
+                    if progress_callback:
+                        progress_pct = min(99, int((frame_idx - start_frame_idx) / total_frames_to_process * 100))
+                        now = time.time()
+                        if progress_pct != last_progress_pct and (now - last_callback_time >= 0.3 or progress_pct >= 99):
+                            last_progress_pct = progress_pct
+                            last_callback_time = now
+                            progress_callback(progress_pct)
+
+                frame_idx += 1
+
+            if processed_sample_count == 0:
+                raise RuntimeError("No readable frames found in the requested clip range")
+            if self.db_client:
+                self.db_client.replace_video_records(video_id, all_records, workspace_id=workspace_id)
+            if progress_callback:
+                progress_callback(100)
+        finally:
+            cap.release()

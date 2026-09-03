@@ -6,11 +6,12 @@ from app.models.qa_record import QARecord
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.core.response import success, fail
+from app.core.network_security import validate_llm_base_url
 from app.user_center.permissions import active_user_required, can_view_user, current_user, role_required
 from app.user_center.serializers import user_to_dict
 from . import users_bp
 
-USER_MUTABLE_FIELDS = {"name", "phone", "avatar", "llm_api_key", "llm_base_url", "llm_model"}
+USER_MUTABLE_FIELDS = {"name", "phone", "avatar", "llm_base_url", "llm_model"}
 
 
 def _clean(value):
@@ -18,15 +19,30 @@ def _clean(value):
 
 
 def _apply_user_updates(user, data):
+    if "llm_base_url" in data:
+        try:
+            data = dict(data)
+            data["llm_base_url"] = validate_llm_base_url(data.get("llm_base_url"))
+        except ValueError as exc:
+            return fail(message=str(exc), code=2011, http_status=400)
+
     for field in USER_MUTABLE_FIELDS:
         if field in data:
             setattr(user, field, _clean(data.get(field)))
+
+    if data.get("clear_llm_api_key") is True:
+        user.llm_api_key = None
+    elif "llm_api_key" in data:
+        next_api_key = _clean(data.get("llm_api_key"))
+        if next_api_key:
+            user.llm_api_key = next_api_key
 
     if "password" in data and data["password"]:
         password = str(data["password"])
         if len(password) < 6:
             return fail(message="password must be at least 6 chars", code=2004, http_status=400)
         user.set_password(password)
+        user.auth_version = (user.auth_version or 0) + 1
     return None
 
 
@@ -90,7 +106,7 @@ def me():
     user = User.query.filter_by(emp_id=emp_id).first()
     if not user:
         return fail(message="user not found", code=2002, http_status=404)
-    return success(data=user_to_dict(user))
+    return success(data=user_to_dict(user, include_settings=True))
 
 @users_bp.put("/me")
 @active_user_required()
@@ -105,7 +121,7 @@ def update_me():
         return error
 
     db.session.commit()
-    return success(message="user updated", data=user_to_dict(user))
+    return success(message="user updated", data=user_to_dict(user, include_settings=True))
 
 
 @users_bp.get("/search")
@@ -207,6 +223,7 @@ def promote_user(emp_id):
         return fail(message="cannot change super_admin role", code=2008, http_status=403)
 
     user.role = new_role
+    user.auth_version = (user.auth_version or 0) + 1
     db.session.commit()
     return success(message="role updated", data=user_to_dict(user))
 
@@ -229,6 +246,7 @@ def update_user_status(emp_id):
         return fail(message="cannot disable yourself", code=2010, http_status=403)
 
     user.is_active = is_active
+    user.auth_version = (user.auth_version or 0) + 1
     db.session.commit()
     return success(message="user status updated", data=user_to_dict(user))
 
@@ -251,6 +269,7 @@ def reset_user_password(emp_id):
         return fail(message="password must be at least 6 chars", code=2004, http_status=400)
 
     user.set_password(password)
+    user.auth_version = (user.auth_version or 0) + 1
     db.session.commit()
     return success(message="password reset", data=user_to_dict(user))
 

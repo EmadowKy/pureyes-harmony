@@ -42,6 +42,8 @@ class WorkspaceVideoSegment(db.Model):
     orig_resolution = db.Column(db.String(32), default="1080P", nullable=True)
 
     def to_dict(self):
+        from app.core.media_auth import build_media_url, path_scope
+        media_path = f"/api/video/{self.filepath}"
         return {
             "id": self.id,
             "workspace_id": self.workspace_id,
@@ -51,6 +53,11 @@ class WorkspaceVideoSegment(db.Model):
             "duration": self.duration,
             "remark": self.remark,
             "filepath": self.filepath,
+            "media_url": build_media_url(media_path, path_scope(self.filepath)),
+            "thumbnail_url": build_media_url(
+                f"/api/video/thumbnail/{self.filepath}",
+                path_scope(self.filepath),
+            ),
             "created_at": self.created_at.isoformat() + "Z",
             "status": self.status,
             "progress": self.progress,

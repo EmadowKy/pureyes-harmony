@@ -19,6 +19,7 @@
 * [03-后端 RESTful API 接口规范](developer-guide/03-backend-flask-api.md)
 * [04-AI 多模态视觉分析引擎原理](developer-guide/04-ai-mva-engine.md)
 * [05-数据库设计与实体关系模型](developer-guide/05-database-schema.md)
+* [06-鸿蒙原生特色特性接入与技术架构](developer-guide/06-harmonyos-native-features.md)
 
 ## 3. 自建服务器部署手册 (Server Deployment)
 * [01-服务器硬件配置、CUDA 与环境依赖](server-deployment/01-requirements-and-env.md)

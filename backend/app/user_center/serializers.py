@@ -6,7 +6,7 @@ def iso_z(value):
     return value.isoformat() + "Z" if value else None
 
 
-def user_to_dict(user, include_private=True):
+def user_to_dict(user, include_private=True, include_settings=False):
     data = {
         "emp_id": user.emp_id,
         "name": user.name,
@@ -14,12 +14,15 @@ def user_to_dict(user, include_private=True):
         "avatar": user.avatar,
         "role": user.role,
         "is_active": user.is_active,
-        "llm_api_key": user.llm_api_key,
-        "llm_base_url": user.llm_base_url,
-        "llm_model": user.llm_model,
         "created_at": iso_z(user.created_at),
         "updated_at": iso_z(user.updated_at),
     }
+    if include_settings:
+        data.update({
+            "llm_api_key_configured": bool(user.llm_api_key),
+            "llm_base_url": user.llm_base_url,
+            "llm_model": user.llm_model,
+        })
     return data
 
 
@@ -45,7 +48,7 @@ def membership_to_dict(member, user=None, group=None):
     if user is None:
         user = User.query.filter_by(emp_id=member.emp_id).first()
     if user:
-        payload["user"] = user_to_dict(user)
+        payload["user"] = user_to_dict(user, include_private=False)
         payload.update({
             "name": user.name,
             "phone": user.phone,

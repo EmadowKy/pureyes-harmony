@@ -1,8 +1,11 @@
 import { HttpUtil } from '../../utils/http'
-import promptAction from '@ohos.promptAction'
-import router from '@ohos.router'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { SecurityUtil } from '../../utils/security'
+
+interface ToastOptions {
+  message: string;
+  duration?: number;
+}
 
 const PAGE_HOME = 'home';
 const PAGE_INFO = 'info';
@@ -20,7 +23,7 @@ export class UserInfo {
   avatar: string = '';
   role: string = '';
   is_active: boolean = true;
-  llm_api_key: string = '';
+  llm_api_key_configured: boolean = false;
   llm_base_url: string = '';
   llm_model: string = '';
 }
@@ -153,7 +156,7 @@ export struct CreateUserDialog {
           .onClick((): void => {
             this.controller.close();
           })
-          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .backgroundColor(Color.Transparent)
           .border({ width: 1, color: $r('app.color.app_border') })
           .borderRadius(8)
 
@@ -171,7 +174,7 @@ export struct CreateUserDialog {
         }
           .layoutWeight(1)
           .height(44)
-          .backgroundColor($r('app.color.app_primary'))
+          .backgroundColor($r('app.color.app_surface_inverted'))
           .borderRadius(8)
           .onClick((): void => {
             this.confirm(this.empId, this.name, this.phone, this.pass);
@@ -214,6 +217,15 @@ export struct ProfileTab {
   @State llmBaseUrl: string = '';
   @State llmModel: string = '';
   @State isApiKeyConfigured: boolean = false;
+  @State clearApiKeyRequested: boolean = false;
+
+  showToast(options: ToastOptions): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(options);
+    } catch (error) {
+      console.warn('[UI] Toast display failed:', JSON.stringify(error));
+    }
+  }
 
   createUserDialogController: CustomDialogController = new CustomDialogController({
     builder: CreateUserDialog({
@@ -272,7 +284,7 @@ export struct ProfileTab {
     u.avatar = (dataObj['avatar'] as string) || '';
     u.role = (dataObj['role'] as string) || '';
     u.is_active = (dataObj['is_active'] as boolean) !== false;
-    u.llm_api_key = (dataObj['llm_api_key'] as string) || '';
+    u.llm_api_key_configured = (dataObj['llm_api_key_configured'] as boolean) === true;
     u.llm_base_url = (dataObj['llm_base_url'] as string) || '';
     u.llm_model = (dataObj['llm_model'] as string) || '';
     return u;
@@ -283,7 +295,9 @@ export struct ProfileTab {
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       this.user = this.parseUser(dataObj);
-      this.llmApiKey = this.user.llm_api_key || '';
+      this.llmApiKey = '';
+      this.isApiKeyConfigured = this.user.llm_api_key_configured;
+      this.clearApiKeyRequested = false;
       this.llmBaseUrl = this.user.llm_base_url || '';
       this.llmModel = this.user.llm_model || '';
     }
@@ -358,14 +372,14 @@ export struct ProfileTab {
 
   clearMessages(): void {
     if (this.messageCount() === 0) {
-      promptAction.showToast({ message: '暂无可清空消息', duration: 2000 });
+      this.showToast({ message: '暂无可清空消息', duration: 2000 });
       return;
     }
 
     this.invites = [];
     this.sentInvites = [];
     this.messagesCleared = true;
-    promptAction.showToast({ message: '消息已清空', duration: 2000 });
+    this.showToast({ message: '消息已清空', duration: 2000 });
   }
 
   openPage(page: string): void {
@@ -395,7 +409,9 @@ export struct ProfileTab {
       this.searchKeyword = '';
       this.adminUsers = [];
     } else if (page === PAGE_API_CONFIG) {
-      this.llmApiKey = this.user.llm_api_key || '';
+      this.llmApiKey = '';
+      this.isApiKeyConfigured = this.user.llm_api_key_configured;
+      this.clearApiKeyRequested = false;
       this.llmBaseUrl = this.user.llm_base_url || '';
       this.llmModel = this.user.llm_model || '';
     }
@@ -424,7 +440,7 @@ export struct ProfileTab {
       }
     } catch (err) {
       console.error('Avatar picker failed', JSON.stringify(err));
-      promptAction.showToast({ message: '未选择头像', duration: 2000 });
+      this.showToast({ message: '未选择头像', duration: 2000 });
     }
   }
 
@@ -437,10 +453,10 @@ export struct ProfileTab {
     payload.avatar = avatar;
     const res = await HttpUtil.put('/users/me', payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '头像已更新', duration: 2000 });
+      this.showToast({ message: '头像已更新', duration: 2000 });
       this.loadProfile();
     } else {
-      promptAction.showToast({ message: res.message || '头像更新失败', duration: 2000 });
+      this.showToast({ message: res.message || '头像更新失败', duration: 2000 });
     }
   }
 
@@ -450,21 +466,21 @@ export struct ProfileTab {
     payload.phone = this.editPhone.trim() || this.user.phone;
     const res = await HttpUtil.put('/users/me', payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '个人信息已保存', duration: 2000 });
+      this.showToast({ message: '个人信息已保存', duration: 2000 });
       this.loadProfile();
     } else {
-      promptAction.showToast({ message: res.message || '保存失败', duration: 2000 });
+      this.showToast({ message: res.message || '保存失败', duration: 2000 });
     }
   }
 
   async submitChangePassword(): Promise<void> {
     const nextPass = this.newPassword.trim();
     if (nextPass.length < 6) {
-      promptAction.showToast({ message: '密码至少需要6位', duration: 2000 });
+      this.showToast({ message: '密码至少需要6位', duration: 2000 });
       return;
     }
     if (nextPass !== this.confirmPassword.trim()) {
-      promptAction.showToast({ message: '两次输入的密码不一致', duration: 2000 });
+      this.showToast({ message: '两次输入的密码不一致', duration: 2000 });
       return;
     }
 
@@ -474,9 +490,9 @@ export struct ProfileTab {
     if (res.code === 0) {
       this.newPassword = '';
       this.confirmPassword = '';
-      promptAction.showToast({ message: '密码修改成功', duration: 2000 });
+      this.showToast({ message: '密码修改成功', duration: 2000 });
     } else {
-      promptAction.showToast({ message: res.message || '密码修改失败', duration: 2000 });
+      this.showToast({ message: res.message || '密码修改失败', duration: 2000 });
     }
   }
 
@@ -485,18 +501,18 @@ export struct ProfileTab {
     payload.action = action;
     const res = await HttpUtil.post(`/groups/${groupId}/respond`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: action === 'accept' ? '已加入小组' : '已拒绝邀请', duration: 2000 });
+      this.showToast({ message: action === 'accept' ? '已加入小组' : '已拒绝邀请', duration: 2000 });
       this.loadMessages();
       AppStorage.setOrCreate('refreshGroupFlag', Math.random());
     } else {
-      promptAction.showToast({ message: res.message || '操作失败', duration: 2000 });
+      this.showToast({ message: res.message || '操作失败', duration: 2000 });
     }
   }
 
   async createGroup(): Promise<void> {
     const groupName = this.newGroupName.trim();
     if (!groupName) {
-      promptAction.showToast({ message: '请输入小组名称', duration: 2000 });
+      this.showToast({ message: '请输入小组名称', duration: 2000 });
       return;
     }
 
@@ -505,16 +521,16 @@ export struct ProfileTab {
     const res = await HttpUtil.post('/groups/', payload);
     if (res.code === 0) {
       this.newGroupName = '';
-      promptAction.showToast({ message: '小组创建成功', duration: 2000 });
+      this.showToast({ message: '小组创建成功', duration: 2000 });
       AppStorage.setOrCreate('refreshGroupFlag', Math.random());
       this.backHome();
     } else {
-      promptAction.showToast({ message: res.message || '小组创建失败', duration: 2000 });
+      this.showToast({ message: res.message || '小组创建失败', duration: 2000 });
     }
   }
 
   confirmResetApiKey(): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '重置 API Key 确认',
       message: '重置后已保存的 API Key 将被清空，您需要重新输入新的 Key 并点击保存才能生效。是否确认重置？',
       autoCancel: true,
@@ -529,7 +545,8 @@ export struct ProfileTab {
         action: (): void => {
           this.llmApiKey = '';
           this.isApiKeyConfigured = false;
-          promptAction.showToast({ message: '已清空 API Key，请输入新 Key 后点击保存', duration: 2000 });
+          this.clearApiKeyRequested = true;
+          this.showToast({ message: '已清空 API Key，请输入新 Key 后点击保存', duration: 2000 });
         }
       }
     });
@@ -537,22 +554,26 @@ export struct ProfileTab {
 
   async submitSaveApiConfig(): Promise<void> {
     class ApiConfigPayload {
-      llm_api_key: string = '';
+      llm_api_key?: string;
+      clear_llm_api_key: boolean = false;
       llm_base_url: string = '';
       llm_model: string = '';
     }
     const payload = new ApiConfigPayload();
-    payload.llm_api_key = this.llmApiKey.trim();
+    const nextApiKey = this.llmApiKey.trim();
+    if (nextApiKey.length > 0) {
+      payload.llm_api_key = nextApiKey;
+    }
+    payload.clear_llm_api_key = this.clearApiKeyRequested && nextApiKey.length === 0;
     payload.llm_base_url = this.llmBaseUrl.trim();
     payload.llm_model = this.llmModel.trim();
 
     const res = await HttpUtil.put('/users/me', payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: 'API 配置保存成功', duration: 2000 });
-      this.isApiKeyConfigured = !!(this.llmApiKey && this.llmApiKey.trim().length > 0);
-      this.loadProfile();
+      this.showToast({ message: 'API 配置保存成功', duration: 2000 });
+      await this.loadProfile();
     } else {
-      promptAction.showToast({ message: res.message || 'API 配置保存失败', duration: 2000 });
+      this.showToast({ message: res.message || 'API 配置保存失败', duration: 2000 });
     }
   }
 
@@ -564,10 +585,10 @@ export struct ProfileTab {
     payload.password = pass;
     const res = await HttpUtil.post('/users/', payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '用户创建成功', duration: 2000 });
+      this.showToast({ message: '用户创建成功', duration: 2000 });
       this.searchUsers();
     } else {
-      promptAction.showToast({ message: res.message || '用户创建失败', duration: 2000 });
+      this.showToast({ message: res.message || '用户创建失败', duration: 2000 });
     }
   }
 
@@ -590,7 +611,7 @@ export struct ProfileTab {
     const keyword = this.searchKeyword.trim();
     if (!keyword) {
       this.adminUsers = [];
-      promptAction.showToast({ message: '请输入姓名、工号或手机号', duration: 2000 });
+      this.showToast({ message: '请输入姓名、工号或手机号', duration: 2000 });
       return;
     }
 
@@ -600,7 +621,7 @@ export struct ProfileTab {
       this.adminUsers = listObj.map((item: Record<string, Object>): UserInfo => this.parseUser(item));
     } else {
       this.adminUsers = [];
-      promptAction.showToast({ message: res.message || '用户搜索失败', duration: 2000 });
+      this.showToast({ message: res.message || '用户搜索失败', duration: 2000 });
     }
   }
 
@@ -618,7 +639,7 @@ export struct ProfileTab {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       this.selectedUser = this.parseUser(dataObj);
     } else if (res.code !== 0) {
-      promptAction.showToast({ message: res.message || '用户详情加载失败', duration: 2000 });
+      this.showToast({ message: res.message || '用户详情加载失败', duration: 2000 });
     }
   }
 
@@ -650,28 +671,28 @@ export struct ProfileTab {
     const empId = encodeURIComponent(this.selectedUser.emp_id);
     const res = await HttpUtil.put(`/users/${empId}/role`, payload);
     if (res.code === 0 && res.data) {
-      promptAction.showToast({ message: '角色已更新', duration: 2000 });
+      this.showToast({ message: '角色已更新', duration: 2000 });
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       this.selectedUser = this.parseUser(dataObj);
       this.searchUsers();
     } else {
-      promptAction.showToast({ message: res.message || '角色更新失败', duration: 2000 });
+      this.showToast({ message: res.message || '角色更新失败', duration: 2000 });
     }
   }
 
   async resetSelectedUserPassword(): Promise<void> {
     if (!this.canOperateTarget(this.selectedUser)) {
-      promptAction.showToast({ message: '该用户不可操作', duration: 2000 });
+      this.showToast({ message: '该用户不可操作', duration: 2000 });
       return;
     }
 
     const nextPass = this.resetPassword.trim();
     if (nextPass.length < 6) {
-      promptAction.showToast({ message: '初始密码至少需要6位', duration: 2000 });
+      this.showToast({ message: '初始密码至少需要6位', duration: 2000 });
       return;
     }
     if (nextPass !== this.resetConfirmPassword.trim()) {
-      promptAction.showToast({ message: '两次输入的密码不一致', duration: 2000 });
+      this.showToast({ message: '两次输入的密码不一致', duration: 2000 });
       return;
     }
 
@@ -684,16 +705,16 @@ export struct ProfileTab {
       this.selectedUser = this.parseUser(dataObj);
       this.resetPassword = '';
       this.resetConfirmPassword = '';
-      promptAction.showToast({ message: '密码已初始化', duration: 2000 });
+      this.showToast({ message: '密码已初始化', duration: 2000 });
       this.searchUsers();
     } else {
-      promptAction.showToast({ message: res.message || '密码初始化失败', duration: 2000 });
+      this.showToast({ message: res.message || '密码初始化失败', duration: 2000 });
     }
   }
 
   async deleteSelectedUser(): Promise<void> {
     if (!this.canOperateTarget(this.selectedUser)) {
-      promptAction.showToast({ message: '该用户不可删除', duration: 2000 });
+      this.showToast({ message: '该用户不可删除', duration: 2000 });
       return;
     }
 
@@ -705,19 +726,24 @@ export struct ProfileTab {
     const empId = encodeURIComponent(this.selectedUser.emp_id);
     const res = await HttpUtil.del(`/users/${empId}`);
     if (res.code === 0) {
-      promptAction.showToast({ message: '用户已删除', duration: 2000 });
+      this.showToast({ message: '用户已删除', duration: 2000 });
       this.closeUserDetail();
       this.searchUsers();
     } else {
-      promptAction.showToast({ message: res.message || '删除用户失败', duration: 2000 });
+      this.showToast({ message: res.message || '删除用户失败', duration: 2000 });
     }
   }
 
-  handleLogout(): void {
+  async handleLogout(): Promise<void> {
+    await HttpUtil.post('/auth/logout');
     AppStorage.setOrCreate('access_token', '');
     AppStorage.setOrCreate('currentGroupId', 0);
-    SecurityUtil.removeSecureProp('access_token');
-    router.replaceUrl({ url: 'pages/Login' });
+    await SecurityUtil.removeSecureProp('access_token');
+    try {
+      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' });
+    } catch (error) {
+      console.warn('[Navigation] Failed to open login page:', JSON.stringify(error));
+    }
   }
 
   @Builder AppSymbol(name: string, color: ResourceColor, size: number) {
@@ -802,6 +828,7 @@ export struct ProfileTab {
     }
     .width(36)
     .height(36)
+    .padding(0)
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
@@ -828,19 +855,25 @@ export struct ProfileTab {
 
   @Builder WideIconTextButton(name: string, label: string, color: ResourceColor, background: ResourceColor, action: () => void) {
     Button() {
-      Row({ space: 6 }) {
+      Row({ space: 8 }) {
+        Blank()
+          .width(3)
+          .height(20)
+          .backgroundColor(name === 'trash' || name === 'logout' ? $r('app.color.app_danger') : $r('app.color.app_accent'))
         this.AppSymbol(name, color, 17)
         Text(label)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontColor(color)
+        Blank()
       }
       .width('100%')
-      .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
+      .padding({ left: 12, right: 12 })
     }
     .width('100%')
-    .height(42)
+    .height(44)
+    .padding(0)
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
@@ -848,20 +881,30 @@ export struct ProfileTab {
   }
 
   @Builder ProfileHeader() {
-    Row({ space: 16 }) {
+    Row({ space: 14 }) {
+      Blank()
+        .width(3)
+        .height(70)
+        .backgroundColor($r('app.color.app_accent'))
+
       Image(this.user.avatar ? this.user.avatar : $r('app.media.foreground'))
-        .width(76)
-        .height(76)
-        .borderRadius(38)
-        .backgroundColor($r('app.color.app_card_subtle_bg'))
+        .width(66)
+        .height(66)
+        .borderRadius(12)
+        .backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
         .onClick((): void => {
           this.chooseAvatar();
         })
 
-      Column({ space: 7 }) {
+      Column({ space: 5 }) {
+        Text('当前账号')
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_muted'))
+          .letterSpacing(0.4)
         Text(this.user.name || '加载中...')
-          .fontSize(22)
+          .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.app_text_primary'))
         Text(`工号: ${this.user.emp_id}`)
@@ -871,10 +914,7 @@ export struct ProfileTab {
         Row({ space: 8 }) {
           Text(this.roleLabel(this.user.role))
             .fontSize(12)
-            .fontColor($r('app.color.app_primary'))
-            .backgroundColor($r('app.color.app_primary_soft'))
-            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-            .borderRadius(8)
+            .fontColor($r('app.color.app_success'))
 
           if (this.user.phone.length > 0) {
             Text(this.user.phone)
@@ -894,8 +934,8 @@ export struct ProfileTab {
     .padding({ left: 18, right: 18, top: 18, bottom: 18 })
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
-    .borderRadius(8)
-    .margin({ top: 18 })
+    .borderRadius(10)
+    .margin({ top: 22 })
   }
 
   @Builder PageHeader(title: string) {
@@ -922,10 +962,8 @@ export struct ProfileTab {
       Stack() {
         this.AppSymbol(iconName, $r('app.color.app_primary'), 19)
       }
-      .width(34)
+      .width(28)
       .height(34)
-      .backgroundColor($r('app.color.app_primary_soft'))
-      .borderRadius(8)
 
       Column({ space: 4 }) {
         Text(title)
@@ -939,10 +977,8 @@ export struct ProfileTab {
       if (badge.length > 0) {
         Text(badge)
           .fontSize(12)
-          .fontColor($r('app.color.app_primary'))
-          .backgroundColor($r('app.color.app_primary_soft'))
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .borderRadius(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_warning'))
           .margin({ right: 10 })
       }
 
@@ -951,8 +987,7 @@ export struct ProfileTab {
     .width('100%')
     .padding({ left: 16, right: 14, top: 14, bottom: 14 })
     .backgroundColor($r('app.color.app_card_bg'))
-    .border({ width: 1, color: $r('app.color.app_border') })
-    .borderRadius(8)
+    .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
     .onClick((): void => {
       this.openPage(page);
     })
@@ -963,12 +998,12 @@ export struct ProfileTab {
       Column({ space: 14 }) {
         this.ProfileHeader()
 
-        Column({ space: 10 }) {
+        Column({ space: 0 }) {
           Text('账户')
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
-            .padding({ left: 2, top: 4 })
+            .padding({ left: 2, top: 12, bottom: 5 })
           this.MenuItem('个人信息', PAGE_INFO, '', 'info')
           this.MenuItem('账号安全', PAGE_SECURITY, '', 'lock')
           this.MenuItem('我的消息', PAGE_MESSAGES, this.invites.length > 0 ? `${this.invites.length}` : '', 'message')
@@ -977,7 +1012,7 @@ export struct ProfileTab {
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
-            .padding({ left: 2, top: 8 })
+            .padding({ left: 2, top: 18, bottom: 5 })
           this.MenuItem('新建小组', PAGE_CREATE_GROUP, '', 'groupAdd')
 
           if (this.isAdminUser()) {
@@ -990,7 +1025,7 @@ export struct ProfileTab {
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
-            .padding({ left: 2, top: 8 })
+            .padding({ left: 2, top: 18, bottom: 5 })
           this.MenuItem('模型 API', PAGE_API_CONFIG, '', 'api')
         }
         .width('90%')
@@ -1000,7 +1035,7 @@ export struct ProfileTab {
             this.handleLogout();
           })
         }
-        .width('90%')
+        .width(164)
         .justifyContent(FlexAlign.Center)
         .margin({ top: 8, bottom: 30 })
       }
@@ -1062,7 +1097,7 @@ export struct ProfileTab {
               this.editPhone = val;
             })
 
-          this.WideIconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+          this.WideIconTextButton('save', '保存', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
             this.submitEditProfile();
           })
         }
@@ -1110,7 +1145,7 @@ export struct ProfileTab {
             this.confirmPassword = val;
           })
 
-        this.WideIconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+        this.WideIconTextButton('save', '保存', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
           this.submitChangePassword();
         })
       }
@@ -1305,7 +1340,7 @@ export struct ProfileTab {
             this.newGroupName = val;
           })
 
-        this.WideIconTextButton('groupAdd', '创建', Color.White, $r('app.color.app_primary'), (): void => {
+        this.WideIconTextButton('groupAdd', '创建', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
           this.createGroup();
         })
       }
@@ -1337,7 +1372,7 @@ export struct ProfileTab {
               .layoutWeight(1)
               .height(42)
               .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor(this.isApiKeyConfigured ? '#F3F4F6' : $r('app.color.app_input_bg'))
+              .backgroundColor(this.isApiKeyConfigured ? $r('app.color.app_card_subtle_bg') : $r('app.color.app_input_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
               .borderRadius(8)
               .onChange((val: string): void => {
@@ -1359,8 +1394,8 @@ export struct ProfileTab {
                 .padding({ left: 8, right: 8 })
               }
               .height(42)
-              .backgroundColor('#FEF2F2')
-              .border({ width: 1, color: '#FCA5A5' })
+              .backgroundColor(Color.Transparent)
+              .border({ width: 1, color: $r('app.color.app_danger') })
               .borderRadius(8)
               .onClick((): void => {
                 this.confirmResetApiKey();
@@ -1391,7 +1426,7 @@ export struct ProfileTab {
               this.llmModel = val;
             })
 
-          this.WideIconTextButton('save', '保存', Color.White, $r('app.color.app_primary'), (): void => {
+          this.WideIconTextButton('save', '保存', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
             this.submitSaveApiConfig();
           })
         }
@@ -1521,7 +1556,7 @@ export struct ProfileTab {
                     this.resetConfirmPassword = val;
                   })
 
-                this.WideIconTextButton('key', '初始化密码', Color.White, $r('app.color.app_primary'), (): void => {
+                this.WideIconTextButton('key', '初始化密码', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
                   this.resetSelectedUserPassword();
                 })
               }
@@ -1542,15 +1577,17 @@ export struct ProfileTab {
                   Row({ space: 8 }) {
                     Button() {
                       Row({ space: 5 }) {
-                        this.AppSymbol('users', Color.White, 16)
+                        this.AppSymbol('users', $r('app.color.app_text_primary'), 16)
                         Text('管理员')
                           .fontSize(13)
-                          .fontColor(Color.White)
+                          .fontColor($r('app.color.app_text_primary'))
                       }
                     }
                       .layoutWeight(1)
                       .height(38)
-                      .backgroundColor($r('app.color.app_primary'))
+                      .backgroundColor(Color.Transparent)
+                      .border({ width: 1, color: $r('app.color.app_border') })
+                      .borderRadius(8)
                       .enabled(this.selectedUser.role !== 'admin')
                       .opacity(this.selectedUser.role !== 'admin' ? 1 : 0.5)
                       .onClick((): void => {
@@ -1559,15 +1596,17 @@ export struct ProfileTab {
 
                     Button() {
                       Row({ space: 5 }) {
-                        this.AppSymbol('info', Color.White, 16)
+                        this.AppSymbol('info', $r('app.color.app_text_primary'), 16)
                         Text('普通用户')
                           .fontSize(13)
-                          .fontColor(Color.White)
+                          .fontColor($r('app.color.app_text_primary'))
                       }
                     }
                       .layoutWeight(1)
                       .height(38)
-                      .backgroundColor($r('app.color.app_primary'))
+                      .backgroundColor(Color.Transparent)
+                      .border({ width: 1, color: $r('app.color.app_border') })
+                      .borderRadius(8)
                       .enabled(this.selectedUser.role !== 'user')
                       .opacity(this.selectedUser.role !== 'user' ? 1 : 0.5)
                       .onClick((): void => {
@@ -1608,6 +1647,7 @@ export struct ProfileTab {
                       .height(38)
                       .backgroundColor($r('app.color.app_card_subtle_bg'))
                       .border({ width: 1, color: $r('app.color.app_border') })
+                      .borderRadius(8)
                       .onClick((): void => {
                         this.deleteConfirm = false;
                       })
@@ -1623,13 +1663,14 @@ export struct ProfileTab {
                       .layoutWeight(1)
                       .height(38)
                       .backgroundColor($r('app.color.app_danger'))
+                      .borderRadius(8)
                       .onClick((): void => {
                         this.deleteSelectedUser();
                       })
                   }
                   .width('100%')
                 } else {
-                  this.WideIconTextButton('trash', '删除用户', Color.White, $r('app.color.app_danger'), (): void => {
+                  this.WideIconTextButton('trash', '删除用户', $r('app.color.app_danger'), Color.Transparent, (): void => {
                     this.deleteSelectedUser();
                   })
                 }
@@ -1768,7 +1809,7 @@ export struct ProfileTab {
             this.searchUsers();
           })
 
-          this.IconTextButton('groupAdd', '新建', Color.White, $r('app.color.app_primary'), (): void => {
+          this.IconTextButton('groupAdd', '新建', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
             this.createUserDialogController.open();
           })
         }

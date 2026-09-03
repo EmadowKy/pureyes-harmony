@@ -8,7 +8,7 @@ function stringToUint8Array(str: string): Uint8Array {
 
 function uint8ArrayToString(arr: Uint8Array): string {
   const decoder = new util.TextDecoder('utf-8');
-  return decoder.decodeWithStream(arr);
+  return decoder.decodeToString(arr);
 }
 
 export class SecurityUtil {

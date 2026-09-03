@@ -3,13 +3,16 @@ import asyncio
 import time
 import os
 import json
+import math
 from typing import List, Dict, Any, Optional, Callable
 from .database import SpatiotemporalDB
 from .agents import ReActParser, ReActTools, ReActSystemPrompt
 from .pipeline import JITVideoPipeline
+from app.core.tool_security import resolve_selected_video
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class MVA2Runner:
     def __init__(self, db_client: SpatiotemporalDB = None):
@@ -33,7 +36,12 @@ class MVA2Runner:
             sample_fps = meta.get("sample_fps", 1.0)
             resolution = meta.get("resolution", "1080P")
 
-            has_records = any(rec['video_id'] == v_id for rec in self.db.records)
+            workspace_id = meta.get("workspace_id")
+            has_records = any(
+                rec.get("video_id") == v_id
+                and (workspace_id is None or rec.get("workspace_id") in (None, workspace_id))
+                for rec in self.db.snapshot()
+            )
             if not has_records:
                 if progress_callback:
                     progress_callback({
@@ -41,13 +49,21 @@ class MVA2Runner:
                         "status": "started",
                         "message": f"正在扫描视频 {idx}/{len(video_items)} ({item['remark']})..."
                     })
-                await self.pipeline.process_clip(v_path, v_id, start_s, end_s, sample_fps=sample_fps, resolution=resolution)
+                await self.pipeline.process_clip(
+                    v_path,
+                    v_id,
+                    start_s,
+                    end_s,
+                    sample_fps=sample_fps,
+                    resolution=resolution,
+                    workspace_id=meta.get("workspace_id"),
+                )
 
         # 阶段一：组装全多视频元数据 Prompt
         videos_meta_text = []
         for idx, item in enumerate(video_items, 1):
             videos_meta_text.append(
-                f"  - 视频 {idx} (序号: \"{idx}\", 视频名称/备注: \"{item['remark']}\", 文件名: \"{item['video_id']}\", 时长: {item['duration']:.1f}秒, 绝对路径: \"{os.path.abspath(item['video_path'])}\")"
+                f"  - 视频 {idx} (序号: \"{idx}\", 视频名称/备注: \"{item['remark']}\", 文件名: \"{item['video_id']}\", 时长: {item['duration']:.1f}秒)"
             )
         videos_summary_str = "\n".join(videos_meta_text)
 
@@ -106,8 +122,7 @@ class MVA2Runner:
                 vlm_response = Qwen_VL(messages)
             except Exception as e:
                 logger.error(f"VLM call failed: {e}")
-                final_answer_result = f"多模态推理失败: {str(e)}"
-                break
+                raise RuntimeError("多模态推理服务调用失败") from e
 
             thought, tool_name, tool_params, final_answer = ReActParser.parse_response(vlm_response)
 
@@ -157,9 +172,16 @@ class MVA2Runner:
                     if tool_name == "spatiotemporal_search":
                         q_type = tool_params.get("query_type", "semantic")
                         q_text = tool_params.get("query_text", "")
-                        v_id = tool_params.get("video_id") or video_items[0]["video_id"]
-                        res = self.tools.spatiotemporal_search(q_type, q_text, v_id)
-                        observation = f"系统观察反馈 (特征库检索结果):\n{json.dumps(res, ensure_ascii=False)}"
+                        selected_video = resolve_selected_video(video_items, tool_params)
+                        if not selected_video:
+                            observation = "错误: video_id 不属于本次用户选择的视频列表。"
+                        else:
+                            res = self.tools.spatiotemporal_search(
+                                q_type,
+                                q_text,
+                                selected_video["video_id"],
+                            )
+                            observation = f"系统观察反馈 (特征库检索结果):\n{json.dumps(res, ensure_ascii=False)}"
                         
                         # 构造纯文本观察追加给消息上下文
                         messages.append({
@@ -168,21 +190,22 @@ class MVA2Runner:
                         })
                         
                     elif tool_name == "read_frame_image":
-                        v_id = tool_params.get("video_id")
-                        v_path = tool_params.get("video_path")
-                        if not v_path:
-                            for vi in video_items:
-                                if v_id and (v_id == vi["video_id"] or v_id in vi["video_path"]):
-                                    v_path = vi["video_path"]
-                                    v_id = vi["video_id"]
-                                    break
-                            if not v_path:
-                                v_path = video_items[0]["video_path"]
-                                v_id = video_items[0]["video_id"]
-                                
+                        selected_video = resolve_selected_video(video_items, tool_params)
+                        if not selected_video:
+                            observation = "错误: 请求的视频不属于本次用户选择的视频列表。"
+                            messages.append({"role": "user", "content": observation})
+                            continue
                         t_sec = float(tool_params.get("timestamp_sec", 0.0))
-                        
-                        img_path = self.tools.read_frame_image(v_path, t_sec, v_id)
+                        if not math.isfinite(t_sec) or t_sec < 0 or t_sec > float(selected_video.get("duration") or 0):
+                            observation = "错误: 截图时间超出所选视频范围。"
+                            messages.append({"role": "user", "content": observation})
+                            continue
+
+                        img_path = self.tools.read_frame_image(
+                            selected_video["video_path"],
+                            t_sec,
+                            selected_video["video_id"],
+                        )
                         if img_path and os.path.exists(img_path):
                             temp_files_to_clean.append(img_path)
                             # 构造图文混排观察追加给多模态大模型
@@ -202,9 +225,12 @@ class MVA2Runner:
                             })
                             
                     elif tool_name == "get_video_metadata":
-                        v_p = tool_params.get("video_path") or video_items[0]["video_path"]
-                        res = self.tools.get_video_metadata(v_p)
-                        observation = f"系统观察反馈 (视频元数据):\n{json.dumps(res, ensure_ascii=False)}"
+                        selected_video = resolve_selected_video(video_items, tool_params)
+                        if not selected_video:
+                            observation = "错误: 请求的视频不属于本次用户选择的视频列表。"
+                        else:
+                            res = self.tools.get_video_metadata(selected_video["video_path"])
+                            observation = f"系统观察反馈 (视频元数据):\n{json.dumps(res, ensure_ascii=False)}"
                         messages.append({
                             "role": "user",
                             "content": observation
@@ -324,9 +350,10 @@ class MVA2Runner:
             )
         except Exception as e:
             logger.error(f"Error processing multi-videos: {e}")
-            import traceback
-            traceback.print_exc()
-            final_answer = f"分析多视频时发生异常: {str(e)}"
+            return {
+                "error": "多视频分析失败，请稍后重试。",
+                "success": False,
+            }
         
         return {
             "predicted_answer": final_answer,

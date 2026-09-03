@@ -57,19 +57,20 @@ sequenceDiagram
     participant Engine as MVA_v2 Engine (pipeline & agents)
     participant LLM as 多模态视觉大模型 API
 
-    Dev->>Backend: POST /api/workspaces/:id/videos (上传/添加视频)
+    Dev->>Backend: POST /api/workspaces/:id/upload-video (上传视频源)
+    Dev->>Backend: POST /api/workspaces/:id/segments (创建切片)
     Backend->>Engine: 异步启动采样切片 (Sample FPS=1.0, 1080P)
     Engine->>Engine: FFmpeg 抽帧 + YOLOv8/ByteTrack 生成 TrackID 与向量库
     Engine->>DB: 更新 WorkspaceVideoSegment 状态为 completed
-    Dev->>Backend: GET /api/workspaces/:id/videos (长轮询/刷新进度)
+    Dev->>Backend: GET /api/workspaces/:id/segments (刷新预处理进度)
     Backend-->>Dev: 返回切片就绪 (status: completed)
 
-    Dev->>Backend: POST /api/qa/ask (包含 video_segment_id, prompt)
+    Dev->>Backend: POST /api/workspaces/:id/qa (包含 segment_ids, question)
     Backend->>Engine: 启动 ReAct Agent (Thought -> Tool Call -> Observation)
     Engine->>LLM: 图像序列/TrackID + System Prompt 输入大模型
     LLM-->>Engine: 生成结构化 JSON (时间戳、片段描述、置信度)
     Engine->>DB: 保存问答记录 QARecord
-    Backend-->>Dev: 200 OK (返回时间戳、关键帧 URL、文本回答)
+    Backend-->>Dev: 返回 task_id，客户端轮询状态并展示文本回答
     Dev->>Dev: 高亮关键帧与时间轴，点击自动跳帧播放
 ```
 
@@ -77,8 +78,8 @@ sequenceDiagram
 
 ## 3. 通信协议与数据格式
 
-- **传输协议**：HTTP/1.1 与 HTTP/2（可选 HTTPS 传输加密）。
+- **传输协议**：HTTP/1.1 与 HTTP/2；生产部署必须在反向代理层启用 HTTPS。
 - **数据交互格式**：全站使用标准 `application/json` 规范。
 - **静态资源与流媒体**：
-  - 抓拍快照与缩略图：`/api/monitors/:id/cover` 或 `/static/uploads/...`
-  - 视频切片流：支持 HTTP Range 请求的分段视频流播放（用于精准秒级跳帧）。
+  - 抓拍快照与缩略图：使用服务端签发的限时 `media_token` 地址。
+  - 视频切片流：`/api/video/...` 支持 HTTP Range 请求；每次访问同时校验签名范围和当前小组成员关系。

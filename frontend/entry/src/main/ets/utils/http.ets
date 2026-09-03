@@ -5,7 +5,6 @@ export const OFFICIAL_BASE_HOST = 'http://116.62.178.139:8000';
 
 // 初始化持久化存储，确保跨应用退出/重启仍然保留服务器地址偏好
 try {
-  PersistentStorage.persistProp('access_token', '');
   PersistentStorage.persistProp('custom_server_url', '');
   PersistentStorage.persistProp('is_custom_server', false);
 } catch (e) {

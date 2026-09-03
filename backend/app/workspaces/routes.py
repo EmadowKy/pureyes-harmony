@@ -1,6 +1,7 @@
 import uuid
 import time
 import re
+import math
 from datetime import datetime
 from flask import request, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -9,6 +10,7 @@ from app.models.workspace import Workspace, WorkspaceVideoSegment
 from app.models.group import GroupMember
 from app.models.qa_record import QARecord, QAVideoSelection
 from app.core.response import success, fail
+from app.core.media_auth import build_media_url, path_scope
 from . import workspaces_bp
 
 @workspaces_bp.post("/<int:group_id>")
@@ -55,6 +57,95 @@ from flask import current_app
 
 # Global in-memory running tasks registry
 running_tasks = {}
+TASK_MEMORY_RETENTION_SECONDS = 3600
+
+
+def _prune_running_tasks():
+    cutoff = time.time() - TASK_MEMORY_RETENTION_SECONDS
+    for task_id, task in list(running_tasks.items()):
+        finished_at = task.get("finished_at")
+        if finished_at and finished_at < cutoff:
+            running_tasks.pop(task_id, None)
+
+ALLOWED_VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+ALLOWED_PREPROCESS_RESOLUTIONS = {"480P", "720P", "1080P", "4K"}
+
+
+def _require_workspace_member(workspace_id, emp_id=None):
+    workspace = db.session.get(Workspace, workspace_id)
+    if not workspace:
+        return None, fail(message="workspace not found", code=5003, http_status=404)
+    member = GroupMember.query.filter_by(
+        group_id=workspace.group_id,
+        emp_id=emp_id or get_jwt_identity(),
+        status="accepted",
+    ).first()
+    if not member:
+        return None, fail(message="not a group member", code=5001, http_status=403)
+    return workspace, None
+
+
+def _parse_preprocess_options(data):
+    try:
+        sample_fps = float(data.get("sample_fps", 1.0))
+    except (TypeError, ValueError):
+        return None, None, fail(message="sample_fps must be a number", code=5016, http_status=400)
+    if not math.isfinite(sample_fps) or sample_fps <= 0 or sample_fps > 30:
+        return None, None, fail(message="sample_fps must be greater than 0 and at most 30", code=5016, http_status=400)
+
+    resolution = str(data.get("resolution", "1080P")).upper()
+    if resolution not in ALLOWED_PREPROCESS_RESOLUTIONS:
+        return None, None, fail(message="unsupported resolution", code=5017, http_status=400)
+    return sample_fps, resolution, None
+
+
+def _is_path_within(path, root):
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(root)]) == os.path.abspath(root)
+    except ValueError:
+        return False
+
+
+def _backend_root():
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _remove_backend_file(relative_path):
+    """Best-effort removal restricted to backend-owned storage."""
+    if not relative_path:
+        return False
+    root = os.path.abspath(_backend_root())
+    full_path = os.path.abspath(os.path.join(root, relative_path))
+    if not _is_path_within(full_path, root) or not os.path.isfile(full_path):
+        return False
+    try:
+        os.remove(full_path)
+        return True
+    except OSError as exc:
+        print(f"[Storage Cleanup] Failed to remove {full_path}: {exc}")
+        return False
+
+
+def _clear_segment_face_records(segment_id):
+    """Remove a segment's face rows and return files to delete after commit."""
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+
+    records = WorkspaceFaceRecord.query.filter_by(segment_id=segment_id).all()
+    group_ids = {record.group_id for record in records}
+    paths_to_remove = [record.crop_path for record in records if record.crop_path]
+    for record in records:
+        db.session.delete(record)
+    db.session.flush()
+
+    for group_id in group_ids:
+        group = db.session.get(WorkspaceFaceGroup, group_id)
+        if group and WorkspaceFaceRecord.query.filter_by(group_id=group_id).count() == 0:
+            if group.avatar_path:
+                paths_to_remove.append(group.avatar_path)
+            db.session.delete(group)
+    db.session.flush()
+
+    return paths_to_remove
 
 def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.0, resolution="1080P"):
     with app.app_context():
@@ -96,16 +187,27 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
             BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             abs_filepath = os.path.join(BACKEND_DIR, filepath)
             
-            asyncio.run(pipeline.process_clip(abs_filepath, video_id, 0.0, duration, progress_callback=progress_callback, sample_fps=sample_fps, resolution=resolution))
+            asyncio.run(pipeline.process_clip(
+                abs_filepath,
+                video_id,
+                0.0,
+                duration,
+                progress_callback=progress_callback,
+                sample_fps=sample_fps,
+                resolution=resolution,
+                workspace_id=seg.workspace_id if seg else None,
+            ))
             
-            db_client.flush()
+            # The segment may have been removed while a long analysis was running.
+            db.session.expire_all()
+            seg = WorkspaceVideoSegment.query.filter_by(filepath=filepath).first()
+            if not seg:
+                db_client.delete_video(video_id)
+                return
 
             # 执行新增工序：人脸识别检测、归类与连贯时间段聚合
-            try:
-                if seg:
-                    process_segment_face_recognition(seg.workspace_id, seg.id, abs_filepath, seg.video_name or seg.filepath, sample_fps)
-            except Exception as face_err:
-                print(f"[FACE EXTRACTION ERROR] {face_err}")
+            if seg:
+                process_segment_face_recognition(seg.workspace_id, seg.id, abs_filepath, seg.video_name or seg.filepath, sample_fps)
 
             # 更新状态为 completed
             db.session.query(WorkspaceVideoSegment).filter_by(filepath=filepath).update({
@@ -130,6 +232,8 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
     2. 将连续或间隔很短 (<= 3.5s) 的检测帧合成为一条包含起止时间段的轨迹记录
     3. 与工作区现有人脸库进行归类聚类 (Group Classifier)
     """
+    stale_face_paths = []
+    created_face_paths = []
     try:
         import cv2
         import numpy as np
@@ -147,8 +251,13 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
 
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         face_cascade = cv2.CascadeClassifier(cascade_path)
+        if face_cascade.empty():
+            raise RuntimeError("unable to load face detector")
 
         cap = cv2.VideoCapture(abs_filepath)
+        if not cap.isOpened():
+            cap.release()
+            raise RuntimeError("unable to open segment for face preprocessing")
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps <= 0:
             fps = 30.0
@@ -196,7 +305,12 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
 
         cap.release()
 
+        # 重跑时先清除该片段旧的人脸轨迹，避免重复记录和孤立裁图。
+        stale_face_paths = _clear_segment_face_records(segment_id)
         if not raw_hits:
+            db.session.commit()
+            for stale_path in stale_face_paths:
+                _remove_backend_file(stale_path)
             return
 
         # 连贯时间段聚合算法
@@ -249,7 +363,9 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
             crop_filename = f"crop_ws{workspace_id}_seg{segment_id}_{int(start_sec)}_{uuid.uuid4().hex[:6]}.jpg"
             rel_crop_path = os.path.join("storage", "faces", crop_filename)
             abs_crop_path = os.path.join(BACKEND_DIR, rel_crop_path)
-            cv2.imwrite(abs_crop_path, best_hit['crop_img'])
+            if not cv2.imwrite(abs_crop_path, best_hit['crop_img']):
+                raise RuntimeError("unable to save face crop")
+            created_face_paths.append(rel_crop_path)
 
             matched_group_id = None
             max_sim = -1.0
@@ -266,7 +382,9 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
                 avatar_filename = f"avatar_ws{workspace_id}_g{next_num}_{uuid.uuid4().hex[:6]}.jpg"
                 rel_avatar_path = os.path.join("storage", "faces", avatar_filename)
                 abs_avatar_path = os.path.join(BACKEND_DIR, rel_avatar_path)
-                cv2.imwrite(abs_avatar_path, best_hit['crop_img'])
+                if not cv2.imwrite(abs_avatar_path, best_hit['crop_img']):
+                    raise RuntimeError("unable to save face avatar")
+                created_face_paths.append(rel_avatar_path)
 
                 new_group = WorkspaceFaceGroup(
                     workspace_id=workspace_id,
@@ -293,10 +411,20 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
             db.session.add(record)
 
         db.session.commit()
+        for stale_path in stale_face_paths:
+            _remove_backend_file(stale_path)
         print(f"[FACE RECOGNITION] Successfully processed face recognition for segment {segment_id}. Detected {len(aggregated_tracks)} tracks.")
 
     except Exception as err:
+        try:
+            cap.release()
+        except (NameError, UnboundLocalError):
+            pass
+        db.session.rollback()
+        for created_path in created_face_paths:
+            _remove_backend_file(created_path)
         print(f"[FACE RECOGNITION ERROR] Failed to process face recognition: {err}")
+        raise RuntimeError("face recognition preprocessing failed") from err
 
 def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
     with app.app_context():
@@ -327,7 +455,7 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
             running_tasks[task_id]['progress'].append(model_init)
             running_tasks[task_id]['progress_queue'].put(model_init)
 
-            record = QARecord.query.get(task_id)
+            record = db.session.get(QARecord, task_id)
             if not record:
                 raise RuntimeError("QA 记录未找到。")
 
@@ -404,7 +532,7 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
             running_tasks[task_id]['progress_queue'].put(complete_entry)
 
             # Save to Database
-            record = QARecord.query.get(task_id)
+            record = db.session.get(QARecord, task_id)
             if record:
                 record.status = "completed"
                 record.answer = answer
@@ -414,6 +542,7 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
 
             running_tasks[task_id]['status'] = "completed"
             running_tasks[task_id]['answer'] = answer
+            running_tasks[task_id]['finished_at'] = time.time()
 
         except Exception as e:
             import traceback
@@ -423,24 +552,24 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
             error_entry = {
                 "stage": "system",
                 "status": "failed",
-                "message": f"分析发生错误：{str(e)}\n{tb_str}",
+                "message": f"分析发生错误：{str(e)}",
                 "data": {}
             }
             running_tasks[task_id]['progress'].append(error_entry)
             running_tasks[task_id]['progress_queue'].put(error_entry)
 
             # Save failure to Database
-            record = QARecord.query.get(task_id)
+            record = db.session.get(QARecord, task_id)
             if record:
                 record.status = "failed"
-                record.answer = f"分析发生错误：{str(e)}\n{tb_str}"
+                record.answer = f"分析发生错误：{str(e)}"
                 import json
                 record.progress_json = json.dumps(running_tasks[task_id]['progress'])
                 db.session.commit()
 
             running_tasks[task_id]['status'] = "failed"
             running_tasks[task_id]['error'] = str(e)
-            running_tasks[task_id]['traceback'] = tb_str
+            running_tasks[task_id]['finished_at'] = time.time()
 
 
 def _get_video_duration(video_path):
@@ -492,6 +621,10 @@ def get_example_videos():
         results.append({
             "name": vf,
             "url": f"example/{vf}",
+            "media_url": build_media_url(
+                f"/api/video/example/{vf}",
+                path_scope(f"example/{vf}"),
+            ),
             "duration": duration
         })
         
@@ -502,21 +635,35 @@ def get_example_videos():
 @jwt_required()
 def submit_qa(workspace_id):
     emp_id = get_jwt_identity()
-    workspace = Workspace.query.get(workspace_id)
+    workspace = db.session.get(Workspace, workspace_id)
     if not workspace:
         return fail(message="workspace not found", code=5003, http_status=404)
         
     member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=5001, http_status=403)
-        
     data = request.get_json() or {}
     question = data.get("question")
     segment_ids = data.get("segment_ids", [])
-    
-    if not question or not segment_ids:
+
+    if not isinstance(question, str) or not question.strip() or not isinstance(segment_ids, list) or not segment_ids:
         return fail(message="question and segment_ids are required", code=5004, http_status=400)
-        
+    question = question.strip()
+    if len(question) > 4000:
+        return fail(message="question is too long", code=5022, http_status=400)
+    if len(segment_ids) > 20 or any(type(segment_id) is not int for segment_id in segment_ids):
+        return fail(message="segment_ids must contain at most 20 integer IDs", code=5023, http_status=400)
+    segment_ids = list(dict.fromkeys(segment_ids))
+
+    selected_segments = []
+    for seg_id in segment_ids:
+        segment = WorkspaceVideoSegment.query.filter_by(id=seg_id, workspace_id=workspace_id).first()
+        if not segment:
+            return fail(message=f"segment {seg_id} not found in this workspace", code=5011, http_status=404)
+        if segment.status == "processing":
+            return fail(message=f"segment {seg_id} preprocessing is still running", code=5021, http_status=409)
+        selected_segments.append(segment)
+
     task_id = uuid.uuid4().hex
     record = QARecord(id=task_id, workspace_id=workspace_id, creator_id=emp_id, question=question, status="processing")
     db.session.add(record)
@@ -525,11 +672,7 @@ def submit_qa(workspace_id):
     segment_metas = []
     from datetime import timedelta
     base_time = datetime(2026, 6, 27, 0, 0, 0)
-    for seg_id in segment_ids:
-        segment = WorkspaceVideoSegment.query.filter_by(id=seg_id, workspace_id=workspace_id).first()
-        if not segment:
-            return fail(message=f"segment {seg_id} not found in this workspace", code=5011, http_status=404)
-        
+    for segment in selected_segments:
         video_paths.append(segment.filepath)
         segment_metas.append(segment.to_dict())
         
@@ -537,6 +680,7 @@ def submit_qa(workspace_id):
         qvs = QAVideoSelection(
             record_id=task_id,
             monitor_id=0,
+            segment_id=segment.id,
             start_time=base_time + timedelta(seconds=segment.start_offset),
             end_time=base_time + timedelta(seconds=segment.end_offset)
         )
@@ -545,8 +689,10 @@ def submit_qa(workspace_id):
     db.session.commit()
     
     # Initialize in-memory task tracker
+    _prune_running_tasks()
     running_tasks[task_id] = {
         "status": "processing",
+        "created_at": time.time(),
         "progress": [
             {
                 "stage": "metadata",
@@ -574,7 +720,7 @@ def submit_qa(workspace_id):
 @jwt_required()
 def list_qa_records(workspace_id):
     emp_id = get_jwt_identity()
-    workspace = Workspace.query.get(workspace_id)
+    workspace = db.session.get(Workspace, workspace_id)
     if not workspace:
         return fail(message="workspace not found", code=5003, http_status=404)
         
@@ -596,6 +742,14 @@ def list_qa_records(workspace_id):
 @workspaces_bp.get("/qa/<task_id>/status")
 @jwt_required()
 def get_qa_status(task_id):
+    emp_id = get_jwt_identity()
+    record = db.session.get(QARecord, task_id)
+    if not record:
+        return fail(message="task not found", code=5005, http_status=404)
+    _, error = _require_workspace_member(record.workspace_id, emp_id)
+    if error:
+        return error
+
     # Fetch from memory if running, otherwise database
     if task_id in running_tasks:
         task_info = running_tasks[task_id]
@@ -607,10 +761,6 @@ def get_qa_status(task_id):
             "video_paths": task_info.get("video_paths", [])
         })
     else:
-        record = QARecord.query.get(task_id)
-        if not record:
-            return fail(message="task not found", code=5005, http_status=404)
-            
         progress_data = []
         if record.progress_json:
             try:
@@ -640,6 +790,11 @@ def get_qa_status(task_id):
             base_time = datetime(2026, 6, 27, 0, 0, 0)
             sels = QAVideoSelection.query.filter_by(record_id=task_id).all()
             for s in sels:
+                if s.segment_id:
+                    seg = db.session.get(WorkspaceVideoSegment, s.segment_id)
+                    if seg and seg.workspace_id == record.workspace_id:
+                        video_paths.append(seg.filepath)
+                        continue
                 start_offset = (s.start_time - base_time).total_seconds()
                 end_offset = (s.end_time - base_time).total_seconds()
                 seg = WorkspaceVideoSegment.query.filter(
@@ -664,13 +819,18 @@ def get_qa_status(task_id):
 
 
 @workspaces_bp.get("/qa/<task_id>/stream")
+@jwt_required()
 def qa_stream(task_id):
+    emp_id = get_jwt_identity()
+    record = db.session.get(QARecord, task_id)
+    if not record:
+        return fail(message="task not found", code=5005, http_status=404)
+    _, error = _require_workspace_member(record.workspace_id, emp_id)
+    if error:
+        return error
+
     # SSE stream endpoint
     if task_id not in running_tasks:
-        record = QARecord.query.get(task_id)
-        if not record:
-            return "Not found", 404
-            
         def generate_static():
             import json
             yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id})}\n\n"
@@ -712,11 +872,11 @@ def qa_stream(task_id):
 @jwt_required()
 def delete_qa_record(task_id):
     emp_id = get_jwt_identity()
-    record = QARecord.query.get(task_id)
+    record = db.session.get(QARecord, task_id)
     if not record:
         return fail(message="record not found", code=5005, http_status=404)
         
-    workspace = Workspace.query.get(record.workspace_id)
+    workspace = db.session.get(Workspace, record.workspace_id)
     member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=5001, http_status=403)
@@ -887,7 +1047,7 @@ def get_workspace_video_sources(workspace_id):
     按监控设备为单位展示，隐藏底层一分钟切片细节。
     """
     emp_id = get_jwt_identity()
-    workspace = Workspace.query.get(workspace_id)
+    workspace = db.session.get(Workspace, workspace_id)
     if not workspace:
         return fail(message="workspace not found", code=5003, http_status=404)
 
@@ -940,7 +1100,7 @@ def get_workspace_video_sources(workspace_id):
         })
 
     # 2. 查询用户上传的视频 (Uploaded Videos)
-    upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads"))
+    upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads", str(workspace_id)))
     if os.path.exists(upload_dir) and os.path.isdir(upload_dir):
         uploaded_files = [f for f in os.listdir(upload_dir) if f.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
         uploaded_files.sort(key=lambda x: os.path.getmtime(os.path.join(upload_dir, x)), reverse=True)
@@ -951,8 +1111,12 @@ def get_workspace_video_sources(workspace_id):
                 "id": f"upload_{uf}",
                 "name": f"已上传:{uf}",
                 "raw_filename": uf,
-                "filepath": f"storage/uploads/{uf}",
-                "url": f"storage/uploads/{uf}",
+                "filepath": f"storage/uploads/{workspace_id}/{uf}",
+                "url": f"storage/uploads/{workspace_id}/{uf}",
+                "media_url": build_media_url(
+                    f"/api/video/storage/uploads/{workspace_id}/{uf}",
+                    path_scope(f"storage/uploads/{workspace_id}/{uf}"),
+                ),
                 "duration": duration,
                 "source_type": "upload",
                 "monitor_id": None,
@@ -972,6 +1136,10 @@ def get_workspace_video_sources(workspace_id):
                 "raw_filename": ef,
                 "filepath": f"../example/{ef}",
                 "url": f"example/{ef}",
+                "media_url": build_media_url(
+                    f"/api/video/example/{ef}",
+                    path_scope(f"example/{ef}"),
+                ),
                 "duration": duration,
                 "source_type": "example",
                 "monitor_id": None,
@@ -988,7 +1156,7 @@ def upload_workspace_video(workspace_id):
     直接上传本地视频到工作区存储库。
     """
     emp_id = get_jwt_identity()
-    workspace = Workspace.query.get(workspace_id)
+    workspace = db.session.get(Workspace, workspace_id)
     if not workspace:
         return fail(message="workspace not found", code=5003, http_status=404)
 
@@ -1008,7 +1176,7 @@ def upload_workspace_video(workspace_id):
         return fail(message="unsupported video format", code=5012, http_status=400)
 
     BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads"))
+    upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads", str(workspace_id)))
     os.makedirs(upload_dir, exist_ok=True)
 
     from werkzeug.utils import secure_filename
@@ -1024,8 +1192,12 @@ def upload_workspace_video(workspace_id):
         "id": f"upload_{saved_filename}",
         "name": f"已上传:{orig_name}",
         "raw_filename": saved_filename,
-        "filepath": f"storage/uploads/{saved_filename}",
-        "url": f"storage/uploads/{saved_filename}",
+        "filepath": f"storage/uploads/{workspace_id}/{saved_filename}",
+        "url": f"storage/uploads/{workspace_id}/{saved_filename}",
+        "media_url": build_media_url(
+            f"/api/video/storage/uploads/{workspace_id}/{saved_filename}",
+            path_scope(f"storage/uploads/{workspace_id}/{saved_filename}"),
+        ),
         "duration": duration,
         "source_type": "upload"
     }
@@ -1037,7 +1209,7 @@ def upload_workspace_video(workspace_id):
 @jwt_required()
 def create_video_segment(workspace_id):
     emp_id = get_jwt_identity()
-    workspace = Workspace.query.get(workspace_id)
+    workspace = db.session.get(Workspace, workspace_id)
     if not workspace:
         return fail(message="workspace not found", code=5003, http_status=404)
         
@@ -1057,8 +1229,9 @@ def create_video_segment(workspace_id):
     end_offset = data.get("end_offset")
     remark = data.get("remark") or ""
     enable_preprocess = data.get("enable_preprocess", True)
-    sample_fps = float(data.get("sample_fps", 1.0))
-    resolution = str(data.get("resolution", "1080P"))
+    sample_fps, resolution, option_error = _parse_preprocess_options(data)
+    if option_error:
+        return option_error
 
     from app.monitors.slicer import SLICE_OUTPUT_BASE
     from app.core.config import get_ffmpeg_path
@@ -1075,13 +1248,16 @@ def create_video_segment(workspace_id):
         if not monitor_id or not start_time or not end_time:
             return fail(message="monitor_id, start_time, and end_time are required for monitor slicing", code=5014, http_status=400)
 
+        from app.models.monitor import Monitor
+        mon_obj = db.session.get(Monitor, monitor_id)
+        if not mon_obj or mon_obj.group_id != workspace.group_id:
+            return fail(message="monitor not found in this workspace group", code=5018, http_status=404)
+
         ok, msg, seg_duration = slice_and_concat_monitor_stream(monitor_id, start_time, end_time, sim_output_path)
         if not ok:
             return fail(message=msg, code=5015, http_status=400)
 
-        from app.models.monitor import Monitor
-        mon_obj = Monitor.query.get(monitor_id)
-        mon_name = mon_obj.name if mon_obj else f"监控设备#{monitor_id}"
+        mon_name = mon_obj.name
         display_video_name = f"{mon_name} ({start_time} - {end_time})"
 
         segment = WorkspaceVideoSegment(
@@ -1115,39 +1291,33 @@ def create_video_segment(workspace_id):
     if (not video_name and not filepath_param) or start_offset is None or end_offset is None:
         return fail(message="video_name/filepath, start_offset, and end_offset are required", code=5006, http_status=400)
 
-    start_offset = float(start_offset)
-    end_offset = float(end_offset)
-    duration = max(0.1, end_offset - start_offset)
+    try:
+        start_offset = float(start_offset)
+        end_offset = float(end_offset)
+    except (TypeError, ValueError):
+        return fail(message="start_offset and end_offset must be numbers", code=5019, http_status=400)
+    if not math.isfinite(start_offset) or not math.isfinite(end_offset) or start_offset < 0 or end_offset <= start_offset:
+        return fail(message="end_offset must be greater than start_offset", code=5019, http_status=400)
+    duration = end_offset - start_offset
+    if duration > 7200:
+        return fail(message="a segment cannot exceed 2 hours", code=5019, http_status=400)
 
     src_video_path = None
+    workspace_upload_dir = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads", str(workspace_id)))
+    example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
+    allowed_source_roots = (workspace_upload_dir, example_dir)
     if filepath_param:
         abs_p = os.path.abspath(os.path.join(BACKEND_DIR, filepath_param))
-        if os.path.exists(abs_p) and os.path.isfile(abs_p):
+        if any(_is_path_within(abs_p, root) for root in allowed_source_roots) and os.path.isfile(abs_p):
             src_video_path = abs_p
 
     if not src_video_path and video_name:
-        cand_direct = os.path.abspath(os.path.join(BACKEND_DIR, video_name))
-        if os.path.exists(cand_direct) and os.path.isfile(cand_direct):
-            src_video_path = cand_direct
-
-        if not src_video_path:
-            cand_up = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "uploads", video_name))
-            if os.path.exists(cand_up):
-                src_video_path = cand_up
-
-        if not src_video_path:
-            streams_base = os.path.abspath(os.path.join(BACKEND_DIR, "storage", "streams"))
-            if os.path.exists(streams_base):
-                for root, dirs, files in os.walk(streams_base):
-                    if video_name in files:
-                        src_video_path = os.path.join(root, video_name)
-                        break
-
-        if not src_video_path:
-            example_dir = os.path.abspath(os.path.join(BACKEND_DIR, "..", "example"))
-            cand_ex = os.path.join(example_dir, video_name)
-            if os.path.exists(cand_ex):
-                src_video_path = cand_ex
+        safe_name = os.path.basename(str(video_name))
+        for root in allowed_source_roots:
+            candidate = os.path.abspath(os.path.join(root, safe_name))
+            if _is_path_within(candidate, root) and os.path.isfile(candidate):
+                src_video_path = candidate
+                break
 
     if not src_video_path or not os.path.exists(src_video_path):
         return fail(message=f"source video file {video_name or filepath_param} not found", code=5007, http_status=404)
@@ -1224,7 +1394,7 @@ def create_video_segment(workspace_id):
 @jwt_required()
 def list_video_segments(workspace_id):
     emp_id = get_jwt_identity()
-    workspace = Workspace.query.get(workspace_id)
+    workspace = db.session.get(Workspace, workspace_id)
     if not workspace:
         return fail(message="workspace not found", code=5003, http_status=404)
         
@@ -1240,11 +1410,11 @@ def list_video_segments(workspace_id):
 @jwt_required()
 def edit_video_segment(segment_id):
     emp_id = get_jwt_identity()
-    segment = WorkspaceVideoSegment.query.get(segment_id)
+    segment = db.session.get(WorkspaceVideoSegment, segment_id)
     if not segment:
         return fail(message="segment not found", code=5010, http_status=404)
 
-    workspace = Workspace.query.get(segment.workspace_id)
+    workspace = db.session.get(Workspace, segment.workspace_id)
     member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=5001, http_status=403)
@@ -1262,28 +1432,37 @@ def edit_video_segment(segment_id):
 @jwt_required()
 def delete_video_segment(segment_id):
     emp_id = get_jwt_identity()
-    segment = WorkspaceVideoSegment.query.get(segment_id)
+    segment = db.session.get(WorkspaceVideoSegment, segment_id)
     if not segment:
         return fail(message="segment not found", code=5010, http_status=404)
 
-    workspace = Workspace.query.get(segment.workspace_id)
+    workspace = db.session.get(Workspace, segment.workspace_id)
     member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=5001, http_status=403)
+    if task_id in running_tasks and running_tasks[task_id].get("status") == "processing":
+        return fail(message="QA task is still running", code=5024, http_status=409)
+    if segment.status == "processing":
+        return fail(message="segment preprocessing is still running", code=5021, http_status=409)
 
-    # Delete physical file if exists
-    from app.monitors.slicer import SLICE_OUTPUT_BASE
-    if segment.filepath:
-        filename = os.path.basename(segment.filepath)
-        file_path = os.path.join(SLICE_OUTPUT_BASE, filename)
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"[Segment Delete] Failed to remove physical file {file_path}: {e}")
+    video_id = os.path.basename(segment.filepath)
+    try:
+        from app.mva_v2.database import SpatiotemporalDB
+        SpatiotemporalDB().delete_video(video_id, workspace_id=segment.workspace_id)
+    except Exception as exc:
+        return fail(message=f"failed to clear segment features: {exc}", code=5020, http_status=500)
+
+    face_paths = _clear_segment_face_records(segment.id)
 
     db.session.delete(segment)
     db.session.commit()
+
+    # Delete files only after the relational transaction has committed.
+    for face_path in face_paths:
+        _remove_backend_file(face_path)
+    _remove_backend_file(segment.filepath)
+    base, _ = os.path.splitext(segment.filepath)
+    _remove_backend_file(f"{base}_thumb.jpg")
 
     return success(message="segment deleted")
 
@@ -1291,13 +1470,20 @@ def delete_video_segment(segment_id):
 @workspaces_bp.post("/segments/<int:segment_id>/preprocess")
 @jwt_required()
 def preprocess_segment(segment_id):
-    segment = WorkspaceVideoSegment.query.get(segment_id)
+    emp_id = get_jwt_identity()
+    segment = db.session.get(WorkspaceVideoSegment, segment_id)
     if not segment:
         return fail(message="segment not found", code=5003, http_status=404)
+    _, error = _require_workspace_member(segment.workspace_id, emp_id)
+    if error:
+        return error
+    if segment.status == "processing":
+        return fail(message="segment preprocessing is already running", code=5021, http_status=409)
     
     data = request.get_json() or {}
-    sample_fps = float(data.get("sample_fps", 1.0))
-    resolution = str(data.get("resolution", "1080P"))
+    sample_fps, resolution, option_error = _parse_preprocess_options(data)
+    if option_error:
+        return option_error
 
     segment.sample_fps = sample_fps
     segment.resolution = resolution
@@ -1320,24 +1506,34 @@ def preprocess_segment(segment_id):
 @workspaces_bp.delete("/segments/<int:segment_id>/features")
 @jwt_required()
 def delete_segment_features(segment_id):
-    segment = WorkspaceVideoSegment.query.get(segment_id)
+    emp_id = get_jwt_identity()
+    segment = db.session.get(WorkspaceVideoSegment, segment_id)
     if not segment:
         return fail(message="segment not found", code=5003, http_status=404)
+    _, error = _require_workspace_member(segment.workspace_id, emp_id)
+    if error:
+        return error
+    if segment.status == "processing":
+        return fail(message="segment preprocessing is still running", code=5021, http_status=409)
 
-    # 从 spatiotemporal_db.json 中删除该片段的已知特征
+    # 从时空特征库和人脸库中删除该片段的已知特征。
     video_id = os.path.basename(segment.filepath)
     try:
         from app.mva_v2.database import SpatiotemporalDB
         db_client = SpatiotemporalDB()
-        db_client.records = [r for r in db_client.records if r.get("video_id") != video_id]
-        db_client._save_to_disk()
+        db_client.delete_video(video_id, workspace_id=segment.workspace_id)
     except Exception as e:
-        print(f"[CLEAR FEATURES ERROR] {e}")
+        return fail(message=f"failed to clear segment features: {e}", code=5020, http_status=500)
+
+    face_paths = _clear_segment_face_records(segment.id)
 
     segment.status = "none"
     segment.progress = 0
     segment.error_msg = None
     db.session.commit()
+
+    for face_path in face_paths:
+        _remove_backend_file(face_path)
 
     return success(message="features cleared", data=segment.to_dict())
 
@@ -1348,6 +1544,10 @@ def delete_segment_features(segment_id):
 @workspaces_bp.get("/<int:workspace_id>/faces")
 @jwt_required()
 def get_workspace_faces(workspace_id):
+    emp_id = get_jwt_identity()
+    _, error = _require_workspace_member(workspace_id, emp_id)
+    if error:
+        return error
     from app.models.face import WorkspaceFaceGroup
     groups = WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).order_by(WorkspaceFaceGroup.id.asc()).all()
     res = [g.to_dict() for g in groups]
@@ -1357,6 +1557,10 @@ def get_workspace_faces(workspace_id):
 @workspaces_bp.get("/<int:workspace_id>/faces/<int:group_id>/records")
 @jwt_required()
 def get_face_group_records(workspace_id, group_id):
+    emp_id = get_jwt_identity()
+    _, error = _require_workspace_member(workspace_id, emp_id)
+    if error:
+        return error
     from app.models.face import WorkspaceFaceRecord
     records = WorkspaceFaceRecord.query.filter_by(workspace_id=workspace_id, group_id=group_id).order_by(WorkspaceFaceRecord.id.asc()).all()
     res = [r.to_dict() for r in records]

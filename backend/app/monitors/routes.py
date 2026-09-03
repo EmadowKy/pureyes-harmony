@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from flask import Response, request, send_file
+from flask import Response, abort, request, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.core.config import get_ffmpeg_path
 from app.core.db import db
@@ -15,6 +15,7 @@ from app.models.qa_record import QAVideoSelection
 from app.models.group import GroupMember
 from app.user_center.permissions import current_user, is_admin, require_group_creator
 from app.core.response import success, fail
+from app.core.media_auth import build_media_url, media_access_identity, monitor_scope, path_scope
 from . import monitors_bp
 from .slicer import slice_video
 from app.core.recorder import start_recording, stop_recording
@@ -85,7 +86,9 @@ def _latest_recording_file(monitor_id: int):
         full_path = os.path.join(output_dir, filename)
         if not os.path.isfile(full_path) or os.path.getsize(full_path) == 0:
             continue
-        if time.time() - os.path.getmtime(full_path) < COVER_ACTIVE_FILE_GRACE_SECONDS:
+        file_is_recent = time.time() - os.path.getmtime(full_path) < COVER_ACTIVE_FILE_GRACE_SECONDS
+        segment_may_be_active = datetime.now() < start_time + timedelta(seconds=60)
+        if file_is_recent and segment_may_be_active:
             continue
         candidates.append((start_time, full_path))
 
@@ -210,7 +213,10 @@ def _build_recording_items(monitor_id: int, selected_time: datetime, window_coun
             "start_time": start_time.isoformat(),
             "end_time": end_time.isoformat(),
             "filename": filename,
-            "url": f"/api/video/storage/streams/{monitor_id}/{filename}"
+            "url": build_media_url(
+                f"/api/video/storage/streams/{monitor_id}/{filename}",
+                path_scope(f"storage/streams/{monitor_id}/{filename}"),
+            )
         }
         items.append(item)
         if start_time <= selected_time < end_time:
@@ -220,7 +226,7 @@ def _build_recording_items(monitor_id: int, selected_time: datetime, window_coun
 
 
 def _require_monitor_creator(monitor_id: int, emp_id: str):
-    monitor = Monitor.query.get(monitor_id)
+    monitor = db.session.get(Monitor, monitor_id)
     if not monitor:
         return None, fail(message="monitor not found", code=4003, http_status=404)
     user = current_user()
@@ -332,9 +338,17 @@ def delete_monitor(monitor_id):
 
 @monitors_bp.get("/<int:monitor_id>/cover")
 def get_monitor_cover(monitor_id):
-    monitor = Monitor.query.get(monitor_id)
+    monitor = db.session.get(Monitor, monitor_id)
     if not monitor:
         return fail(message="monitor not found", code=4003, http_status=404)
+    emp_id = media_access_identity(monitor_scope(monitor_id))
+    member = GroupMember.query.filter_by(
+        group_id=monitor.group_id,
+        emp_id=emp_id,
+        status="accepted",
+    ).first() if emp_id else None
+    if not member:
+        abort(401)
 
     if _refresh_monitor_cover(monitor):
         db.session.commit()
@@ -369,7 +383,7 @@ def get_monitor_cover(monitor_id):
 @jwt_required()
 def get_monitor_history(monitor_id):
     emp_id = get_jwt_identity()
-    monitor = Monitor.query.get(monitor_id)
+    monitor = db.session.get(Monitor, monitor_id)
     if not monitor:
         return fail(message="monitor not found", code=4003, http_status=404)
 
@@ -420,7 +434,7 @@ def get_monitor_history(monitor_id):
 @jwt_required()
 def get_monitor_playback(monitor_id):
     emp_id = get_jwt_identity()
-    monitor = Monitor.query.get(monitor_id)
+    monitor = db.session.get(Monitor, monitor_id)
     if not monitor:
         return fail(message="monitor not found", code=4003, http_status=404)
 
@@ -452,7 +466,7 @@ def get_monitor_playback(monitor_id):
 @jwt_required()
 def get_monitor_slice(monitor_id):
     emp_id = get_jwt_identity()
-    monitor = Monitor.query.get(monitor_id)
+    monitor = db.session.get(Monitor, monitor_id)
     if not monitor:
         return fail(message="monitor not found", code=4003, http_status=404)
 

@@ -10,6 +10,7 @@ from app.core.db import db
 from app.models.user import User
 from app.models.blacklist import TokenBlacklist
 from app.core.response import success, fail
+from app.user_center.serializers import user_to_dict
 from . import auth_bp
 
 @auth_bp.post("/login")
@@ -33,16 +34,24 @@ def login():
 
     access_token = create_access_token(
         identity=user.emp_id,
-        additional_claims={"role": user.role, "emp_id": user.emp_id, "name": user.name}
+        additional_claims={
+            "role": user.role,
+            "emp_id": user.emp_id,
+            "name": user.name,
+            "auth_version": user.auth_version,
+        }
     )
-    refresh_token = create_refresh_token(identity=user.emp_id)
+    refresh_token = create_refresh_token(
+        identity=user.emp_id,
+        additional_claims={"auth_version": user.auth_version},
+    )
 
     return success(
         message="login success",
         data={
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "user": user.to_dict()
+            "user": user_to_dict(user, include_settings=True)
         }
     )
 
@@ -58,7 +67,12 @@ def refresh():
 
     new_access_token = create_access_token(
         identity=user.emp_id,
-        additional_claims={"role": user.role, "emp_id": user.emp_id, "name": user.name}
+        additional_claims={
+            "role": user.role,
+            "emp_id": user.emp_id,
+            "name": user.name,
+            "auth_version": user.auth_version,
+        }
     )
     return success(
         message="token refreshed",
@@ -68,6 +82,11 @@ def refresh():
 @auth_bp.post("/logout")
 @jwt_required()
 def logout():
+    emp_id = get_jwt_identity()
     jti = get_jwt()["jti"]
-    TokenBlacklist.add(jti)
+    user = User.query.filter_by(emp_id=emp_id).first()
+    db.session.add(TokenBlacklist(jti=jti))
+    if user:
+        user.auth_version = (user.auth_version or 0) + 1
+    db.session.commit()
     return success(message="logout success")

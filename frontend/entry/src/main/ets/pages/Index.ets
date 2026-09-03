@@ -32,7 +32,11 @@ struct Index {
   aboutToAppear() {
     const token = AppStorage.get<string>('access_token');
     if (!token) {
-      import('@ohos.router').then(router => router.default.replaceUrl({ url: 'pages/Login' }));
+      try {
+        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' });
+      } catch (error) {
+        console.warn('[Navigation] Failed to open login page:', JSON.stringify(error));
+      }
       return;
     }
     this.loadGroups();
@@ -60,170 +64,115 @@ struct Index {
   }
 
   @Builder TopNavigation() {
-    Row() {
-      Select(this.groups.map(g => {
-        const item = new SelectItem();
-        item.value = g.name;
-        return item as SelectOption;
-      }))
-        .selected(this.groups.findIndex(g => g.id === this.currentGroupId) >= 0 ? this.groups.findIndex(g => g.id === this.currentGroupId) : 0)
-        .value(this.groups.find(g => g.id === this.currentGroupId)?.name || "选择小组")
-        .font({ size: 20, weight: FontWeight.Bold })
-        .onSelect((index: number, value: string) => {
-          if (this.groups[index]) {
-            this.currentGroupId = this.groups[index].id;
-          }
-        })
-        .layoutWeight(1)
-        
-      Blank()
-      
-      Image($r('app.media.foreground'))
-        .width(32).height(32).borderRadius(16)
+    Row({ space: 12 }) {
+      Stack() {
+        Image($r('app.media.business_monitor'))
+          .width(30)
+          .height(30)
+          .objectFit(ImageFit.Contain)
+      }
+      .width(42)
+      .height(42)
+      .backgroundColor($r('app.color.app_card_subtle_bg'))
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(10)
+
+      Column({ space: 0 }) {
+        Text('当前调查组')
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_muted'))
+          .letterSpacing(0.4)
+
+        Select(this.groups.map(g => {
+          const item = new SelectItem();
+          item.value = g.name;
+          return item as SelectOption;
+        }))
+          .selected(this.groups.findIndex(g => g.id === this.currentGroupId) >= 0 ? this.groups.findIndex(g => g.id === this.currentGroupId) : 0)
+          .value(this.groups.find(g => g.id === this.currentGroupId)?.name || '选择小组')
+          .font({ size: 19, weight: FontWeight.Bold })
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor(Color.Transparent)
+          .onSelect((index: number, value: string) => {
+            if (this.groups[index]) {
+              this.currentGroupId = this.groups[index].id;
+            }
+          })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Row({ space: 6 }) {
+        Blank()
+          .width(7)
+          .height(7)
+          .backgroundColor($r('app.color.app_success'))
+          .borderRadius(4)
+        Text('服务在线')
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+      .padding({ left: 9, right: 9, top: 7, bottom: 7 })
+      .border({ width: 1, color: $r('app.color.app_border') })
+      .borderRadius(8)
     }
     .width('100%')
-    .height(60)
-    .padding({ left: 16, right: 16 })
+    .height(72)
+    .padding({ left: 18, right: 18 })
     .backgroundColor($r('app.color.app_top_bar_bg'))
-  }
-
-  @Builder MonitorIcon(isSelected: boolean) {
-    Column({ space: 2 }) {
-      Blank()
-        .width(22)
-        .height(14)
-        .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-        .borderRadius(4)
-      Row({ space: 2 }) {
-        Blank()
-          .width(10)
-          .height(3)
-          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .borderRadius(2)
-        Circle({ width: 4, height: 4 })
-          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-      }
-      .justifyContent(FlexAlign.Center)
-      .width(22)
-    }
-    .width(28)
-    .height(28)
-    .justifyContent(FlexAlign.Center)
-  }
-
-  @Builder WorkspaceIcon(isSelected: boolean) {
-    Column({ space: 4 }) {
-      Row({ space: 3 }) {
-        Blank()
-          .width(8)
-          .height(8)
-          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .borderRadius(3)
-        Blank()
-          .width(8)
-          .height(8)
-          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .borderRadius(3)
-      }
-      Row({ space: 3 }) {
-        Blank()
-          .width(8)
-          .height(8)
-          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .borderRadius(3)
-        Blank()
-          .width(8)
-          .height(8)
-          .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .borderRadius(3)
-      }
-    }
-    .width(28)
-    .height(28)
-    .justifyContent(FlexAlign.Center)
-  }
-
-  @Builder GroupIcon(isSelected: boolean) {
-    Column({ space: 2 }) {
-      Row({ space: 1 }) {
-        Circle({ width: 7, height: 7 })
-          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .opacity(0.75)
-        Circle({ width: 10, height: 10 })
-          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-        Circle({ width: 7, height: 7 })
-          .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-          .opacity(0.75)
-      }
-      .alignItems(VerticalAlign.Center)
-
-      Blank()
-        .width(23)
-        .height(9)
-        .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-        .borderRadius(9)
-    }
-    .width(28)
-    .height(28)
-    .justifyContent(FlexAlign.Center)
-  }
-
-  @Builder ProfileIcon(isSelected: boolean) {
-    Column({ space: 3 }) {
-      Circle({ width: 10, height: 10 })
-        .fill(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-      Blank()
-        .width(20)
-        .height(10)
-        .backgroundColor(isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon'))
-        .borderRadius(10)
-    }
-    .width(28)
-    .height(28)
-    .justifyContent(FlexAlign.Center)
+    .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
   }
 
   @Builder NavIcon(iconType: NavIconType, isSelected: boolean) {
     if (iconType === NavIconType.Monitor) {
-      this.MonitorIcon(isSelected)
+      Image($r('app.media.business_monitor'))
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
+        .opacity(isSelected ? 1 : 0.52)
     } else if (iconType === NavIconType.Workspace) {
-      this.WorkspaceIcon(isSelected)
+      Image($r('app.media.business_workspace'))
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
+        .opacity(isSelected ? 1 : 0.52)
     } else if (iconType === NavIconType.Group) {
-      this.GroupIcon(isSelected)
+      Image($r('app.media.business_team'))
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
+        .opacity(isSelected ? 1 : 0.52)
     } else {
-      this.ProfileIcon(isSelected)
+      SymbolGlyph($r('sys.symbol.person'))
+        .fontSize(21)
+        .fontColor([isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon')])
     }
   }
 
   @Builder NavBarItem(index: number, label: string, iconType: NavIconType) {
-    Column({ space: 3 }) {
+    Column({ space: 0 }) {
+      Blank()
+        .width(26)
+        .height(3)
+        .backgroundColor(this.currentIndex === index ? $r('app.color.app_accent') : Color.Transparent)
+
       Stack() {
         this.NavIcon(iconType, this.currentIndex === index)
       }
-      .width(50)
-      .height(40)
-      .borderRadius(16)
-      .backgroundColor(this.currentIndex === index ? $r('app.color.app_nav_item_bg') : Color.Transparent)
-      .shadow(this.currentIndex === index ? {
-        radius: 14,
-        color: $r('app.color.app_nav_shadow'),
-        offsetX: 0,
-        offsetY: 5
-      } : {
-        radius: 0,
-        color: Color.Transparent,
-        offsetX: 0,
-        offsetY: 0
-      })
+      .width(46)
+      .height(34)
+      .margin({ top: 4 })
 
       Text(label)
-        .fontSize(12)
-        .fontWeight(this.currentIndex === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontSize(11)
+        .fontWeight(this.currentIndex === index ? FontWeight.Bold : FontWeight.Medium)
         .fontColor(this.currentIndex === index ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
     }
     .width('100%')
     .height(64)
-    .justifyContent(FlexAlign.Center)
+    .justifyContent(FlexAlign.Start)
     .onClick((): void => {
       this.currentIndex = index;
       this.tabsController.changeIndex(index);
@@ -254,7 +203,7 @@ struct Index {
       .onChange((index: number) => {
         this.currentIndex = index;
       })
-      .barHeight(74)
+      .barHeight(66)
       .barBackgroundColor($r('app.color.app_nav_bar_bg'))
       .layoutWeight(1)
     }

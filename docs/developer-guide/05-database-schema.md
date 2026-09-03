@@ -14,7 +14,9 @@ erDiagram
     Group ||--o{ Workspace : "拥有"
     Group ||--o{ Monitor : "配置"
     Workspace ||--o{ WorkspaceVideoSegment : "包含切片"
-    WorkspaceVideoSegment ||--o{ QARecord : "包含问答"
+    Workspace ||--o{ QARecord : "包含问答"
+    QARecord ||--o{ QAVideoSelection : "选择切片"
+    WorkspaceVideoSegment ||--o{ QAVideoSelection : "被选择"
     User ||--o{ QARecord : "提问"
     BlacklistToken
 
@@ -24,6 +26,7 @@ erDiagram
         string phone "手机号"
         string role "super_admin / admin / user"
         boolean is_active "账号启停用状态"
+        integer auth_version "凭据撤销版本"
     }
 
     Group {
@@ -64,6 +67,8 @@ erDiagram
 | `password_hash` | `VARCHAR(255)`| NOT NULL | Werkzeug 哈希加密密码 |
 | `role` | `VARCHAR(20)` | DEFAULT 'user'| 角色 (`super_admin` / `admin` / `user`) |
 | `is_active` | `BOOLEAN` | DEFAULT TRUE | 账号启停用状态标识 |
+| `auth_version` | `INTEGER` | DEFAULT 0 | 登出、改密、改角色或停用时递增，使旧 JWT 立即失效 |
+| `llm_api_key` | `TEXT` | NULLABLE | Fernet 加密后的个人大模型 API Key；接口永不回传明文 |
 | `created_at` | `DATETIME` | DEFAULT UTC | 创建时间 |
 
 ### 2.2 小组表 `groups` & 成员表 `group_members`
@@ -81,5 +86,9 @@ erDiagram
 ### 2.4 实时监控表 `monitors`
 包含 `id`, `group_id`, `name`, `stream_url` (RTSP/HTTP 流地址), `cover_path` (最新自动快照路径), `status` (`online`/`offline`)。
 
-### 2.5 JWT 黑名单 Token 表 `blacklist_tokens`
-包含 `id`, `jti` (JWT 唯一 ID), `token` (原始令牌), `created_at`。用于支撑账号被管理员停用、重置密码及主动登出时的安全熔断。
+### 2.5 问答记录与切片选择
+- `qa_records` 保存工作区、创建者、问题、回答、任务状态和进度快照。
+- `qa_video_selections` 通过 `record_id` 关联问答，通过 `segment_id` 直接关联所选切片；旧数据仍保留时间范围兼容字段。
+
+### 2.6 JWT 黑名单 Token 表 `token_blacklist`
+仅保存 `id`, `jti` (JWT 唯一 ID) 与 `created_at`，不存储原始令牌。主动登出同时递增用户的 `auth_version`，因此访问令牌、刷新令牌和媒体令牌都会立即失效；过期黑名单记录会在启动时清理。

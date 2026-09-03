@@ -59,7 +59,7 @@ class ReActTools:
         logger.info(f"[TOOL - spatiotemporal_search] Running search: type={query_type}, query={query_text} on video={video_id}")
         
         # 从数据库特征池中，筛选过滤出当前片段的特征
-        clip_records = [r for r in self.db.records if r['video_id'] == video_id]
+        clip_records = [r for r in self.db.snapshot() if r['video_id'] == video_id]
         if not clip_records:
             return {
                 "summary": {
@@ -82,7 +82,11 @@ class ReActTools:
                 query_vector = target_records[0].get("reid_vector")
                 if query_vector:
                     # 获取较大数量的相似候选以进行全局统计
-                    results = self.db.search_identity(query_reid_vector=query_vector, top_k=99999)
+                    results = self.db.search_identity(
+                        query_reid_vector=query_vector,
+                        top_k=99999,
+                        video_id=video_id,
+                    )
                     matched_candidates = [r for r in results if r.get("video_id") == video_id]
                     
                     total_matching_records = len(matched_candidates)
@@ -185,7 +189,7 @@ class ReActTools:
                 
                 # 检查数据库中当前秒数附近是否有关联的检测目标，有的话在原图上画框辅助 VLM 识别
                 # 这样更精确，不易看错
-                records = [r for r in self.db.records if r['video_id'] == video_id and abs(r['timestamp'] - timestamp_sec) < 1.0]
+                records = [r for r in self.db.snapshot() if r['video_id'] == video_id and abs(r['timestamp'] - timestamp_sec) < 1.0]
                 if records:
                     # 在复制的图上绘制边界框
                     draw_frame = frame.copy()
@@ -255,14 +259,13 @@ class ReActSystemPrompt:
 
 2. "read_frame_image"：从视频片段的特定时间点截取图像，送入你的视觉感知中。
    参数：
-   - "video_path": 字符串，视频文件的物理路径
    - "timestamp_sec": 浮点数，截图的目标时间（秒）
    - "video_id": 字符串，视频文件名
    返回：截取出的临时图像文件的绝对路径。在下一轮对话的开头，你将会直接看见这张图像。
 
 3. "get_video_metadata"：获取视频的持续时间、帧率和帧数。
    参数：
-   - "video_path": 字符串，视频物理路径
+   - "video_id": 字符串，必须是当前用户已选择的视频文件名
    返回：{"duration_seconds": 秒数, "fps": 帧率, "frame_count": 总帧数}
 
 ---
