@@ -16,4 +16,5 @@ if __name__ == "__main__":
     # Nginx 对外提供 8000 端口，后端默认监听内部 5000 端口。
     # 可通过 PUREYES_PORT 覆盖，便于本地开发或其他部署环境复用。
     port = int(os.getenv("PUREYES_PORT", "5000"))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    debug = os.getenv("PUREYES_DEBUG", "0").lower() in {"1", "true", "yes"}
+    app.run(debug=debug, host="0.0.0.0", port=port, use_reloader=False)
