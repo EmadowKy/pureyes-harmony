@@ -447,14 +447,14 @@ def live_stream_index(monitor_id):
             
             try:
                 logger.info("Starting live HLS converter for monitor %s", monitor_id)
-                log_file_path = os.path.join(output_dir, "ffmpeg.log")
-                with open(log_file_path, "w", encoding="utf-8") as log_file:
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.DEVNULL,
-                        stderr=log_file,
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                    )
+                # FFmpeg can emit a large amount of diagnostic output. Keep it off
+                # disk so long-running live conversion does not fill the volume.
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
                 live_converters[monitor_id] = proc
                 # Give FFmpeg a second to write the first segment
                 time.sleep(1.5)
@@ -478,15 +478,7 @@ def live_stream_index(monitor_id):
         attempts += 1
         
     if not os.path.exists(index_file):
-        log_file_path = os.path.join(output_dir, "ffmpeg.log")
-        ffmpeg_err = ""
-        if os.path.exists(log_file_path):
-            try:
-                with open(log_file_path, "r", encoding="utf-8", errors="ignore") as f:
-                    ffmpeg_err = f.read()
-            except Exception as read_err:
-                ffmpeg_err = f"Failed to read ffmpeg log: {read_err}"
-        logger.error("FFmpeg failed to generate HLS files: %s", ffmpeg_err[-1000:])
+        logger.error("FFmpeg failed to generate HLS files for monitor %s", monitor_id)
         abort(404, description="M3U8 stream file not generated yet")
         
     media_token = request.args.get("media_token") or ""
