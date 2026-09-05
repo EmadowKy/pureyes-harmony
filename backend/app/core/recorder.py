@@ -59,16 +59,12 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
         
         try:
             print(f"[Recorder] Starting recording command for monitor {monitor_id}: {' '.join(cmd)}")
-            # Start process in background
-            # We redirect stdout/stderr to devnull to avoid blocking Popen or spamming logs
-            log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "logs"))
-            os.makedirs(log_dir, exist_ok=True)
-            log_path = os.path.join(log_dir, f"recorder_{monitor_id}.log")
-            log_file = open(log_path, "ab")
+            # Start process in background. FFmpeg diagnostics are discarded so
+            # recording a long-running stream cannot create unbounded log files.
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=log_file,
+                stderr=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             recording_processes[monitor_id] = proc
