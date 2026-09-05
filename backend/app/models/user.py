@@ -1,6 +1,7 @@
 from datetime import datetime
 from app.core.db import db
 from werkzeug.security import generate_password_hash, check_password_hash
+from app.core.crypto import EncryptedText
 
 class User(db.Model):
     __tablename__ = "users"
@@ -13,9 +14,10 @@ class User(db.Model):
     role = db.Column(db.String(20), nullable=False, default="user")  # super_admin, admin, user
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     
-    llm_api_key = db.Column(db.String(255), nullable=True)
+    llm_api_key = db.Column(EncryptedText(), nullable=True)
     llm_base_url = db.Column(db.String(255), nullable=True)
     llm_model = db.Column(db.String(64), nullable=True)
+    auth_version = db.Column(db.Integer, default=0, nullable=False)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -26,17 +28,21 @@ class User(db.Model):
     def check_password(self, raw_password: str) -> bool:
         return check_password_hash(self.password_hash, raw_password)
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_settings=False):
+        data = {
             "emp_id": self.emp_id,
             "name": self.name,
             "phone": self.phone,
             "avatar": self.avatar,
             "role": self.role,
             "is_active": self.is_active,
-            "llm_api_key": self.llm_api_key,
-            "llm_base_url": self.llm_base_url,
-            "llm_model": self.llm_model,
             "created_at": self.created_at.isoformat() + "Z",
             "updated_at": self.updated_at.isoformat() + "Z"
         }
+        if include_settings:
+            data.update({
+                "llm_api_key_configured": bool(self.llm_api_key),
+                "llm_base_url": self.llm_base_url,
+                "llm_model": self.llm_model,
+            })
+        return data

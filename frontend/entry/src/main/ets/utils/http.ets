@@ -5,7 +5,6 @@ export const OFFICIAL_BASE_HOST = 'http://116.62.178.139:8000';
 
 // 初始化持久化存储，确保跨应用退出/重启仍然保留服务器地址偏好
 try {
-  PersistentStorage.persistProp('access_token', '');
   PersistentStorage.persistProp('custom_server_url', '');
   PersistentStorage.persistProp('is_custom_server', false);
 } catch (e) {
@@ -27,13 +26,17 @@ export function normalizeServerUrl(rawUrl: string): string {
 export function getBaseUrl(): string {
   const isCustom = AppStorage.get<boolean>('is_custom_server');
   const custom = AppStorage.get<string>('custom_server_url');
-  if (isCustom && custom && custom.trim().length > 0) {
+  if (isCustom === true && custom && custom.trim().length > 0) {
     return normalizeServerUrl(custom);
   }
   return OFFICIAL_SERVER_URL;
 }
 
 export function getBaseHost(): string {
+  const isCustom = AppStorage.get<boolean>('is_custom_server');
+  if (isCustom !== true) {
+    return OFFICIAL_BASE_HOST;
+  }
   const baseUrl = getBaseUrl();
   if (baseUrl.endsWith('/api')) {
     return baseUrl.substring(0, baseUrl.length - 4);

@@ -2,7 +2,10 @@ import logging
 from typing import List, Dict, Any
 import os
 import json
-import time
+import tempfile
+import threading
+
+from filelock import FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -13,67 +16,151 @@ DB_FILE_PATH = os.path.join(BACKEND_DIR, "temp", "spatiotemporal_db.json")
 class SpatiotemporalDB:
     """Implementation of a Local Clip-bounded Spatiotemporal Database (with JSON file persistence to align with SQLite lifecycle)"""
     _shared_records = []
-    _loaded = False
+    _loaded_path = None
+    _thread_lock = threading.RLock()
 
     def __init__(self):
         self.records = self._shared_records
         self._load_from_disk()
         logger.info(f"Initialized Spatiotemporal Database. Total persistent records: {len(self.records)}")
 
+    @staticmethod
+    def _lock_path():
+        return f"{DB_FILE_PATH}.lock"
+
+    @staticmethod
+    def _read_disk_unlocked():
+        if not os.path.exists(DB_FILE_PATH):
+            return []
+        with open(DB_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("spatiotemporal database must contain a JSON list")
+        return data
+
+    @staticmethod
+    def _write_disk_unlocked(records):
+        db_dir = os.path.dirname(DB_FILE_PATH)
+        os.makedirs(db_dir, exist_ok=True)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=db_dir,
+                prefix="spatiotemporal_",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                temp_path = f.name
+                json.dump(records, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, DB_FILE_PATH)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def _replace_shared_records(self, records):
+        self.records.clear()
+        self.records.extend(records)
+
     def _load_from_disk(self):
-        if not SpatiotemporalDB._loaded:
+        with SpatiotemporalDB._thread_lock:
+            if SpatiotemporalDB._loaded_path == DB_FILE_PATH:
+                return
             try:
                 os.makedirs(os.path.dirname(DB_FILE_PATH), exist_ok=True)
-                if os.path.exists(DB_FILE_PATH):
-                    with open(DB_FILE_PATH, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.records.clear()
-                            self.records.extend(data)
-                            logger.info(f"Loaded {len(self.records)} records from spatiotemporal DB file: {DB_FILE_PATH}")
-                SpatiotemporalDB._loaded = True
+                with FileLock(self._lock_path(), timeout=30):
+                    data = self._read_disk_unlocked()
+                self._replace_shared_records(data)
+                SpatiotemporalDB._loaded_path = DB_FILE_PATH
+                logger.info(f"Loaded {len(self.records)} records from spatiotemporal DB file: {DB_FILE_PATH}")
             except Exception as e:
                 logger.error(f"Failed to load spatiotemporal DB from disk: {e}")
 
-    _last_save_time = 0.0
-
     def _save_to_disk(self, force: bool = False):
-        now = time.time()
-        # 节流磁盘写入：至少间隔 1.0 秒写一次，或者 force=True 时强制写入
-        if not force and (now - SpatiotemporalDB._last_save_time < 1.0):
-            return
-        try:
-            SpatiotemporalDB._last_save_time = now
-            os.makedirs(os.path.dirname(DB_FILE_PATH), exist_ok=True)
-            with open(DB_FILE_PATH, "w", encoding="utf-8") as f:
-                json.dump(self.records, f, ensure_ascii=False)
-            logger.debug(f"Saved {len(self.records)} records to spatiotemporal DB file.")
-        except Exception as e:
-            logger.error(f"Failed to save spatiotemporal DB to disk: {e}")
+        del force  # 保留旧调用签名；所有写入现在都使用原子落盘。
+        with SpatiotemporalDB._thread_lock:
+            try:
+                with FileLock(self._lock_path(), timeout=30):
+                    self._write_disk_unlocked(list(self.records))
+                logger.debug(f"Saved {len(self.records)} records to spatiotemporal DB file.")
+            except Exception as e:
+                logger.error(f"Failed to save spatiotemporal DB to disk: {e}")
+                raise
 
     def insert(self, records: List[Dict[str, Any]]):
-        self.records.extend(records)
-        self._save_to_disk(force=False)
-        logger.debug(f"Inserted {len(records)} records. Total: {len(self.records)}")
+        if not records:
+            return
+        with SpatiotemporalDB._thread_lock:
+            with FileLock(self._lock_path(), timeout=30):
+                latest = self._read_disk_unlocked()
+                latest.extend(records)
+                self._write_disk_unlocked(latest)
+            self._replace_shared_records(latest)
+            logger.debug(f"Inserted {len(records)} records. Total: {len(self.records)}")
+
+    def replace_video_records(self, video_id: str, records: List[Dict[str, Any]], workspace_id=None):
+        """Atomically replace one video's feature rows after successful processing."""
+        with SpatiotemporalDB._thread_lock:
+            with FileLock(self._lock_path(), timeout=30):
+                latest = self._read_disk_unlocked()
+                retained = [
+                    record for record in latest
+                    if not (
+                        record.get("video_id") == video_id
+                        and (workspace_id is None or record.get("workspace_id") in (None, workspace_id))
+                    )
+                ]
+                retained.extend(records)
+                self._write_disk_unlocked(retained)
+            self._replace_shared_records(retained)
+            logger.info(f"Replaced features for video {video_id}: {len(records)} records")
+
+    def delete_video(self, video_id: str, workspace_id=None):
+        """Delete one video's records without rebinding the process-wide shared list."""
+        with SpatiotemporalDB._thread_lock:
+            with FileLock(self._lock_path(), timeout=30):
+                latest = self._read_disk_unlocked()
+                retained = [
+                    record for record in latest
+                    if not (
+                        record.get("video_id") == video_id
+                        and (workspace_id is None or record.get("workspace_id") in (None, workspace_id))
+                    )
+                ]
+                self._write_disk_unlocked(retained)
+            removed = len(latest) - len(retained)
+            self._replace_shared_records(retained)
+            logger.info(f"Deleted {removed} features for video {video_id}")
+            return removed
 
     def flush(self):
-        """强制即刻刷盘持久化"""
-        self._save_to_disk(force=True)
+        """Compatibility hook; mutating APIs already persist atomically."""
+        return None
+
+    def snapshot(self):
+        with SpatiotemporalDB._thread_lock:
+            return list(self.records)
 
     def clear(self):
         """清除所有特征数据"""
-        self.records.clear()
-        if os.path.exists(DB_FILE_PATH):
-            try:
-                os.remove(DB_FILE_PATH)
-            except:
-                pass
-        logger.info("Cleared clip database.")
+        with SpatiotemporalDB._thread_lock:
+            with FileLock(self._lock_path(), timeout=30):
+                if os.path.exists(DB_FILE_PATH):
+                    os.remove(DB_FILE_PATH)
+            self.records.clear()
+            logger.info("Cleared clip database.")
 
     def search_semantic(self, query_text: str, video_id: str = None, top_k: int = 5) -> List[Dict[str, Any]]:
         """基于监控大类关键词匹配的真实语义检索"""
         logger.info(f"Executing Semantic Category Keyword Search for query: '{query_text}'...")
-        if not self.records:
+        records = self.snapshot()
+        if not records:
             return []
             
         # 建立中文关键字与监控常见目标类别的映射
@@ -93,7 +180,7 @@ class SpatiotemporalDB:
                     
         # 筛选符合类别的记录
         candidates = []
-        for r in self.records:
+        for r in records:
             if video_id and r.get("video_id") != video_id:
                 continue
             c_name = r.get("class_name", "")
@@ -121,24 +208,32 @@ class SpatiotemporalDB:
     def search_identity(self, 
                         query_reid_vector: list, 
                         relax_threshold: bool = False,
-                        top_k: int = 5) -> List[Dict[str, Any]]:
+                        top_k: int = 5,
+                        video_id: str = None) -> List[Dict[str, Any]]:
         """片段内真实 ReID 向量余弦相似度检索"""
         logger.info("Executing Real Intra-Clip ReID Cosine Similarity Search...")
-        if not self.records or not query_reid_vector:
+        records = self.snapshot()
+        if not records or not query_reid_vector:
             return []
             
         import numpy as np
         q_vec = np.array(query_reid_vector, dtype=np.float32)
+        if q_vec.ndim != 1 or not np.all(np.isfinite(q_vec)):
+            return []
         q_norm = np.linalg.norm(q_vec)
         if q_norm > 0:
             q_vec = q_vec / q_norm
             
         scored_records = []
-        for rec in self.records:
+        for rec in records:
+            if video_id and rec.get("video_id") != video_id:
+                continue
             r_vec_list = rec.get("reid_vector")
             if not r_vec_list:
                 continue
             r_vec = np.array(r_vec_list, dtype=np.float32)
+            if r_vec.shape != q_vec.shape or not np.all(np.isfinite(r_vec)):
+                continue
             r_norm = np.linalg.norm(r_vec)
             if r_norm > 0:
                 r_vec = r_vec / r_norm
@@ -164,6 +259,6 @@ class SpatiotemporalDB:
 
     def get_tracklet(self, track_id: str, video_id: str) -> List[Dict[str, Any]]:
         logger.info(f"Recalling full tracklet for track_id: {track_id}")
-        tracklet = [r for r in self.records if r['track_id'] == track_id and r['video_id'] == video_id]
+        tracklet = [r for r in self.snapshot() if r['track_id'] == track_id and r['video_id'] == video_id]
         tracklet.sort(key=lambda x: x['timestamp'])
         return tracklet

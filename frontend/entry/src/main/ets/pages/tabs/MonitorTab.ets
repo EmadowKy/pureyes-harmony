@@ -1,5 +1,9 @@
 import { HttpUtil, BASE_HOST } from '../../utils/http'
-import promptAction from '@ohos.promptAction'
+
+interface ToastOptions {
+  message: string;
+  duration?: number;
+}
 
 export class MonitorInfo {
   id: number = 0;
@@ -7,6 +11,8 @@ export class MonitorInfo {
   stream_url: string = '';
   raw_stream_url: string = '';
   cover_url: string = '';
+  live_url: string = '';
+  media_url: string = '';
   status: string = '';
 }
 
@@ -77,14 +83,20 @@ struct AddMonitorDialog {
 
       Row({ space: 20 }) {
         Button('取消')
+          .height(40)
+          .fontColor($r('app.color.app_text_primary'))
           .onClick((): void => {
             this.controller.close();
           })
-          .backgroundColor(Color.Gray)
+          .backgroundColor(Color.Transparent)
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
 
-        Button('提交')
-          .backgroundColor($r('app.color.app_primary'))
-          .fontColor(Color.White)
+        Button('添加视频源')
+          .height(40)
+          .backgroundColor($r('app.color.app_surface_inverted'))
+          .fontColor($r('app.color.app_text_on_inverted'))
+          .borderRadius(8)
           .onClick((): void => {
             this.confirm(this.monitorName, this.streamUrl);
             this.controller.close();
@@ -118,6 +130,14 @@ export struct MonitorTab {
   videoController: VideoController = new VideoController();
   coverRefreshTimer: number = 0;
   isLoadingMonitors: boolean = false;
+
+  showToast(options: ToastOptions): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(options);
+    } catch (error) {
+      console.warn('[UI] Toast display failed:', JSON.stringify(error));
+    }
+  }
 
   addMonitorDialogController: CustomDialogController = new CustomDialogController({
     builder: AddMonitorDialog({
@@ -305,14 +325,16 @@ export struct MonitorTab {
           monitor.raw_stream_url = rawUrl;
           const coverUrl = ((item['cover_url'] as string) || '').trim();
           monitor.cover_url = coverUrl ? this.buildHttpUrl(coverUrl) : '';
+          monitor.live_url = ((item['live_url'] as string) || '').trim();
+          monitor.media_url = ((item['media_url'] as string) || '').trim();
           if (!rawUrl) {
             monitor.stream_url = '';
           } else if (rawUrl.startsWith('rtsp://') || rawUrl.startsWith('rtmp://')) {
-            monitor.stream_url = `${BASE_HOST}/api/video/live/${monitor.id}/index.m3u8`;
+            monitor.stream_url = monitor.live_url ? `${BASE_HOST}${monitor.live_url}` : '';
           } else if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
             monitor.stream_url = rawUrl;
           } else {
-            monitor.stream_url = `${BASE_HOST}/api/video/${rawUrl}`;
+            monitor.stream_url = monitor.media_url ? `${BASE_HOST}${monitor.media_url}` : '';
           }
           return monitor;
         });
@@ -340,7 +362,7 @@ export struct MonitorTab {
     const nextName = this.editingMonitorName.trim();
     const nextUrl = this.editingMonitorUrl.trim();
     if (!nextName) {
-      promptAction.showToast({ message: '请填写监控名称', duration: 2000 });
+      this.showToast({ message: '请填写监控名称', duration: 2000 });
       return;
     }
     const payload = new EditMonitorPayload();
@@ -348,19 +370,19 @@ export struct MonitorTab {
     payload.stream_url = nextUrl;
     const res = await HttpUtil.put(`/monitors/${monitorId}`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '监控已更新', duration: 2000 });
+      this.showToast({ message: '监控已更新', duration: 2000 });
       this.cancelEditMonitor();
       this.loadMonitors();
       if (this.selectedMonitorId === monitorId) {
         this.resetSelection();
       }
     } else {
-      promptAction.showToast({ message: res.message || '更新失败', duration: 2000 });
+      this.showToast({ message: res.message || '更新失败', duration: 2000 });
     }
   }
 
   confirmDeleteMonitor(monitor: MonitorInfo): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: '删除监控',
       message: `确认删除“${monitor.name}”？录制文件和封面也会一起删除。`,
       autoCancel: true,
@@ -378,10 +400,106 @@ export struct MonitorTab {
     });
   }
 
+  @Builder MonitorSymbol(name: string, color: ResourceColor, size: number) {
+    if (name === 'back') {
+      SymbolGlyph($r('sys.symbol.chevron_left'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'add') {
+      SymbolGlyph($r('sys.symbol.plus'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'open') {
+      SymbolGlyph($r('sys.symbol.eye'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'edit') {
+      SymbolGlyph($r('sys.symbol.pencil_line'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'delete') {
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'save') {
+      SymbolGlyph($r('sys.symbol.checkmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'cancel') {
+      SymbolGlyph($r('sys.symbol.xmark'))
+        .fontSize(size)
+        .fontColor([color])
+    } else if (name === 'jump') {
+      SymbolGlyph($r('sys.symbol.arrowshape_right_fill'))
+        .fontSize(size)
+        .fontColor([color])
+    } else {
+      SymbolGlyph($r('sys.symbol.camera'))
+        .fontSize(size)
+        .fontColor([color])
+    }
+  }
+
+  @Builder MonitorIconButton(name: string, color: ResourceColor, background: ResourceColor, action: () => void) {
+    Button() {
+      this.MonitorSymbol(name, color, 18)
+    }
+    .width(36)
+    .height(36)
+    .padding(0)
+    .backgroundColor(background)
+    .borderRadius(8)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick(action)
+  }
+
+  @Builder MonitorFilterButton(label: string, isSelected: boolean, action: () => void) {
+    Button(label)
+      .height(36)
+      .fontSize(12)
+      .fontWeight(isSelected ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(isSelected ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
+      .backgroundColor(Color.Transparent)
+      .border({
+        width: { bottom: isSelected ? 3 : 1 },
+        color: isSelected ? $r('app.color.app_accent') : $r('app.color.app_border')
+      })
+      .borderRadius(0)
+      .onClick(action)
+  }
+
+  @Builder MonitorCover(monitor: MonitorInfo) {
+    Stack({ alignContent: Alignment.Center }) {
+      Column({ space: 6 }) {
+        this.MonitorSymbol('camera', $r('app.color.app_text_secondary'), 28)
+        Text('封面生成中')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.app_card_subtle_bg'))
+
+      Image(monitor.cover_url)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+    }
+    .width('100%')
+    .height(100)
+    .borderRadius({ topLeft: 11, topRight: 11 })
+    .clip(true)
+    .backgroundColor(Color.Gray)
+    .onClick((): void => {
+      this.openMonitor(monitor);
+    })
+  }
+
   async deleteMonitor(monitor: MonitorInfo): Promise<void> {
     const res = await HttpUtil.del(`/monitors/${monitor.id}`);
     if (res.code === 0) {
-      promptAction.showToast({ message: '监控已删除', duration: 2000 });
+      this.showToast({ message: '监控已删除', duration: 2000 });
       if (this.selectedMonitorId === monitor.id) {
         this.resetSelection();
       }
@@ -390,7 +508,7 @@ export struct MonitorTab {
       }
       this.loadMonitors();
     } else {
-      promptAction.showToast({ message: res.message || '删除失败', duration: 2000 });
+      this.showToast({ message: res.message || '删除失败', duration: 2000 });
     }
   }
 
@@ -398,7 +516,7 @@ export struct MonitorTab {
     const nextName = name.trim();
     const nextUrl = streamUrl.trim();
     if (!nextName || !nextUrl) {
-      promptAction.showToast({ message: '请填写完整信息', duration: 2000 });
+      this.showToast({ message: '请填写完整信息', duration: 2000 });
       return;
     }
     const payload = new AddMonitorPayload();
@@ -406,16 +524,16 @@ export struct MonitorTab {
     payload.stream_url = nextUrl;
     const res = await HttpUtil.post(`/monitors/${this.groupId}`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '监控添加成功', duration: 2000 });
+      this.showToast({ message: '监控添加成功', duration: 2000 });
       this.loadMonitors();
     } else {
-      promptAction.showToast({ message: res.message || '添加失败', duration: 2000 });
+      this.showToast({ message: res.message || '添加失败', duration: 2000 });
     }
   }
 
   async openMonitor(monitor: MonitorInfo): Promise<void> {
     if (!monitor.stream_url) {
-      promptAction.showToast({ message: '该监控设备未配置有效的视频源地址！', duration: 2000 });
+      this.showToast({ message: '该监控设备未配置有效的视频源地址！', duration: 2000 });
       return;
     }
 
@@ -475,7 +593,7 @@ export struct MonitorTab {
       this.isLiveStream = false;
       this.selectedMonitorUrl = this.buildHttpUrl(selectedRecord['url'] as string);
     } else if (!selectedRecord && activatePlayback) {
-      promptAction.showToast({ message: '该时间点没有对应录制片段', duration: 2000 });
+      this.showToast({ message: '该时间点没有对应录制片段', duration: 2000 });
     }
   }
 
@@ -490,7 +608,7 @@ export struct MonitorTab {
   async jumpToTime(): Promise<void> {
     const isoTime = this.parseDateTime(this.jumpTimeText);
     if (!isoTime) {
-      promptAction.showToast({ message: '请输入有效时间，例如 2026-07-12 12:30:00', duration: 2000 });
+      this.showToast({ message: '请输入有效时间格式 (YYYY-MM-DD HH:mm:ss)', duration: 2000 });
       return;
     }
     const targetDate = new Date(isoTime);
@@ -499,7 +617,7 @@ export struct MonitorTab {
       const nowText = this.formatDateTime(now);
       this.selectedTimeText = nowText;
       this.jumpTimeText = nowText;
-      promptAction.showToast({ message: '不能跳转到未来时间', duration: 2000 });
+      this.showToast({ message: '不能跳转到未来时间', duration: 2000 });
       await this.loadTimeline(nowText, this.playbackMode === 'history');
       return;
     }
@@ -537,7 +655,7 @@ export struct MonitorTab {
       const now = new Date();
       if (shifted.getTime() > now.getTime()) {
         shifted = now;
-        promptAction.showToast({ message: '不能移动到未来时间', duration: 1600 });
+        this.showToast({ message: '不能移动到未来时间', duration: 1600 });
       }
       await this.loadTimeline(this.formatDateTime(shifted), this.playbackMode === 'history');
     } finally {
@@ -550,12 +668,9 @@ export struct MonitorTab {
     Column() {
       if (this.selectedMonitorId !== 0) {
         Row() {
-          Button('返回')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.resetSelection();
-            })
+          this.MonitorIconButton('back', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+            this.resetSelection();
+          })
           Column({ space: 2 }) {
             Text(this.selectedMonitorName)
               .fontSize(20)
@@ -571,12 +686,12 @@ export struct MonitorTab {
           .margin({ left: 10 })
         }
         .width('100%')
-        .padding(15)
+        .padding({ left: 18, right: 18, top: 16, bottom: 12 })
 
         Stack({ alignContent: Alignment.TopStart }) {
           Video({ src: this.selectedMonitorUrl, controller: this.videoController })
             .width('100%')
-            .height(250)
+            .height(220)
             .autoPlay(true)
             .controls(false)
             .objectFit(ImageFit.Contain)
@@ -586,12 +701,15 @@ export struct MonitorTab {
               }
             })
             .onError((): void => {
-              promptAction.showToast({ message: '视频流加载失败，监控无画面！', duration: 2000 });
+              this.showToast({ message: '视频流加载失败，监控无画面！', duration: 2000 });
             })
 
           Row() {
-            Circle({ width: 8, height: 8 })
-              .fill(this.playbackMode === 'live' ? Color.Red : Color.Orange)
+            Blank()
+              .width(8)
+              .height(8)
+              .backgroundColor(this.playbackMode === 'live' ? Color.Red : Color.Orange)
+              .borderRadius(4)
               .margin({ right: 6 })
             Text(this.playbackMode === 'live' ? 'LIVE 实时直播' : '历史回放')
               .fontSize(12)
@@ -600,39 +718,34 @@ export struct MonitorTab {
           }
           .backgroundColor('rgba(0, 0, 0, 0.6)')
           .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .borderRadius(12)
+        .borderRadius(5)
           .margin({ left: 15, top: 15 })
         }
-        .width('100%')
-        .height(250)
+        .width('90%')
+        .height(220)
+        .borderRadius(12)
+        .clip(true)
         .backgroundColor(Color.Black)
 
         Row({ space: 8 }) {
-          Button('实时')
-            .backgroundColor(this.playbackMode === 'live' ? $r('app.color.app_primary') : $r('app.color.app_card_bg'))
-            .fontColor(this.playbackMode === 'live' ? Color.White : $r('app.color.app_text_primary'))
-            .onClick((): void => {
-              this.goLive();
-            })
-          Button('回放')
-            .backgroundColor(this.playbackMode === 'history' ? $r('app.color.app_primary') : $r('app.color.app_card_bg'))
-            .fontColor(this.playbackMode === 'history' ? Color.White : $r('app.color.app_text_primary'))
-            .onClick((): void => {
-              if (this.selectedTimeText) {
-                this.loadTimeline(this.selectedTimeText, true);
-              }
-            })
+          this.MonitorFilterButton('实时', this.playbackMode === 'live', (): void => {
+            this.goLive();
+          })
+          this.MonitorFilterButton('回放', this.playbackMode === 'history', (): void => {
+            if (this.selectedTimeText) {
+              this.loadTimeline(this.selectedTimeText, true);
+            }
+          })
           ForEach(GRANULARITIES, (item: GranularityOption): void => {
-            Button(item.label)
-              .backgroundColor(this.granularity === item.key ? $r('app.color.app_primary') : $r('app.color.app_card_bg'))
-              .fontColor(this.granularity === item.key ? Color.White : $r('app.color.app_text_primary'))
-              .onClick((): void => {
-                this.switchGranularity(item.key);
-              })
+            this.MonitorFilterButton(item.label, this.granularity === item.key, (): void => {
+              this.switchGranularity(item.key);
+            })
           }, (item: GranularityOption, idx: number): string => idx.toString())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16 })
+        .backgroundColor($r('app.color.app_card_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
 
         Row({ space: 10 }) {
           TextInput({ placeholder: 'YYYY-MM-DD HH:mm:ss', text: this.jumpTimeText })
@@ -643,12 +756,9 @@ export struct MonitorTab {
             .onChange((value: string): void => {
               this.jumpTimeText = value;
             })
-          Button('跳转')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.jumpToTime();
-            })
+          this.MonitorIconButton('jump', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
+            this.jumpToTime();
+          })
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12 })
@@ -720,16 +830,16 @@ export struct MonitorTab {
                 Column({ space: 4 }) {
                   Text(record.start_time.slice(11, 19))
                     .fontSize(13)
-                    .fontColor(record.isSelected ? Color.White : $r('app.color.app_text_primary'))
+                    .fontColor(record.isSelected ? $r('app.color.app_text_on_inverted') : $r('app.color.app_text_primary'))
                     .fontWeight(FontWeight.Medium)
                   Text(record.end_time.slice(11, 19))
                     .fontSize(11)
-                    .fontColor(record.isSelected ? Color.White : $r('app.color.app_text_secondary'))
+                    .fontColor(record.isSelected ? $r('app.color.app_text_on_inverted') : $r('app.color.app_text_secondary'))
                 }
                 .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-                .backgroundColor(record.isSelected ? $r('app.color.app_primary') : $r('app.color.app_card_bg'))
-                .borderRadius(12)
-                .shadow({ radius: 4, color: $r('app.color.app_shadow') })
+                .backgroundColor(record.isSelected ? $r('app.color.app_surface_inverted') : $r('app.color.app_card_bg'))
+                .border({ width: 1, color: record.isSelected ? $r('app.color.app_surface_inverted') : $r('app.color.app_border') })
+                .borderRadius(6)
                 .onClick((): void => {
                   this.selectedRecordIndex = index;
                   this.playbackMode = 'history';
@@ -751,47 +861,79 @@ export struct MonitorTab {
         }
 
       } else {
-        Row() {
-          Text('监控列表')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
-            .layoutWeight(1)
-          Button('添加监控')
-            .backgroundColor($r('app.color.app_primary'))
-            .fontColor(Color.White)
-            .onClick((): void => {
-              this.addMonitorDialogController.open();
-            })
+        Row({ space: 12 }) {
+          Column({ space: 3 }) {
+            Text('实时监控')
+              .fontSize(26)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+            Text(this.monitors.length > 0 ? `${this.monitors.length} 路视频源 · 封面自动刷新` : '接入实时视频或历史录像')
+              .fontSize(13)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Button() {
+            Row({ space: 7 }) {
+              Blank()
+                .width(3)
+                .height(18)
+                .backgroundColor($r('app.color.app_accent'))
+              this.MonitorSymbol('add', $r('app.color.app_text_on_inverted'), 15)
+              Text('添加')
+                .fontSize(13)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.app_text_on_inverted'))
+            }
+          }
+          .height(40)
+          .padding({ left: 13, right: 13 })
+          .backgroundColor($r('app.color.app_surface_inverted'))
+          .borderRadius(8)
+          .onClick((): void => {
+            this.addMonitorDialogController.open();
+          })
         }
-        .width('90%')
-        .padding({ top: 20, bottom: 10 })
+        .width('100%')
+        .padding({ left: 18, right: 18, top: 22, bottom: 16 })
 
         if (this.monitors.length === 0) {
-          Column() {
-            Text('暂无监控，请点击右上角添加')
-              .fontSize(16)
+          Column({ space: 10 }) {
+            Stack() {
+              Image($r('app.media.business_monitor'))
+                .width(42)
+                .height(42)
+                .objectFit(ImageFit.Contain)
+            }
+            .width(64)
+            .height(64)
+            .borderRadius(14)
+            .backgroundColor($r('app.color.app_card_subtle_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+
+            Text('还没有视频源')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+
+            Text('添加摄像头或视频流，开始查看实时画面。')
+              .fontSize(13)
               .fontColor($r('app.color.app_text_secondary'))
-              .margin({ top: 80 })
+              .textAlign(TextAlign.Center)
+              .width('78%')
           }
           .width('100%')
           .layoutWeight(1)
-          .justifyContent(FlexAlign.Start)
+          .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
+          .padding({ bottom: 52 })
         } else {
           Grid() {
             ForEach(this.monitors, (monitor: MonitorInfo): void => {
               GridItem() {
                 Column({ space: 8 }) {
-                  Image(monitor.cover_url ? monitor.cover_url : $r('app.media.foreground'))
-                    .width('100%')
-                    .height(100)
-                    .objectFit(ImageFit.Cover)
-                    .borderRadius({ topLeft: 8, topRight: 8 })
-                    .backgroundColor(Color.Gray)
-                    .onClick((): void => {
-                      this.openMonitor(monitor);
-                    })
+                  this.MonitorCover(monitor)
 
                   if (this.editingMonitorId === monitor.id) {
                     TextInput({ placeholder: '监控名称', text: this.editingMonitorName })
@@ -810,27 +952,15 @@ export struct MonitorTab {
                       .onChange((val: string): void => {
                         this.editingMonitorUrl = val;
                       })
-                    Row({ space: 8 }) {
-                      Button('保存')
-                        .layoutWeight(1)
-                        .height(34)
-                        .fontSize(12)
-                        .padding({ left: 0, right: 0 })
-                        .backgroundColor($r('app.color.app_primary'))
-                        .fontColor(Color.White)
-                        .onClick((): void => {
-                          this.submitEditMonitor(monitor.id);
-                        })
-                      Button('取消')
-                        .layoutWeight(1)
-                        .height(34)
-                        .fontSize(12)
-                        .padding({ left: 0, right: 0 })
-                        .backgroundColor($r('app.color.app_card_subtle_bg'))
-                        .fontColor($r('app.color.app_text_primary'))
-                        .onClick((): void => {
-                          this.cancelEditMonitor();
-                        })
+                    Row({ space: 10 }) {
+                      Blank()
+                      this.MonitorIconButton('save', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
+                        this.submitEditMonitor(monitor.id);
+                      })
+                      this.MonitorIconButton('cancel', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+                        this.cancelEditMonitor();
+                      })
+                      Blank()
                     }
                     .width('100%')
                     .padding({ left: 8, right: 8, bottom: 8 })
@@ -850,41 +980,18 @@ export struct MonitorTab {
                       .width('100%')
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Column({ space: 6 }) {
-                      Row({ space: 8 }) {
-                        Button('打开')
-                          .layoutWeight(1)
-                          .height(32)
-                          .fontSize(12)
-                          .padding({ left: 0, right: 0 })
-                          .backgroundColor($r('app.color.app_primary'))
-                          .fontColor(Color.White)
-                          .onClick((): void => {
-                            this.openMonitor(monitor);
-                          })
-                        Button('编辑')
-                          .layoutWeight(1)
-                          .height(32)
-                          .fontSize(12)
-                          .padding({ left: 0, right: 0 })
-                          .backgroundColor($r('app.color.app_card_subtle_bg'))
-                          .fontColor($r('app.color.app_text_primary'))
-                          .onClick((): void => {
-                            this.openEditMonitor(monitor);
-                          })
-                      }
-                      .width('100%')
-
-                      Button('删除')
-                        .width('100%')
-                        .height(32)
-                        .fontSize(12)
-                        .padding({ left: 0, right: 0 })
-                        .backgroundColor('#C00000')
-                        .fontColor(Color.White)
-                        .onClick((): void => {
-                          this.confirmDeleteMonitor(monitor);
-                        })
+                    Row({ space: 10 }) {
+                      Blank()
+                      this.MonitorIconButton('open', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
+                        this.openMonitor(monitor);
+                      })
+                      this.MonitorIconButton('edit', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+                        this.openEditMonitor(monitor);
+                      })
+                      this.MonitorIconButton('delete', $r('app.color.app_danger'), $r('app.color.app_card_subtle_bg'), (): void => {
+                        this.confirmDeleteMonitor(monitor);
+                      })
+                      Blank()
                     }
                     .width('100%')
                     .padding({ left: 8, right: 8, bottom: 8 })
@@ -892,15 +999,15 @@ export struct MonitorTab {
                 }
                 .padding({ bottom: 8 })
                 .backgroundColor($r('app.color.app_card_bg'))
-                .borderRadius(10)
-                .shadow({ radius: 5, color: $r('app.color.app_shadow') })
+                .border({ width: 1, color: $r('app.color.app_border') })
+                .borderRadius(12)
               }
             })
           }
           .columnsTemplate('1fr 1fr')
           .columnsGap(10)
           .rowsGap(10)
-          .padding(10)
+          .padding({ left: 18, right: 18, bottom: 24 })
           .width('100%')
           .layoutWeight(1)
         }

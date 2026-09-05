@@ -33,7 +33,7 @@
   ```json
   {
     "emp_id": "admin",
-    "password": "admin"
+    "password": "<部署时设置的管理员密码>"
   }
   ```
 - **响应示例**：
@@ -42,7 +42,8 @@
     "code": 0,
     "message": "ok",
     "data": {
-      "token": "eyJhbGciOiJIUzI1Ni...",
+      "access_token": "eyJhbGciOiJIUzI1Ni...",
+      "refresh_token": "eyJhbGciOiJIUzI1Ni...",
       "user": {
         "emp_id": "admin",
         "name": "超级管理员",
@@ -57,7 +58,7 @@
 - **请求方法**：`POST`
 - **路径**：`/api/auth/logout`
 - **Headers**：`Authorization: Bearer <token>`
-- **说明**：将当前 Token 写入服务端 `blacklist_tokens` 数据库表。
+- **说明**：撤销当前用户已有的访问令牌、刷新令牌和签名媒体地址。
 
 ---
 
@@ -65,12 +66,12 @@
 
 | 方法 | 路径 | 权限要求 | 功能描述 |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/users/search?q={query}` | 所有登录用户 | 按工号/姓名/手机号搜索用户（返回候选卡片数据） |
-| `GET` | `/api/users/list` | Admin / Super Admin | 分页查询系统全量用户列表 |
-| `POST` | `/api/users/create` | Admin / Super Admin | 创建新用户账号 |
-| `PUT` | `/api/users/:emp_id/role` | Super Admin | 变更用户角色 (`super_admin`/`admin`/`user`) |
+| `GET` | `/api/users/search?keyword={query}` | 所有登录用户 | 按工号/姓名/手机号搜索用户（只读公开字段） |
+| `GET` | `/api/users/` | Admin / Super Admin | 查询系统用户列表 |
+| `POST` | `/api/users/` | Admin / Super Admin | 创建新用户账号 |
+| `PUT` | `/api/users/:emp_id/role` | Super Admin | 在 `admin` 与 `user` 之间调整角色；内置超级管理员不可变更 |
 | `PUT` | `/api/users/:emp_id/status` | Admin / Super Admin | 修改账号启用/停用状态 (`is_active: false`) |
-| `POST` | `/api/users/:emp_id/reset_password` | Admin / Super Admin | 重置用户密码为初始密码 |
+| `PUT` | `/api/users/:emp_id/password` | Admin / Super Admin | 设置新的初始化密码 |
 | `DELETE` | `/api/users/:emp_id` | Admin / Super Admin | 删除用户账号 |
 
 ---
@@ -79,10 +80,10 @@
 
 | 方法 | 路径 | 功能描述 |
 | :--- | :--- | :--- |
-| `GET` | `/api/groups/my` | 获取当前用户加入的所有小组列表 |
-| `POST` | `/api/groups/create` | 创建新安防小组（创建者自动成为 Leader） |
+| `GET` | `/api/groups/` | 获取当前用户加入的所有小组列表 |
+| `POST` | `/api/groups/` | 创建新安防小组（创建者自动成为 Leader） |
 | `GET` | `/api/groups/:id/members` | 获取该小组内的所有成员通讯录 |
-| `POST` | `/api/groups/:id/members/invite` | 组长邀请新成员加入小组 |
+| `POST` | `/api/groups/:id/invite` | 组长邀请新成员加入小组 |
 | `DELETE` | `/api/groups/:id/members/:emp_id` | 组长将成员移出小组 |
 
 ---
@@ -91,8 +92,8 @@
 
 | 方法 | 路径 | 功能描述 |
 | :--- | :--- | :--- |
-| `GET` | `/api/monitors?group_id={gid}` | 获取指定小组下的所有摄像头列表 |
-| `POST` | `/api/monitors/create` | 添加新摄像头 (指定名称与 RTSP/HTTP 流地址) |
+| `GET` | `/api/monitors/:group_id` | 获取指定小组下的所有摄像头列表 |
+| `POST` | `/api/monitors/:group_id` | 组长添加摄像头 (指定名称与 RTSP/HTTP 流地址) |
 | `GET` | `/api/monitors/:id/cover` | 获取摄像头最新自动抓拍封面快照图片 |
 | `GET` | `/api/monitors/:id/history` | 查询监控历史录像时间轴（支持 `granularity: day/hour/minute/second` 分级） |
 | `GET` | `/api/monitors/:id/playback` | 监控历史视频定位与回放播放链接 |
@@ -104,24 +105,26 @@
 
 | 方法 | 路径 | 功能描述 |
 | :--- | :--- | :--- |
-| `GET` | `/api/workspaces?group_id={gid}` | 获取小组下的工作区列表 |
-| `POST` | `/api/workspaces/create` | 新建工作区 |
-| `POST` | `/api/workspaces/:id/videos` | 导入/添加视频文件并提交切片与特征抽取任务 |
-| `GET` | `/api/workspaces/:id/videos` | 查询工作区内视频片段列表（含 `status` 与 `progress`） |
+| `GET` | `/api/workspaces/:group_id` | 获取小组下的工作区列表 |
+| `POST` | `/api/workspaces/:group_id` | 新建工作区 |
+| `POST` | `/api/workspaces/:id/upload-video` | 上传工作区私有视频源 |
+| `POST` | `/api/workspaces/:id/segments` | 从视频源或监控历史创建切片 |
+| `GET` | `/api/workspaces/:id/segments` | 查询工作区切片（含 `status`、`progress` 与签名媒体地址） |
+| `POST` | `/api/workspaces/segments/:segment_id/preprocess` | 启动目标与人脸特征预处理 |
+| `DELETE` | `/api/workspaces/segments/:segment_id/features` | 清理该切片的预处理特征 |
 
 ---
 
-## 7. AI 多模态视觉问答 API (/api/qa)
+## 7. AI 多模态视觉问答 API
 
 ### 提交自然语言视觉提问
 - **请求方法**：`POST`
-- **路径**：`/api/qa/ask`
+- **路径**：`/api/workspaces/:workspace_id/qa`
 - **请求体**：
   ```json
   {
-    "workspace_id": 1,
     "segment_ids": [10, 11],
-    "prompt": "视频中穿红衣服拿黑包的人在什么时间点出现？"
+    "question": "视频中穿红衣服拿黑包的人在什么时间点出现？"
   }
   ```
 - **响应示例**：
@@ -130,13 +133,9 @@
     "code": 0,
     "message": "ok",
     "data": {
-      "record_id": 105,
-      "prompt": "视频中穿红衣服拿黑包的人在什么时间点出现？",
-      "answer": "目标人员于 00:01:45 首次出现在画面右侧...",
-      "timestamps": [
-        { "start": 105.0, "end": 128.5, "confidence": 0.96 }
-      ],
-      "keyframe_url": "/api/qa/keyframes/105.jpg"
+      "task_id": "6f8f..."
     }
   }
   ```
+
+任务提交后使用 `GET /api/workspaces/qa/:task_id/status` 查询状态，或使用带 JWT 的 `GET /api/workspaces/qa/:task_id/stream` 获取 SSE 进度。所有工作区、问答、视频、人脸和媒体接口都会再次校验当前用户是否仍为所属小组成员；媒体文件只能通过服务端返回的限时签名地址访问。

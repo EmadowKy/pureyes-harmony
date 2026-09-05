@@ -59,7 +59,7 @@ class ReActTools:
         logger.info(f"[TOOL - spatiotemporal_search] Running search: type={query_type}, query={query_text} on video={video_id}")
         
         # 从数据库特征池中，筛选过滤出当前片段的特征
-        clip_records = [r for r in self.db.records if r['video_id'] == video_id]
+        clip_records = [r for r in self.db.snapshot() if r['video_id'] == video_id]
         if not clip_records:
             return {
                 "summary": {
@@ -82,7 +82,11 @@ class ReActTools:
                 query_vector = target_records[0].get("reid_vector")
                 if query_vector:
                     # 获取较大数量的相似候选以进行全局统计
-                    results = self.db.search_identity(query_reid_vector=query_vector, top_k=99999)
+                    results = self.db.search_identity(
+                        query_reid_vector=query_vector,
+                        top_k=99999,
+                        video_id=video_id,
+                    )
                     matched_candidates = [r for r in results if r.get("video_id") == video_id]
                     
                     total_matching_records = len(matched_candidates)
@@ -185,7 +189,7 @@ class ReActTools:
                 
                 # 检查数据库中当前秒数附近是否有关联的检测目标，有的话在原图上画框辅助 VLM 识别
                 # 这样更精确，不易看错
-                records = [r for r in self.db.records if r['video_id'] == video_id and abs(r['timestamp'] - timestamp_sec) < 1.0]
+                records = [r for r in self.db.snapshot() if r['video_id'] == video_id and abs(r['timestamp'] - timestamp_sec) < 1.0]
                 if records:
                     # 在复制的图上绘制边界框
                     draw_frame = frame.copy()
@@ -255,19 +259,34 @@ class ReActSystemPrompt:
 
 2. "read_frame_image"：从视频片段的特定时间点截取图像，送入你的视觉感知中。
    参数：
-   - "video_path": 字符串，视频文件的物理路径
    - "timestamp_sec": 浮点数，截图的目标时间（秒）
    - "video_id": 字符串，视频文件名
    返回：截取出的临时图像文件的绝对路径。在下一轮对话的开头，你将会直接看见这张图像。
 
 3. "get_video_metadata"：获取视频的持续时间、帧率和帧数。
    参数：
-   - "video_path": 字符串，视频物理路径
+   - "video_id": 字符串，必须是当前用户已选择的视频文件名
    返回：{"duration_seconds": 秒数, "fps": 帧率, "frame_count": 总帧数}
 
 ---
 
-### 4. 关于预处理与精度的建议规则：
+### 4. 时间戳与视频引用输出强制格式规范 (极其重要):
+在 final_answer 中，凡是提到画面事件发生的时间节点，必须**严格使用格式化标签**：
+`[video:"视频序号", time:"MM:SS"]` 或 `[video:"视频序号", time:"HH:MM:SS"]`
+
+**示例标准**：
+- 视频 1 的 2 分 33 秒处：`[video:"1", time:"02:33"]`
+- 视频 2 的 15 分 10 秒处：`[video:"2", time:"15:10"]`
+- 视频 3 的 0 秒起始位置：`[video:"3", time:"00:00"]`
+
+**强制规范要求**：
+1. **严格包裹格式**：必须精确包含 `[video:"N", time:"MM:SS"]` 标签，英文方括号与双引号一个都不能少。绝对不能写成 `[video:"1",time:"02:33"`（缺少右方括号）或 `视频1 02:33`。
+2. **视频序号与列表一致**：`video` 后的序号必须对应提示词中列出的视频序号数字（如 `"1"`, `"2"`, `"3"`）。
+3. **前端渲染机制**：前端界面全赖此格式解析高亮并生成可点击调起视频精准播放跳转的蓝色下划线链接！请务必每一处时间节点都附带该标签。
+
+---
+
+### 5. 关于预处理与精度的建议规则：
 在推理并得出 final_answer 给用户回答问题时：
 - 请仔细查看用户提示中【当前关联切片片段预处理状态元数据】。
 - 如果当前片段未进行特征预处理 (如 "否 (未进行特征预处理/实时即时检索)")，或者当前配置的帧采样率/画质分辨率较低（例如采样率低于 2 帧/秒 或 画质低于原画分辨率），且需要高精度特征推演时：

@@ -61,13 +61,25 @@ pip install -r backend/requirements.txt
 后端运行仅依赖以下轻量 AI 模型权重，大模型推理统一采用 API 方式接入：
 
 1. **YOLOv8 目标检测权重 (`yolov8n.pt`)**：
-   - 放置于 `backend/yolov8n.pt` 或项目根目录（约 6.5 MB）。首次运行未发现文件时会自动抓取。
+   - 放置于 `backend/yolov8n.pt` 或项目根目录（约 6.5 MB），也可以用 `YOLO_MODEL_PATH` 指定绝对路径。生产环境不会在运行时自动下载缺失权重。
 2. **OSNet 行人重识别权重 (`osnet_x1_0.onnx` / `osnet_x1_0.pth`)**：
    - 放置于 `models/` 目录下。若需转换为 ONNX 格式，可执行脚本 `python convert_osnet.py`。
 3. **ByteTrack 多目标追踪配置 (`bytetrack_fixed.yaml`)**：
    - 放置于 `backend/app/mva_v2/bytetrack_fixed.yaml`。
 4. **多模态视觉大模型 API 配置**：
    - 用户可在客户端【我的】->【大模型 API 设置】界面实时配置个人或企业的 API Key、Base URL 及模型名称；服务器端亦可在环境变量或配置文件中配置默认的大模型 API 节点。
+
+首次启动前至少设置管理员密码和持久化密钥。密钥一旦用于生产数据后请妥善备份并保持不变，否则已有登录凭据或加密保存的大模型 API Key 将失效：
+
+```bash
+export PUREYES_BOOTSTRAP_ADMIN_PASSWORD='替换为强随机密码'
+export SECRET_KEY='替换为至少 32 字节的随机值'
+export JWT_SECRET_KEY='替换为另一个强随机值'
+# Fernet 格式密钥，可用：python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+export DATA_ENCRYPTION_KEY='替换为生成的 Fernet 密钥'
+```
+
+如不显式设置这些密钥，服务会在 `backend/.runtime/` 中生成本机密钥；部署迁移和备份时必须连同该目录一起安全迁移。
 
 ---
 

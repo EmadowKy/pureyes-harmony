@@ -4,6 +4,7 @@ import cv2
 import os
 import threading
 import requests
+from app.core.network_security import validate_llm_base_url
 
 # Thread-local storage for cloud API configuration
 api_config = threading.local()
@@ -92,7 +93,8 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
             "content": openai_content
         })
         
-    url = f"{base_url.rstrip('/')}/chat/completions"
+    safe_base_url = validate_llm_base_url(base_url, resolve_dns=True)
+    url = f"{safe_base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -109,7 +111,16 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
     
     print(f"[MVA Cloud API] Sending request to {url} with model {req_model}")
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=60, stream=True)
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=60,
+            stream=True,
+            allow_redirects=False,
+        )
         if response.status_code == 200:
             import json
             collected_chunks = []

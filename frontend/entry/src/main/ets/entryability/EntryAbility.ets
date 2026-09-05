@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { SecurityUtil } from '../utils/security';
 
 const DOMAIN = 0x0000;
 
@@ -22,12 +23,30 @@ export default class EntryAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
+    SecurityUtil.initSecureState().then((): void => {
+      this.loadMainContent(windowStage);
+    }).catch((err: Object): void => {
+      hilog.warn(DOMAIN, 'SecurityState', 'Secure state initialization failed: %{public}s', JSON.stringify(err));
+      this.loadMainContent(windowStage);
+    });
+  }
+
+  private loadMainContent(windowStage: window.WindowStage): void {
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+
+      // 开启鸿蒙系统原生 Window 隐私防截屏/防录屏模式
+      windowStage.getMainWindow().then((win: window.Window): void => {
+        win.setWindowPrivacyMode(true).then((): void => {
+          hilog.info(DOMAIN, 'PrivacyMode', 'Succeeded in setting window privacy mode to true.');
+        }).catch((pErr: Object): void => {
+          hilog.error(DOMAIN, 'PrivacyMode', 'Failed to set window privacy mode. Cause: %{public}s', JSON.stringify(pErr));
+        });
+      });
     });
   }
 

@@ -1,7 +1,10 @@
-import router from '@ohos.router';
 import { HttpUtil, BASE_HOST } from '../utils/http'
-import promptAction from '@ohos.promptAction'
 import { QARecordInfo } from './tabs/WorkspaceTab'
+
+interface ToastOptions {
+  message: string;
+  duration?: number;
+}
 
 export class WorkspaceVideoSegment {
   id: number = 0;
@@ -12,6 +15,8 @@ export class WorkspaceVideoSegment {
   duration: number = 0;
   remark: string = '';
   filepath: string = '';
+  media_url: string = '';
+  thumbnail_url: string = '';
   created_at: string = '';
   isSelected: boolean = false; // UI selection state
   status: string = 'pending';
@@ -205,12 +210,45 @@ export function formatAnswerToPlainText(answerText: string): string {
 }
 
 export class ExampleVideoInfo {
+  id: string = '';
   name: string = '';
   url: string = '';
+  media_url: string = '';
+  filepath: string = '';
   duration: number = 0;
+  source_type: string = 'monitor';
+  monitor_id: number = 0;
+  monitor_name: string = '';
+  has_recordings: boolean = false;
+  earliest_time: string = '';
+  latest_time: string = '';
   isSelected: boolean = false;
   startOffset: number = 0;
   endOffset: number = 0;
+}
+
+export class WorkspaceFaceGroupInfo {
+  id: number = 0;
+  workspace_id: number = 0;
+  name: string = '';
+  avatar_path: string = '';
+  avatar_url: string = '';
+  record_count: number = 0;
+}
+
+export class WorkspaceFaceRecordInfo {
+  id: number = 0;
+  workspace_id: number = 0;
+  group_id: number = 0;
+  segment_id: number = 0;
+  segment_filepath: string = '';
+  segment_media_url: string = '';
+  crop_path: string = '';
+  crop_url: string = '';
+  video_name: string = '';
+  start_time_offset: number = 0;
+  end_time_offset: number = 0;
+  time_range_str: string = '';
 }
 
 export class ProgressGroup {
@@ -221,6 +259,437 @@ export class ProgressGroup {
   isCollapsed: boolean = false;
   details: Array<string> = [];
   badgeText: string = '';
+}
+
+@CustomDialog
+struct MonitorTimeRangeDialog {
+  controller: CustomDialogController
+  activeVideo: ExampleVideoInfo = new ExampleVideoInfo();
+  @State startTimeText: string = '';
+  @State endTimeText: string = '';
+  @State remarkText: string = '';
+  @State enablePreprocess: boolean = true;
+  @State selectedFps: number = 1.0;
+  @State selectedResolution: string = '1080P';
+
+  confirm: (startTime: string, endTime: string, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string) => void =
+    (_start: string, _end: string, _remark: string, _enable: boolean, _fps: number, _res: string): void => {};
+
+  aboutToAppear(): void {
+    if (this.activeVideo.latest_time && this.activeVideo.latest_time.length > 10 && this.activeVideo.latest_time.indexOf(':') !== -1) {
+      this.endTimeText = this.activeVideo.latest_time;
+      this.startTimeText = this.computeShiftedTime(this.activeVideo.latest_time, -3);
+    } else {
+      const now = new Date();
+      this.endTimeText = this.formatDateTime(now);
+      now.setMinutes(now.getMinutes() - 3);
+      this.startTimeText = this.formatDateTime(now);
+    }
+    this.enablePreprocess = true;
+    this.selectedFps = 1.0;
+    this.selectedResolution = '1080P';
+  }
+
+  computeShiftedTime(baseStr: string, minutes: number): string {
+    const match = baseStr.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (!match) return baseStr;
+    const d = new Date(
+      Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+      Number(match[4]), Number(match[5]), Number(match[6])
+    );
+    d.setMinutes(d.getMinutes() + minutes);
+    return this.formatDateTime(d);
+  }
+
+  formatDateTime(d: Date): string {
+    const pad = (n: number): string => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  @Builder ParameterOption(label: string, isSelected: boolean, action: () => void) {
+    Button(label)
+      .height(32)
+      .layoutWeight(1)
+      .fontSize(11)
+      .fontWeight(isSelected ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(isSelected ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
+      .backgroundColor(Color.Transparent)
+      .border({
+        width: { bottom: isSelected ? 3 : 1 },
+        color: isSelected ? $r('app.color.app_accent') : $r('app.color.app_border')
+      })
+      .borderRadius(0)
+      .onClick(action)
+  }
+
+  @Builder QuickRange(label: string, minutes: number) {
+    Button(label)
+      .fontSize(11)
+      .fontColor($r('app.color.app_text_primary'))
+      .height(28)
+      .backgroundColor(Color.Transparent)
+      .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
+      .borderRadius(0)
+      .onClick((): void => {
+        const base = (this.activeVideo.latest_time && this.activeVideo.latest_time.indexOf(':') !== -1) ?
+          this.activeVideo.latest_time : this.formatDateTime(new Date());
+        this.endTimeText = base;
+        this.startTimeText = this.computeShiftedTime(base, -minutes);
+      })
+  }
+
+  build() {
+    Column({ space: 12 }) {
+      Text(`截取监控视频 (${this.activeVideo.monitor_name || this.activeVideo.name})`)
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
+
+      Scroll() {
+        Column({ space: 14 }) {
+          Row() {
+            Text('录像可用时间段:')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(`${this.activeVideo.earliest_time} ~ ${this.activeVideo.latest_time}`)
+              .fontSize(11)
+              .fontColor('#1E40AF')
+              .fontWeight(FontWeight.Medium)
+              .margin({ left: 6 })
+          }
+          .width('100%')
+
+          Row({ space: 6 }) {
+            Text('快捷填充:')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+
+            this.QuickRange('最近 1 分钟', 1)
+            this.QuickRange('最近 3 分钟', 3)
+            this.QuickRange('最近 5 分钟', 5)
+          }
+          .width('100%')
+
+          Column({ space: 6 }) {
+            Text('起始日期时间 (YYYY-MM-DD HH:mm:ss):')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_primary'))
+              .alignSelf(ItemAlign.Start)
+
+            TextInput({ text: this.startTimeText, placeholder: '2026-07-25 10:00:00' })
+              .height(40)
+              .fontSize(13)
+              .onChange((val: string): void => {
+                this.startTimeText = val;
+              })
+
+            Text('结束日期时间 (YYYY-MM-DD HH:mm:ss):')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_primary'))
+              .alignSelf(ItemAlign.Start)
+              .margin({ top: 6 })
+
+            TextInput({ text: this.endTimeText, placeholder: '2026-07-25 10:05:00' })
+              .height(40)
+              .fontSize(13)
+              .onChange((val: string): void => {
+                this.endTimeText = val;
+              })
+          }
+          .width('100%')
+
+          // AI 预处理设置板块 (浅蓝色背景卡片)
+          Column({ space: 10 }) {
+            Row() {
+              Column({ space: 2 }) {
+                Text('开启 AI 特征提取与识别预处理')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1E40AF')
+                Text('截取后将在后台自动识别图像物体及行为')
+                  .fontSize(11)
+                  .fontColor('#3B82F6')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.enablePreprocess })
+                .selectedColor($r('app.color.app_primary'))
+                .onChange((isOn: boolean): void => {
+                  this.enablePreprocess = isOn;
+                })
+            }
+            .width('100%')
+
+            if (this.enablePreprocess) {
+              // 采样帧率设置
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理采样帧率 (FPS):')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(`${this.selectedFps.toFixed(1)} FPS`)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  this.ParameterOption('0.5 FPS', this.selectedFps === 0.5, (): void => { this.selectedFps = 0.5; })
+                  this.ParameterOption('1.0 FPS · 推荐', this.selectedFps === 1.0, (): void => { this.selectedFps = 1.0; })
+                  this.ParameterOption('2.0 FPS', this.selectedFps === 2.0, (): void => { this.selectedFps = 2.0; })
+                }
+                .width('100%')
+              }
+              .width('100%')
+
+              // 预处理画质清晰度选择 (480P, 720P, 1080P, 4K)
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理画质清晰度:')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(this.selectedResolution)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  this.ParameterOption('480P', this.selectedResolution === '480P', (): void => { this.selectedResolution = '480P'; })
+                  this.ParameterOption('720P', this.selectedResolution === '720P', (): void => { this.selectedResolution = '720P'; })
+                  this.ParameterOption('1080P · 推荐', this.selectedResolution === '1080P', (): void => { this.selectedResolution = '1080P'; })
+                  this.ParameterOption('4K', this.selectedResolution === '4K', (): void => { this.selectedResolution = '4K'; })
+                }
+                .width('100%')
+              }
+              .width('100%')
+              .margin({ top: 2 })
+            }
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .borderRadius(8)
+          .border({ width: 1, color: $r('app.color.app_border') })
+
+          Column({ space: 4 }) {
+            Text('片段备注/说明 (可选):')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+              .alignSelf(ItemAlign.Start)
+
+            TextInput({ text: this.remarkText, placeholder: '请输入片段备注/说明' })
+              .height(40)
+              .fontSize(13)
+              .onChange((val: string): void => {
+                this.remarkText = val;
+              })
+          }
+          .width('100%')
+        }
+      }
+      .constraintSize({ maxHeight: '75%' })
+
+      Row({ space: 12 }) {
+        Button('取消')
+          .fontSize(13)
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.app_text_primary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(8)
+          .onClick((): void => {
+            this.controller.close();
+          })
+
+        Button('确认拼接截取')
+          .fontSize(13)
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor($r('app.color.app_surface_inverted'))
+          .fontColor($r('app.color.app_text_on_inverted'))
+          .borderRadius(8)
+          .onClick((): void => {
+            this.confirm(
+              this.startTimeText,
+              this.endTimeText,
+              this.remarkText,
+              this.enablePreprocess,
+              this.selectedFps,
+              this.selectedResolution
+            );
+            this.controller.close();
+          })
+      }
+      .width('100%')
+    }
+    .padding(16)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(12)
+  }
+}
+
+@CustomDialog
+struct FaceImagePreviewDialog {
+  controller: CustomDialogController
+  imageUrl: string = '';
+
+  build() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('查看高清人脸特写')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+        Blank()
+        Button('✕')
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor(Color.Transparent)
+          .border({ width: 1, color: '#80FFFFFF' })
+          .width(30)
+          .height(30)
+          .borderRadius(7)
+          .onClick((): void => {
+            this.controller.close();
+          })
+      }
+      .width('100%')
+
+      Image(this.imageUrl)
+        .width('95%')
+        .objectFit(ImageFit.Contain)
+        .borderRadius(8)
+    }
+    .padding(16)
+    .backgroundColor('rgba(0, 0, 0, 0.88)')
+    .borderRadius(12)
+  }
+}
+
+@CustomDialog
+struct FaceDetailDialog {
+  controller: CustomDialogController
+  group: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  records: Array<WorkspaceFaceRecordInfo> = [];
+  onRecordClick: (record: WorkspaceFaceRecordInfo) => void = (_r): void => {};
+  onPreviewImage: (imageUrl: string) => void = (_url): void => {};
+
+  build() {
+    Column({ space: 12 }) {
+      Row() {
+        Image(this.group.avatar_url ? (BASE_HOST + this.group.avatar_url) : $r('app.media.business_face_library'))
+          .width(42)
+          .height(42)
+          .borderRadius(21)
+          .objectFit(ImageFit.Cover)
+
+        Column({ space: 2 }) {
+          Text(this.group.name)
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+          Text(`在当前工作区共识别到 ${this.records.length} 条时间段记录`)
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 10 })
+
+        Blank()
+
+        Button('关闭')
+          .fontSize(12)
+          .height(30)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.app_text_secondary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(7)
+          .onClick((): void => {
+            this.controller.close();
+          })
+      }
+      .width('100%')
+      .padding({ bottom: 6 })
+
+      Divider().color($r('app.color.app_border'))
+
+      if (this.records.length > 0) {
+        Scroll() {
+          Column({ space: 10 }) {
+            ForEach(this.records, (rec: WorkspaceFaceRecordInfo): void => {
+              Row({ space: 12 }) {
+                // 左边：这个人脸在这一段的图片，点击可以查看大图
+                Image(rec.crop_url ? (BASE_HOST + rec.crop_url) : $r('app.media.business_face_library'))
+                  .width(64)
+                  .height(64)
+                  .borderRadius(8)
+                  .objectFit(ImageFit.Cover)
+                  .border({ width: 1, color: $r('app.color.app_border') })
+                  .onClick((): void => {
+                    if (rec.crop_url) {
+                      this.onPreviewImage(BASE_HOST + rec.crop_url);
+                    }
+                  })
+
+                // 右边：显示了视频备注和时间段，点击可以展示视频并跳转到起始时间
+                Column({ space: 5 }) {
+                  Text(rec.video_name || '未命名视频片段')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.app_text_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                  Row() {
+                    Text('出现时间段: ')
+                      .fontSize(12)
+                      .fontColor($r('app.color.app_text_secondary'))
+                    Text(rec.time_range_str)
+                      .fontSize(12)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_selection'))
+                  }
+
+                  Text('点击播放视频并精准跳转到起始时间 ➔')
+                    .fontSize(10)
+                    .fontColor($r('app.color.app_text_muted'))
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                .onClick((): void => {
+                  this.onRecordClick(rec);
+                  this.controller.close();
+                })
+              }
+              .width('100%')
+              .padding(10)
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
+              .borderRadius(8)
+              .border({ width: 1, color: $r('app.color.app_border') })
+            })
+          }
+        }
+        .constraintSize({ maxHeight: '70%' })
+      } else {
+        Text('暂无识别记录')
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_muted'))
+          .margin(20)
+      }
+    }
+    .padding(16)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(12)
+  }
 }
 
 @CustomDialog
@@ -245,6 +714,22 @@ struct VideoRangeDialog {
     this.enablePreprocess = true;
     this.selectedFps = 1.0;
     this.selectedResolution = '1080P';
+  }
+
+  @Builder ParameterOption(label: string, isSelected: boolean, action: () => void) {
+    Button(label)
+      .height(32)
+      .layoutWeight(1)
+      .fontSize(11)
+      .fontWeight(isSelected ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(isSelected ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
+      .backgroundColor(Color.Transparent)
+      .border({
+        width: { bottom: isSelected ? 3 : 1 },
+        color: isSelected ? $r('app.color.app_accent') : $r('app.color.app_border')
+      })
+      .borderRadius(0)
+      .onClick(action)
   }
 
   build() {
@@ -329,7 +814,7 @@ struct VideoRangeDialog {
           .backgroundColor($r('app.color.app_page_bg'))
           .borderRadius(8)
 
-          TextInput({ placeholder: '请输入片段备注，例如：大门经过车辆', text: this.remarkText })
+          TextInput({ placeholder: '请输入片段备注', text: this.remarkText })
             .width('100%')
             .height(45)
             .fontColor($r('app.color.app_text_primary'))
@@ -338,14 +823,21 @@ struct VideoRangeDialog {
               this.remarkText = value;
             })
 
-          // 视频特征预处理开关拉杆
-          Column({ space: 8 }) {
+          // 视频特征预处理设置板块 (浅蓝色背景卡片)
+          Column({ space: 10 }) {
             Row() {
-              Text('视频特征预处理')
-                .fontSize(14)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('app.color.app_text_primary'))
-              Blank()
+              Column({ space: 2 }) {
+                Text('开启 AI 特征提取与识别预处理')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1E40AF')
+                Text('截取后将在后台自动识别图像物体及行为')
+                  .fontSize(11)
+                  .fontColor('#3B82F6')
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
               Toggle({ type: ToggleType.Switch, isOn: this.enablePreprocess })
                 .selectedColor($r('app.color.app_primary'))
                 .onChange((isOn: boolean): void => {
@@ -353,123 +845,71 @@ struct VideoRangeDialog {
                 })
             }
             .width('100%')
-            .alignItems(VerticalAlign.Center)
 
             if (this.enablePreprocess) {
-              Column({ space: 10 }) {
-                // A. 采样率选择 (0.5, 1, 2)
-                Column({ space: 4 }) {
-                  Text('帧采样率')
-                    .fontSize(11)
-                    .fontColor('#6B7280')
-                    .width('100%')
-
-                  Row({ space: 8 }) {
-                    Button('0.5 帧/秒')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 0.5 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 0.5;
-                      })
-
-                    Button('1 帧/秒 (推荐)')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 1.0 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 1.0;
-                      })
-
-                    Button('2 帧/秒')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 2.0 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 2.0;
-                      })
-                  }
-                  .width('100%')
+              // 采样帧率
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理采样帧率 (FPS):')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(`${this.selectedFps.toFixed(1)} FPS`)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
                 }
+                .width('100%')
 
-                // B. 画质清晰度选择 (480P, 720P, 1080P, 4K)
-                Column({ space: 4 }) {
-                  Text('画质清晰度')
-                    .fontSize(11)
-                    .fontColor('#6B7280')
-                    .width('100%')
-
-                  Row({ space: 6 }) {
-                    Button('480P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '480P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '480P';
-                      })
-
-                    Button('720P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '720P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '720P';
-                      })
-
-                    Button('1080P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '1080P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '1080P';
-                      })
-
-                    Button('4K')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '4K' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '4K';
-                      })
-                  }
-                  .width('100%')
+                Row({ space: 6 }) {
+                  this.ParameterOption('0.5 FPS', this.selectedFps === 0.5, (): void => { this.selectedFps = 0.5; })
+                  this.ParameterOption('1.0 FPS · 推荐', this.selectedFps === 1.0, (): void => { this.selectedFps = 1.0; })
+                  this.ParameterOption('2.0 FPS', this.selectedFps === 2.0, (): void => { this.selectedFps = 2.0; })
                 }
-
-                // C. 灰色提示文字
-                Text('提示：精度越高/视频越长，预处理时间将会越长')
-                  .fontSize(11)
-                  .fontColor('#9CA3AF')
-                  .width('100%')
+                .width('100%')
               }
               .width('100%')
-              .padding(10)
-              .backgroundColor('#F9FAFB')
-              .borderRadius(8)
+
+              // 预处理画质清晰度
+              Column({ space: 8 }) {
+                Row() {
+                  Text('预处理画质清晰度:')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1E3A8A')
+                  Blank()
+                  Text(this.selectedResolution)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2563EB')
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  this.ParameterOption('480P', this.selectedResolution === '480P', (): void => { this.selectedResolution = '480P'; })
+                  this.ParameterOption('720P', this.selectedResolution === '720P', (): void => { this.selectedResolution = '720P'; })
+                  this.ParameterOption('1080P · 推荐', this.selectedResolution === '1080P', (): void => { this.selectedResolution = '1080P'; })
+                  this.ParameterOption('4K', this.selectedResolution === '4K', (): void => { this.selectedResolution = '4K'; })
+                }
+                .width('100%')
+              }
+              .width('100%')
+              .margin({ top: 2 })
             }
           }
           .width('100%')
-          .padding(10)
-          .backgroundColor('#F9FAFB')
+          .padding(12)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
           .borderRadius(8)
+          .border({ width: 1, color: $r('app.color.app_border') })
 
           Row({ space: 20 }) {
             Button('取消')
-              .backgroundColor('#999999')
-              .fontColor(Color.White)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.app_text_primary'))
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(8)
               .width(100)
               .height(40)
               .onClick((): void => {
@@ -477,8 +917,9 @@ struct VideoRangeDialog {
               })
 
             Button('确认')
-              .backgroundColor($r('app.color.app_primary'))
-              .fontColor(Color.White)
+              .backgroundColor($r('app.color.app_surface_inverted'))
+              .fontColor($r('app.color.app_text_on_inverted'))
+              .borderRadius(8)
               .width(100)
               .height(40)
               .onClick((): void => {
@@ -497,7 +938,7 @@ struct VideoRangeDialog {
     .width('95%')
     .constraintSize({ maxHeight: '85%' })
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(16)
+    .borderRadius(12)
   }
 }
 
@@ -540,6 +981,24 @@ struct SegmentDetailDialog {
     return optLevel <= origLevel;
   }
 
+  @Builder ParameterOption(label: string, isSelected: boolean, isEnabled: boolean, action: () => void) {
+    Button(label)
+      .height(32)
+      .layoutWeight(1)
+      .fontSize(11)
+      .fontWeight(isSelected ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(isSelected ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
+      .backgroundColor(Color.Transparent)
+      .border({
+        width: { bottom: isSelected ? 3 : 1 },
+        color: isSelected ? $r('app.color.app_accent') : $r('app.color.app_border')
+      })
+      .borderRadius(0)
+      .enabled(isEnabled)
+      .opacity(isEnabled ? 1 : 0.35)
+      .onClick(action)
+  }
+
   build() {
     Column({ space: 12 }) {
       // 1. 顶部 Header 行 (固定在顶部)
@@ -552,8 +1011,9 @@ struct SegmentDetailDialog {
         }
         .width(36)
         .height(36)
-        .borderRadius(18)
-        .backgroundColor('#F3F4F6')
+        .borderRadius(8)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 1, color: $r('app.color.app_border') })
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .onClick((): void => {
@@ -576,8 +1036,9 @@ struct SegmentDetailDialog {
           }
           .width(36)
           .height(36)
-          .borderRadius(18)
-          .backgroundColor('#FEE2E2')
+          .borderRadius(8)
+          .backgroundColor(Color.Transparent)
+          .border({ width: 1, color: $r('app.color.app_danger') })
           .justifyContent(FlexAlign.Center)
           .alignItems(VerticalAlign.Center)
           .onClick((): void => {
@@ -605,6 +1066,7 @@ struct SegmentDetailDialog {
                 Button('确定删除')
                   .backgroundColor('#EF4444')
                   .fontColor(Color.White)
+                  .borderRadius(8)
                   .height(34)
                   .fontSize(13)
                   .layoutWeight(1)
@@ -614,8 +1076,10 @@ struct SegmentDetailDialog {
                   })
 
                 Button('取消')
-                  .backgroundColor('#E5E7EB')
-                  .fontColor('#374151')
+                  .backgroundColor(Color.Transparent)
+                  .fontColor($r('app.color.app_text_primary'))
+                  .border({ width: 1, color: $r('app.color.app_border') })
+                  .borderRadius(8)
                   .height(34)
                   .fontSize(13)
                   .layoutWeight(1)
@@ -634,7 +1098,7 @@ struct SegmentDetailDialog {
 
           // 视频播放器
           Video({
-            src: BASE_HOST + '/api/video/' + this.segment.filepath,
+            src: BASE_HOST + this.segment.media_url,
             controller: this.videoController
           })
             .width('100%')
@@ -684,8 +1148,9 @@ struct SegmentDetailDialog {
                   }
                   .width(32)
                   .height(32)
-                  .borderRadius(16)
-                  .backgroundColor('#F3F4F6')
+                  .borderRadius(8)
+                  .backgroundColor(Color.Transparent)
+                  .border({ width: 1, color: $r('app.color.app_border') })
                   .justifyContent(FlexAlign.Center)
                   .alignItems(VerticalAlign.Center)
                   .onClick((): void => {
@@ -695,7 +1160,7 @@ struct SegmentDetailDialog {
               }
               .width('100%')
               .padding(10)
-              .backgroundColor('#F9FAFB')
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(8)
               .alignItems(VerticalAlign.Center)
             } else {
@@ -718,8 +1183,9 @@ struct SegmentDetailDialog {
 
                 Row({ space: 10 }) {
                   Button('保存备注')
-                    .backgroundColor($r('app.color.app_primary'))
-                    .fontColor(Color.White)
+                    .backgroundColor($r('app.color.app_surface_inverted'))
+                    .fontColor($r('app.color.app_text_on_inverted'))
+                    .borderRadius(8)
                     .height(36)
                     .fontSize(13)
                     .layoutWeight(1)
@@ -729,8 +1195,10 @@ struct SegmentDetailDialog {
                     })
 
                   Button('取消')
-                    .backgroundColor('#E5E7EB')
-                    .fontColor('#374151')
+                    .backgroundColor(Color.Transparent)
+                    .fontColor($r('app.color.app_text_primary'))
+                    .border({ width: 1, color: $r('app.color.app_border') })
+                    .borderRadius(8)
                     .height(36)
                     .fontSize(13)
                     .layoutWeight(1)
@@ -743,7 +1211,7 @@ struct SegmentDetailDialog {
               }
               .width('100%')
               .padding(10)
-              .backgroundColor('#F9FAFB')
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(8)
             }
           }
@@ -765,18 +1233,18 @@ struct SegmentDetailDialog {
                     Text('已预处理')
                       .fontSize(12)
                       .fontWeight(FontWeight.Bold)
-                      .fontColor('#10B981')
-                      .backgroundColor('#D1FAE5')
+                      .fontColor($r('app.color.app_success'))
                       .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .border({ width: 1, color: $r('app.color.app_success') })
                       .borderRadius(4)
                     Text('特征提炼就绪')
                       .fontSize(12)
-                      .fontColor('#6B7280')
+                      .fontColor($r('app.color.app_text_secondary'))
                   }
 
                   Text(`帧采样率: ${this.segment.sample_fps || 1} 帧/秒  |  画质: ${this.segment.resolution || '1080P'}`)
                     .fontSize(12)
-                    .fontColor('#374151')
+                    .fontColor($r('app.color.app_text_primary'))
                     .margin({ top: 4 })
                 }
                 .alignItems(HorizontalAlign.Start)
@@ -785,8 +1253,10 @@ struct SegmentDetailDialog {
                 if (!this.showSelectionActions) {
                   Button('删除预处理')
                     .fontSize(12)
-                    .fontColor('#EF4444')
-                    .backgroundColor('#FEE2E2')
+                    .fontColor($r('app.color.app_danger'))
+                    .backgroundColor(Color.Transparent)
+                    .border({ width: 1, color: $r('app.color.app_danger') })
+                    .borderRadius(8)
                     .height(32)
                     .onClick((): void => {
                       this.onDeleteFeatures();
@@ -795,9 +1265,9 @@ struct SegmentDetailDialog {
               }
               .width('100%')
               .padding(12)
-              .backgroundColor('#F0FDF4')
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(8)
-              .border({ width: 1, color: '#BBF7D0' })
+              .border({ width: { left: 3, right: 1, top: 1, bottom: 1 }, color: $r('app.color.app_success') })
               .alignItems(VerticalAlign.Center)
 
             } else if (this.segment.status === 'processing' || this.segment.status === 'pending') {
@@ -807,11 +1277,11 @@ struct SegmentDetailDialog {
                   Text(`正在预处理 (${this.segment.sample_fps || 1} 帧/秒, ${this.segment.resolution || '1080P'})`)
                     .fontSize(12)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor('#3B82F6')
+                    .fontColor($r('app.color.app_selection'))
                     .layoutWeight(1)
                   Text(`${this.segment.progress}%`)
                     .fontSize(12)
-                    .fontColor('#3B82F6')
+                    .fontColor($r('app.color.app_selection'))
                 }
                 .width('100%')
 
@@ -822,9 +1292,9 @@ struct SegmentDetailDialog {
               }
               .width('100%')
               .padding(12)
-              .backgroundColor('#EFF6FF')
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(8)
-              .border({ width: 1, color: '#BFDBFE' })
+              .border({ width: { left: 3, right: 1, top: 1, bottom: 1 }, color: $r('app.color.app_selection') })
 
             } else {
               // 3. 失败或未预处理状态：展示失败原因（若失败） + 精度选择器 + 开始/重新预处理按钮
@@ -832,8 +1302,8 @@ struct SegmentDetailDialog {
                 if (this.segment.status === 'failed') {
                   Text('预处理失败原因: ' + (this.segment.error_msg || '未知错误'))
                     .fontSize(12)
-                    .fontColor('#EF4444')
-                    .backgroundColor('#FEF2F2')
+                    .fontColor($r('app.color.app_danger'))
+                    .backgroundColor($r('app.color.app_card_subtle_bg'))
                     .padding(8)
                     .borderRadius(6)
                     .width('100%')
@@ -843,39 +1313,13 @@ struct SegmentDetailDialog {
                 Column({ space: 4 }) {
                   Text('帧采样率')
                     .fontSize(11)
-                    .fontColor('#6B7280')
+                    .fontColor($r('app.color.app_text_secondary'))
                     .width('100%')
 
                   Row({ space: 8 }) {
-                    Button('0.5 帧/秒')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 0.5 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 0.5 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 0.5;
-                      })
-
-                    Button('1 帧/秒 (推荐)')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 1.0 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 1.0 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 1.0;
-                      })
-
-                    Button('2 帧/秒')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedFps === 2.0 ? Color.White : '#374151')
-                      .backgroundColor(this.selectedFps === 2.0 ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedFps = 2.0;
-                      })
+                    this.ParameterOption('0.5 帧/秒', this.selectedFps === 0.5, true, (): void => { this.selectedFps = 0.5; })
+                    this.ParameterOption('1 帧/秒 · 推荐', this.selectedFps === 1.0, true, (): void => { this.selectedFps = 1.0; })
+                    this.ParameterOption('2 帧/秒', this.selectedFps === 2.0, true, (): void => { this.selectedFps = 2.0; })
                   }
                   .width('100%')
                 }
@@ -884,56 +1328,14 @@ struct SegmentDetailDialog {
                 Column({ space: 4 }) {
                   Text(`画质清晰度 (原画: ${this.segment.orig_resolution || '1080P'})`)
                     .fontSize(11)
-                    .fontColor('#6B7280')
+                    .fontColor($r('app.color.app_text_secondary'))
                     .width('100%')
 
                   Row({ space: 6 }) {
-                    // 480P
-                    Button('480P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .fontColor(this.selectedResolution === '480P' ? Color.White : '#374151')
-                      .backgroundColor(this.selectedResolution === '480P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '480P';
-                      })
-
-                    // 720P
-                    Button('720P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .enabled(this.isResAllowed('720P', this.segment.orig_resolution))
-                      .fontColor(this.selectedResolution === '720P' ? Color.White : (this.isResAllowed('720P', this.segment.orig_resolution) ? '#374151' : '#9CA3AF'))
-                      .backgroundColor(this.selectedResolution === '720P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '720P';
-                      })
-
-                    // 1080P
-                    Button('1080P')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .enabled(this.isResAllowed('1080P', this.segment.orig_resolution))
-                      .fontColor(this.selectedResolution === '1080P' ? Color.White : (this.isResAllowed('1080P', this.segment.orig_resolution) ? '#374151' : '#9CA3AF'))
-                      .backgroundColor(this.selectedResolution === '1080P' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '1080P';
-                      })
-
-                    // 4K
-                    Button('4K')
-                      .fontSize(12)
-                      .height(30)
-                      .layoutWeight(1)
-                      .enabled(this.isResAllowed('4K', this.segment.orig_resolution))
-                      .fontColor(this.selectedResolution === '4K' ? Color.White : (this.isResAllowed('4K', this.segment.orig_resolution) ? '#374151' : '#9CA3AF'))
-                      .backgroundColor(this.selectedResolution === '4K' ? $r('app.color.app_primary') : '#E5E7EB')
-                      .onClick((): void => {
-                        this.selectedResolution = '4K';
-                      })
+                    this.ParameterOption('480P', this.selectedResolution === '480P', true, (): void => { this.selectedResolution = '480P'; })
+                    this.ParameterOption('720P', this.selectedResolution === '720P', this.isResAllowed('720P', this.segment.orig_resolution), (): void => { this.selectedResolution = '720P'; })
+                    this.ParameterOption('1080P', this.selectedResolution === '1080P', this.isResAllowed('1080P', this.segment.orig_resolution), (): void => { this.selectedResolution = '1080P'; })
+                    this.ParameterOption('4K', this.selectedResolution === '4K', this.isResAllowed('4K', this.segment.orig_resolution), (): void => { this.selectedResolution = '4K'; })
                   }
                   .width('100%')
                 }
@@ -941,17 +1343,18 @@ struct SegmentDetailDialog {
                 // C. 灰色提示文字
                 Text('提示：精度越高/视频越长，预处理时间将会越长')
                   .fontSize(11)
-                  .fontColor('#9CA3AF')
+                  .fontColor($r('app.color.app_text_muted'))
                   .width('100%')
 
                 // D. 开始/重新预处理按钮
                 if (!this.showSelectionActions) {
                   Button(this.segment.status === 'failed' ? '重新预处理' : '开始预处理')
                     .fontSize(13)
-                    .backgroundColor($r('app.color.app_primary'))
-                    .fontColor(Color.White)
+                    .backgroundColor($r('app.color.app_surface_inverted'))
+                    .fontColor($r('app.color.app_text_on_inverted'))
                     .width('100%')
                     .height(36)
+                    .borderRadius(8)
                     .onClick((): void => {
                       this.onPreprocess(this.selectedFps, this.selectedResolution);
                     })
@@ -959,8 +1362,9 @@ struct SegmentDetailDialog {
               }
               .width('100%')
               .padding(10)
-              .backgroundColor('#F9FAFB')
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(8)
+              .border({ width: 1, color: $r('app.color.app_border') })
             }
           }
           .width('100%')
@@ -969,8 +1373,9 @@ struct SegmentDetailDialog {
           if (this.showSelectionActions) {
             Row({ space: 10 }) {
               Button('确认选择')
-                .backgroundColor($r('app.color.app_primary'))
-                .fontColor(Color.White)
+                .backgroundColor($r('app.color.app_surface_inverted'))
+                .fontColor($r('app.color.app_text_on_inverted'))
+                .borderRadius(8)
                 .layoutWeight(1)
                 .height(40)
                 .fontSize(14)
@@ -981,8 +1386,10 @@ struct SegmentDetailDialog {
                 })
 
               Button('取消')
-                .backgroundColor('#999999')
-                .fontColor(Color.White)
+                .backgroundColor(Color.Transparent)
+                .fontColor($r('app.color.app_text_primary'))
+                .border({ width: 1, color: $r('app.color.app_border') })
+                .borderRadius(8)
                 .layoutWeight(1)
                 .height(40)
                 .fontSize(14)
@@ -1004,7 +1411,7 @@ struct SegmentDetailDialog {
     .width('95%')
     .constraintSize({ maxHeight: '85%' })
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(16)
+    .borderRadius(12)
   }
 }
 
@@ -1014,18 +1421,24 @@ struct WorkspaceDetail {
   workspaceId: number = 0;
   workspaceName: string = '';
 
-  @State currentSubTab: number = 0; // 0: 片段, 1: 问答
+  @State currentSubTab: number = 0; // 0: 片段, 1: 人脸, 2: 问答
   @State segments: Array<WorkspaceVideoSegment> = [];
   @State exampleVideos: Array<ExampleVideoInfo> = [];
   @State showSelectExampleVideo: boolean = false;
   @State activeVideo: ExampleVideoInfo = new ExampleVideoInfo();
   @State activeIndex: number = 0;
 
+  @State faceGroups: Array<WorkspaceFaceGroupInfo> = [];
+  @State selectedFaceGroup: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  @State activeFaceGroupRecords: Array<WorkspaceFaceRecordInfo> = [];
+  @State previewImageUrl: string = '';
+
   @State qaRecords: Array<QARecordInfo> = [];
   @State showCreateQA: boolean = false;
   @State questionText: string = '';
   @State aiProgressText: string = '';
   @State pollIntervalId: number = 0;
+  private isPollingStatus: boolean = false;
 
   @State activeTaskId: string = '';
   @State activeTaskQuestion: string = '';
@@ -1043,6 +1456,14 @@ struct WorkspaceDetail {
   @State isVideosCollapsed: boolean = false;
   @State @Watch('onJumpSecondsChange') jumpSeconds: number = 0;
 
+  showToast(options: ToastOptions): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(options);
+    } catch (error) {
+      console.warn('[UI] Toast display failed:', JSON.stringify(error));
+    }
+  }
+
   onJumpSecondsChange(): void {
     // Watcher to force recreate or pass value if needed, but in ArkTS @Prop will handle it
   }
@@ -1053,6 +1474,39 @@ struct WorkspaceDetail {
       confirm: (start: number, end: number, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string): void => {
         this.submitCreateSegment(this.activeIndex, start, end, remark, enablePreprocess, sampleFps, resolution);
       }
+    }),
+    autoCancel: true
+  })
+
+  monitorRangeDialogController: CustomDialogController = new CustomDialogController({
+    builder: MonitorTimeRangeDialog({
+      activeVideo: this.activeVideo,
+      confirm: (start: string, end: string, remark: string, enablePreprocess: boolean, sampleFps: number, resolution: string): void => {
+        this.submitCreateMonitorSegment(start, end, remark, enablePreprocess, sampleFps, resolution);
+      }
+    }),
+    customStyle: true,
+    autoCancel: true
+  })
+
+  faceDetailDialogController: CustomDialogController = new CustomDialogController({
+    builder: FaceDetailDialog({
+      group: this.selectedFaceGroup,
+      records: this.activeFaceGroupRecords,
+      onRecordClick: (rec: WorkspaceFaceRecordInfo): void => {
+        this.jumpToFaceRecordVideo(rec);
+      },
+      onPreviewImage: (url: string): void => {
+        this.previewImageUrl = url;
+        this.faceImagePreviewDialogController.open();
+      }
+    }),
+    autoCancel: true
+  })
+
+  faceImagePreviewDialogController: CustomDialogController = new CustomDialogController({
+    builder: FaceImagePreviewDialog({
+      imageUrl: this.previewImageUrl
     }),
     autoCancel: true
   })
@@ -1097,13 +1551,86 @@ struct WorkspaceDetail {
   })
 
   aboutToAppear(): void {
-    const params = router.getParams() as Record<string, Object>;
+    const params = this.getUIContext().getRouter().getParams() as Record<string, Object>;
     if (params) {
       this.workspaceId = params['workspaceId'] as number;
       this.workspaceName = params['workspaceName'] as string;
     }
     this.loadSegments();
+    this.loadFaceGroups();
     this.loadQARecords();
+  }
+
+  async loadFaceGroups(): Promise<void> {
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces`);
+    if (res.code === 0 && res.data) {
+      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      const mapped: Array<WorkspaceFaceGroupInfo> = [];
+      for (let i = 0; i < listObj.length; i++) {
+        const item = listObj[i];
+        const g = new WorkspaceFaceGroupInfo();
+        g.id = item['id'] as number;
+        g.workspace_id = item['workspace_id'] as number;
+        g.name = (item['name'] as string) || '';
+        g.avatar_path = (item['avatar_path'] as string) || '';
+        g.avatar_url = (item['avatar_url'] as string) || '';
+        g.record_count = (item['record_count'] as number) || 0;
+        mapped.push(g);
+      }
+      this.faceGroups = mapped;
+    } else {
+      this.faceGroups = [];
+    }
+  }
+
+  async openFaceGroupDetail(group: WorkspaceFaceGroupInfo): Promise<void> {
+    this.selectedFaceGroup = group;
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces/${group.id}/records`);
+    if (res.code === 0 && res.data) {
+      const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      const mapped: Array<WorkspaceFaceRecordInfo> = [];
+      for (let i = 0; i < listObj.length; i++) {
+        const item = listObj[i];
+        const r = new WorkspaceFaceRecordInfo();
+        r.id = item['id'] as number;
+        r.workspace_id = item['workspace_id'] as number;
+        r.group_id = item['group_id'] as number;
+        r.segment_id = (item['segment_id'] as number) || 0;
+        r.segment_filepath = (item['segment_filepath'] as string) || '';
+        r.segment_media_url = (item['segment_media_url'] as string) || '';
+        r.crop_path = (item['crop_path'] as string) || '';
+        r.crop_url = (item['crop_url'] as string) || '';
+        r.video_name = (item['video_name'] as string) || '';
+        r.start_time_offset = (item['start_time_offset'] as number) || 0;
+        r.end_time_offset = (item['end_time_offset'] as number) || 0;
+        r.time_range_str = (item['time_range_str'] as string) || '';
+        mapped.push(r);
+      }
+      this.activeFaceGroupRecords = mapped;
+      this.faceDetailDialogController.open();
+    } else {
+      this.showToast({ message: '获取人脸识别轨迹失败', duration: 1500 });
+    }
+  }
+
+  jumpToFaceRecordVideo(rec: WorkspaceFaceRecordInfo): void {
+    if (!rec.segment_filepath) {
+      this.showToast({ message: '对应视频文件已不存在', duration: 2000 });
+      return;
+    }
+
+    const s = new WorkspaceVideoSegment();
+    s.id = rec.segment_id;
+    s.video_name = rec.video_name;
+    s.filepath = rec.segment_filepath;
+    s.media_url = rec.segment_media_url;
+    s.start_offset = 0;
+    s.end_offset = rec.end_time_offset + 5;
+    s.duration = rec.end_time_offset + 5;
+
+    this.selectedSegment = s;
+    this.jumpSeconds = rec.start_time_offset;
+    this.timestampPreviewDialogController.open();
   }
 
   aboutToDisappear(): void {
@@ -1119,7 +1646,6 @@ struct WorkspaceDetail {
       const mapped: Array<WorkspaceVideoSegment> = [];
       let hasProcessing = false;
       
-      // 记录用户当前已经在 UI 中勾选了哪些片段
       const selectedIds = new Set<number>();
       for (let i = 0; i < this.segments.length; i++) {
         if (this.segments[i].isSelected) {
@@ -1138,6 +1664,8 @@ struct WorkspaceDetail {
         s.duration = item['duration'] as number;
         s.remark = (item['remark'] as string) || '';
         s.filepath = item['filepath'] as string;
+        s.media_url = (item['media_url'] as string) || '';
+        s.thumbnail_url = (item['thumbnail_url'] as string) || '';
         s.created_at = item['created_at'] as string;
         s.status = (item['status'] as string) || 'pending';
         s.progress = (item['progress'] as number) || 0;
@@ -1146,12 +1674,10 @@ struct WorkspaceDetail {
         s.resolution = (item['resolution'] as string) || '1080P';
         s.orig_resolution = (item['orig_resolution'] as string) || '1080P';
         
-        // 恢复之前已被勾选的状态
         if (selectedIds.has(s.id)) {
           s.isSelected = true;
         }
 
-        // 实时更新当前正在查看的片段对象，触发弹窗 UI 响应式重绘
         if (this.selectedSegment && this.selectedSegment.id === s.id) {
           this.selectedSegment = s;
         }
@@ -1162,8 +1688,8 @@ struct WorkspaceDetail {
         mapped.push(s);
       }
       this.segments = mapped;
+      this.loadFaceGroups();
       
-      // 如果存在尚未处理完毕的片段，则进行每 1.5 秒一次的自动轮询
       if (hasProcessing) {
         setTimeout(() => {
           this.loadSegments();
@@ -1175,16 +1701,25 @@ struct WorkspaceDetail {
   }
 
   async loadExampleVideos(): Promise<void> {
-    const res = await HttpUtil.get('/workspaces/example-videos');
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/video-sources`);
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const mapped: Array<ExampleVideoInfo> = [];
       for (let i = 0; i < listObj.length; i++) {
         const item = listObj[i];
         const v = new ExampleVideoInfo();
+        v.id = (item['id'] as string) || '';
         v.name = item['name'] as string;
         v.url = item['url'] as string;
+        v.media_url = (item['media_url'] as string) || '';
+        v.filepath = (item['filepath'] as string) || '';
         v.duration = (item['duration'] as number) || 0;
+        v.source_type = (item['source_type'] as string) || 'monitor';
+        v.monitor_id = (item['monitor_id'] as number) || 0;
+        v.monitor_name = (item['monitor_name'] as string) || '';
+        v.has_recordings = (item['has_recordings'] as boolean) || false;
+        v.earliest_time = (item['earliest_time'] as string) || '';
+        v.latest_time = (item['latest_time'] as string) || '';
         v.isSelected = false;
         v.startOffset = 0;
         v.endOffset = v.duration;
@@ -1199,12 +1734,51 @@ struct WorkspaceDetail {
   handleExampleVideoClick(index: number): void {
     const video = this.exampleVideos[index];
     this.activeIndex = index;
-    this.activeVideo.name = video.name;
-    this.activeVideo.url = BASE_HOST + "/api/video/" + video.url;
-    this.activeVideo.duration = video.duration;
-    this.activeVideo.startOffset = 0;
-    this.activeVideo.endOffset = video.duration;
-    this.rangeDialogController.open();
+    this.activeVideo = video;
+    
+    if (video.source_type === 'monitor') {
+      this.monitorRangeDialogController.open();
+    } else {
+      const path = video.filepath || video.url;
+      this.activeVideo.url = BASE_HOST + video.media_url;
+      this.activeVideo.filepath = path;
+      this.activeVideo.duration = video.duration;
+      this.activeVideo.startOffset = 0;
+      this.activeVideo.endOffset = video.duration;
+      this.rangeDialogController.open();
+    }
+  }
+
+  async submitCreateMonitorSegment(startTime: string, endTime: string, remark: string, enablePreprocess: boolean = true, sampleFps: number = 1.0, resolution: string = '1080P'): Promise<void> {
+    class MonitorSegmentPayload {
+      source_type: string = 'monitor';
+      monitor_id: number = 0;
+      start_time: string = '';
+      end_time: string = '';
+      remark: string = '';
+      enable_preprocess: boolean = true;
+      sample_fps: number = 1.0;
+      resolution: string = '1080P';
+    }
+    const payload = new MonitorSegmentPayload();
+    payload.source_type = 'monitor';
+    payload.monitor_id = this.activeVideo.monitor_id;
+    payload.start_time = startTime;
+    payload.end_time = endTime;
+    payload.remark = remark;
+    payload.enable_preprocess = enablePreprocess;
+    payload.sample_fps = sampleFps;
+    payload.resolution = resolution;
+
+    this.showToast({ message: '正在校验录像完整性并拼接截取...', duration: 2000 });
+    const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/segments`, payload);
+    if (res.code === 0) {
+      this.showToast({ message: '监控片段拼接截取成功', duration: 1500 });
+      this.showSelectExampleVideo = false;
+      this.loadSegments();
+    } else {
+      this.showToast({ message: res.message || '截取失败，请检查录像完整性', duration: 3500 });
+    }
   }
 
   async submitCreateSegment(index: number, start: number, end: number, remark: string, enablePreprocess: boolean = true, sampleFps: number = 1.0, resolution: string = '1080P'): Promise<void> {
@@ -1212,6 +1786,7 @@ struct WorkspaceDetail {
     
     class SegmentPayload {
       video_name: string = '';
+      filepath: string = '';
       start_offset: number = 0;
       end_offset: number = 0;
       remark: string = '';
@@ -1221,6 +1796,7 @@ struct WorkspaceDetail {
     }
     const payload = new SegmentPayload();
     payload.video_name = video.name;
+    payload.filepath = video.filepath || video.url;
     payload.start_offset = start;
     payload.end_offset = end;
     payload.remark = remark;
@@ -1228,14 +1804,14 @@ struct WorkspaceDetail {
     payload.sample_fps = sampleFps;
     payload.resolution = resolution;
 
-    promptAction.showToast({ message: '正在物理裁剪并保存片段...', duration: 1500 });
+    this.showToast({ message: '正在物理裁剪并保存片段...', duration: 1500 });
     const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/segments`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '片段添加成功', duration: 1500 });
+      this.showToast({ message: '片段添加成功', duration: 1500 });
       this.showSelectExampleVideo = false;
       this.loadSegments();
     } else {
-      promptAction.showToast({ message: '保存失败: ' + (res.message || '未知错误'), duration: 2000 });
+      this.showToast({ message: '保存失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 
@@ -1261,13 +1837,13 @@ struct WorkspaceDetail {
 
   handleTimestampClick(videoNumber: number, timeStr: string): void {
     if (!this.activeTaskVideoPaths || this.activeTaskVideoPaths.length < videoNumber) {
-      promptAction.showToast({ message: '找不到对应的视频文件', duration: 1500 });
+      this.showToast({ message: '找不到对应的视频文件', duration: 1500 });
       return;
     }
     const filepath = this.activeTaskVideoPaths[videoNumber - 1];
     const realSeg = this.findSegmentByFilepath(filepath);
     if (realSeg === null) {
-      promptAction.showToast({ message: '该视频片段已删除，无法跳转播放', duration: 1500 });
+      this.showToast({ message: '该视频片段已删除，无法跳转播放', duration: 1500 });
       return;
     }
     
@@ -1276,7 +1852,7 @@ struct WorkspaceDetail {
     this.jumpSeconds = timeToSeconds(timeStr);
     
     this.timestampPreviewDialogController.open();
-    promptAction.showToast({ message: `已跳转到视频 ${videoNumber} 的 ${timeStr}`, duration: 1500 });
+    this.showToast({ message: `已跳转到视频 ${videoNumber} 的 ${timeStr}`, duration: 1500 });
   }
 
   async submitUpdateSegment(segmentId: number, remark: string): Promise<void> {
@@ -1288,20 +1864,20 @@ struct WorkspaceDetail {
 
     const res = await HttpUtil.put(`/workspaces/segments/${segmentId}`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '备注修改成功', duration: 1500 });
+      this.showToast({ message: '备注修改成功', duration: 1500 });
       this.loadSegments();
     } else {
-      promptAction.showToast({ message: '修改失败: ' + (res.message || '未知错误'), duration: 2000 });
+      this.showToast({ message: '修改失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 
   async submitDeleteSegment(segmentId: number): Promise<void> {
     const res = await HttpUtil.del(`/workspaces/segments/${segmentId}`);
     if (res.code === 0) {
-      promptAction.showToast({ message: '片段删除成功', duration: 1500 });
+      this.showToast({ message: '片段删除成功', duration: 1500 });
       this.loadSegments();
     } else {
-      promptAction.showToast({ message: '删除失败: ' + (res.message || '未知错误'), duration: 2000 });
+      this.showToast({ message: '删除失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 
@@ -1316,20 +1892,20 @@ struct WorkspaceDetail {
 
     const res = await HttpUtil.post(`/workspaces/segments/${segmentId}/preprocess`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '已开始预处理', duration: 1500 });
+      this.showToast({ message: '已开始预处理', duration: 1500 });
       this.loadSegments();
     } else {
-      promptAction.showToast({ message: '启动预处理失败: ' + (res.message || '未知错误'), duration: 2000 });
+      this.showToast({ message: '启动预处理失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 
   async submitDeleteSegmentFeatures(segmentId: number): Promise<void> {
     const res = await HttpUtil.del(`/workspaces/segments/${segmentId}/features`);
     if (res.code === 0) {
-      promptAction.showToast({ message: '预处理特征已删除', duration: 1500 });
+      this.showToast({ message: '预处理特征已删除', duration: 1500 });
       this.loadSegments();
     } else {
-      promptAction.showToast({ message: '删除特征失败: ' + (res.message || '未知错误'), duration: 2000 });
+      this.showToast({ message: '删除特征失败: ' + (res.message || '未知错误'), duration: 2000 });
     }
   }
 
@@ -1351,6 +1927,51 @@ struct WorkspaceDetail {
       this.qaRecords = mapped;
     } else {
       this.qaRecords = [];
+    }
+  }
+
+  // ===== 确认并删除问答记录 =====
+  confirmDeleteQARecord(taskId: string): void {
+    this.getUIContext().showAlertDialog({
+      title: '确认删除问答记录',
+      message: '删除后该问答记录及其关联的推理结果将无法恢复，是否确认删除？',
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: '确认删除',
+        fontColor: Color.Red,
+        action: (): void => {
+          this.executeDeleteQARecord(taskId);
+        }
+      }
+    });
+  }
+
+  async executeDeleteQARecord(taskId: string): Promise<void> {
+    try {
+      const res = await HttpUtil.del('/workspaces/qa/' + taskId);
+      if (res.code === 0 || res.code === 200) {
+        this.showToast({ message: '问答记录已成功删除' });
+        if (this.pollIntervalId) {
+          clearInterval(this.pollIntervalId);
+          this.pollIntervalId = 0;
+        }
+        this.activeTaskId = '';
+        this.activeTaskQuestion = '';
+        this.activeTaskAnswer = '';
+        this.activeTaskStatus = '';
+        this.activeTaskProgress = [];
+        this.progressGroups = [];
+        this.loadQARecords();
+      } else {
+        this.showToast({ message: res.message || '删除失败' });
+      }
+    } catch (err) {
+      this.showToast({ message: '删除网络请求异常: ' + String(err) });
     }
   }
 
@@ -1522,55 +2143,63 @@ struct WorkspaceDetail {
       clearInterval(this.pollIntervalId);
     }
     this.pollIntervalId = setInterval(async (): Promise<void> => {
-      const res = await HttpUtil.get(`/workspaces/qa/${taskId}/status`);
-      if (res.code === 0 && res.data) {
-        const statusObj = JSON.parse(res.data) as Record<string, Object>;
-        const status = statusObj['status'] as string;
-        const answer = (statusObj['answer'] as string) || '';
-        const error = (statusObj['error'] as string) || '';
-        const progressList = statusObj['progress'] as Array<Record<string, Object>>;
-        const videoPaths = (statusObj['video_paths'] as Array<string>) || [];
-        
-        this.activeTaskStatus = status;
-        this.activeTaskAnswer = answer ? answer : (error ? '错误: ' + error : '');
-        this.activeTaskVideoPaths = videoPaths;
-        this.updateProgress(progressList);
-        
-        if (progressList && progressList.length > 0) {
-          const latestItem = progressList[progressList.length - 1];
-          this.aiProgressText = latestItem['message'] as string;
-        }
-        if (status === 'completed') {
-          clearInterval(this.pollIntervalId);
-          this.pollIntervalId = 0;
-          this.aiProgressText = '分析完成：' + answer;
-          this.questionText = '';
-          promptAction.showToast({ message: 'AI 分析已完成', duration: 2000 });
-          this.loadQARecords();
-        } else if (status === 'failed') {
-          clearInterval(this.pollIntervalId);
-          this.pollIntervalId = 0;
-          this.aiProgressText = '分析失败：' + error;
-          promptAction.showToast({ message: 'AI 分析发生错误', duration: 2000 });
-          this.loadQARecords();
-        }
-      } else {
-        clearInterval(this.pollIntervalId);
-        this.pollIntervalId = 0;
-        this.aiProgressText = '获取分析进度失败: ' + (res.message || '网络连接异常');
+      if (this.isPollingStatus) {
+        return;
       }
-    }, 400);
+      this.isPollingStatus = true;
+      try {
+        const res = await HttpUtil.get(`/workspaces/qa/${taskId}/status`);
+        if (res.code === 0 && res.data) {
+          const statusObj = JSON.parse(res.data) as Record<string, Object>;
+          const status = statusObj['status'] as string;
+          const answer = (statusObj['answer'] as string) || '';
+          const error = (statusObj['error'] as string) || '';
+          const progressList = statusObj['progress'] as Array<Record<string, Object>>;
+          const videoPaths = (statusObj['video_paths'] as Array<string>) || [];
+
+          this.activeTaskStatus = status;
+          this.activeTaskAnswer = answer ? answer : (error ? '错误: ' + error : '');
+          this.activeTaskVideoPaths = videoPaths;
+          this.updateProgress(progressList);
+
+          if (progressList && progressList.length > 0) {
+            const latestItem = progressList[progressList.length - 1];
+            this.aiProgressText = latestItem['message'] as string;
+          }
+          if (status === 'completed') {
+            clearInterval(this.pollIntervalId);
+            this.pollIntervalId = 0;
+            this.aiProgressText = '分析完成：' + answer;
+            this.questionText = '';
+            this.showToast({ message: 'AI 分析已完成', duration: 2000 });
+            this.loadQARecords();
+          } else if (status === 'failed') {
+            clearInterval(this.pollIntervalId);
+            this.pollIntervalId = 0;
+            this.aiProgressText = '分析失败：' + error;
+            this.showToast({ message: 'AI 分析发生错误', duration: 2000 });
+            this.loadQARecords();
+          }
+        } else {
+          clearInterval(this.pollIntervalId);
+          this.pollIntervalId = 0;
+          this.aiProgressText = '获取分析进度失败: ' + (res.message || '网络连接异常');
+        }
+      } finally {
+        this.isPollingStatus = false;
+      }
+    }, 1000);
   }
 
   async submitQA(): Promise<void> {
     if (!this.questionText) {
-      promptAction.showToast({ message: '请输入问题', duration: 1500 });
+      this.showToast({ message: '请输入问题', duration: 1500 });
       return;
     }
     
     const selectedList = this.segments.filter(v => v.isSelected);
     if (selectedList.length === 0) {
-      promptAction.showToast({ message: '请至少选择一个视频片段', duration: 1500 });
+      this.showToast({ message: '请至少选择一个视频片段', duration: 1500 });
       return;
     }
     
@@ -1628,84 +2257,117 @@ struct WorkspaceDetail {
     this.segments = [...this.segments];
   }
 
+  @Builder WorkspaceSubTabIcon(index: number, isSelected: boolean) {
+    if (index === 0) {
+      Image($r('app.media.business_clip_trim'))
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
+        .opacity(isSelected ? 1 : 0.52)
+    } else if (index === 1) {
+      Image($r('app.media.business_face_library'))
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
+        .opacity(isSelected ? 1 : 0.52)
+    } else {
+      Image($r('app.media.business_ai_qa'))
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
+        .opacity(isSelected ? 1 : 0.52)
+    }
+  }
+
+  @Builder WorkspaceSubTabItem(index: number, label: string) {
+    Column({ space: 2 }) {
+      Row()
+        .width(38)
+        .height(3)
+        .backgroundColor(this.currentSubTab === index ? $r('app.color.app_accent') : Color.Transparent)
+
+      Stack() {
+        this.WorkspaceSubTabIcon(index, this.currentSubTab === index)
+      }
+      .width(46)
+      .height(32)
+
+      Text(label)
+        .fontSize(11)
+        .fontWeight(this.currentSubTab === index ? FontWeight.Bold : FontWeight.Medium)
+        .fontColor(this.currentSubTab === index ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
+    }
+    .height(60)
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .onClick((): void => {
+      this.currentSubTab = index;
+      this.showCreateQA = false;
+      this.showSelectExampleVideo = false;
+      if (index === 0) {
+        this.loadSegments();
+      } else if (index === 1) {
+        this.loadFaceGroups();
+      } else {
+        this.loadQARecords();
+      }
+    })
+  }
+
+  @Builder WorkspaceHeaderButton(name: string, action: () => void) {
+    Button() {
+      if (name === 'back') {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(18)
+          .fontColor([$r('app.color.app_text_primary')])
+      } else {
+        SymbolGlyph($r('sys.symbol.house'))
+          .fontSize(18)
+          .fontColor([$r('app.color.app_text_primary')])
+      }
+    }
+    .width(36)
+    .height(36)
+    .padding(0)
+    .backgroundColor($r('app.color.app_card_subtle_bg'))
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .borderRadius(8)
+    .onClick(action)
+  }
+
   build() {
     Column() {
       // ===== Top Bar =====
       Row() {
         if (this.activeTaskId !== '') {
-          // Inside Q&A detail view: show Back arrow and Home icon
-          Row({ space: 14 }) {
-            // Back Arrow Button (Polyline)
-            Polyline({ width: 18, height: 18 })
-              .points([[14, 2], [5, 9], [14, 16]])
-              .fill(Color.Transparent)
-              .stroke('#3B82F6')
-              .strokeWidth(2.5)
-              .strokeLineCap(LineCapStyle.Round)
-              .strokeLineJoin(LineJoinStyle.Round)
-              .onClick((): void => {
-                if (this.pollIntervalId) {
-                  clearInterval(this.pollIntervalId);
-                  this.pollIntervalId = 0;
-                }
-                this.activeTaskId = '';
-                this.aiProgressText = '';
-                this.questionText = '';
-                this.loadQARecords();
-              })
-
-            // Home Button (Polyline + Rect)
-            Column() {
-              Polyline({ width: 22, height: 10 })
-                .points([[0, 10], [11, 0], [22, 10]])
-                .fill(Color.Transparent)
-                .stroke('#3B82F6')
-                .strokeWidth(2.5)
-                .strokeLineCap(LineCapStyle.Round)
-                .strokeLineJoin(LineJoinStyle.Round)
-              Rect({ width: 16, height: 10 })
-                .fill(Color.Transparent)
-                .stroke('#3B82F6')
-                .strokeWidth(2.5)
-                .strokeLineJoin(LineJoinStyle.Round)
-                .margin({ top: -2.5 })
-            }
-            .alignItems(HorizontalAlign.Center)
-            .onClick((): void => {
+          Row({ space: 8 }) {
+            this.WorkspaceHeaderButton('back', (): void => {
               if (this.pollIntervalId) {
                 clearInterval(this.pollIntervalId);
                 this.pollIntervalId = 0;
               }
-              router.back();
+              this.activeTaskId = '';
+              this.aiProgressText = '';
+              this.questionText = '';
+              this.loadQARecords();
+            })
+
+            this.WorkspaceHeaderButton('home', (): void => {
+              if (this.pollIntervalId) {
+                clearInterval(this.pollIntervalId);
+                this.pollIntervalId = 0;
+              }
+              this.getUIContext().getRouter().back();
             })
           }
-          .alignItems(VerticalAlign.Center)
-          .margin({ right: 14 })
+          .margin({ right: 12 })
         } else {
-          // Inside Q&A list view: show Home button only
-          Column() {
-            Polyline({ width: 22, height: 10 })
-              .points([[0, 10], [11, 0], [22, 10]])
-              .fill(Color.Transparent)
-              .stroke('#3B82F6')
-              .strokeWidth(2.5)
-              .strokeLineCap(LineCapStyle.Round)
-              .strokeLineJoin(LineJoinStyle.Round)
-            Rect({ width: 16, height: 10 })
-              .fill(Color.Transparent)
-              .stroke('#3B82F6')
-              .strokeWidth(2.5)
-              .strokeLineJoin(LineJoinStyle.Round)
-              .margin({ top: -2.5 })
-          }
-          .alignItems(HorizontalAlign.Center)
-          .margin({ right: 14 })
-          .onClick((): void => {
+          this.WorkspaceHeaderButton('home', (): void => {
             if (this.pollIntervalId) {
               clearInterval(this.pollIntervalId);
               this.pollIntervalId = 0;
             }
-            router.back();
+            this.getUIContext().getRouter().back();
           })
         }
 
@@ -1717,19 +2379,40 @@ struct WorkspaceDetail {
           .layoutWeight(1)
 
         if (this.activeTaskId !== '') {
-          // Status Badge on the right
-          Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
-            .fontSize(12)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
-            .backgroundColor(this.activeTaskStatus === 'completed' ? '#D1FAE5' : (this.activeTaskStatus === 'failed' ? '#FEE2E2' : '#DBEAFE'))
-            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-            .borderRadius(12)
+          Row({ space: 8 }) {
+            // Status Badge on the right
+            Text(this.activeTaskStatus === 'completed' ? '已完成' : (this.activeTaskStatus === 'failed' ? '失败' : '分析中'))
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6'))
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .border({
+                width: 1,
+                color: this.activeTaskStatus === 'completed' ? '#10B981' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#3B82F6')
+              })
+              .borderRadius(5)
+
+            // 🗑️ 删除图标按钮
+            Button({ type: ButtonType.Normal, stateEffect: true }) {
+              SymbolGlyph($r('sys.symbol.trash'))
+                .fontSize(16)
+                .fontColor([Color.Red])
+            }
+            .width(30)
+            .height(30)
+            .backgroundColor(Color.Transparent)
+            .border({ width: 1, color: $r('app.color.app_danger') })
+            .borderRadius(7)
+            .onClick((): void => {
+              this.confirmDeleteQARecord(this.activeTaskId);
+            })
+          }
         }
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
       .alignItems(VerticalAlign.Center)
+      .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
 
       if (this.activeTaskId !== '') {
         // ===== Q&A Analysis Process / Detail View =====
@@ -1741,20 +2424,20 @@ struct WorkspaceDetail {
                 Text('问题')
                   .fontSize(13)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#9CA3AF')
+                  .fontColor($r('app.color.app_text_muted'))
                   .alignSelf(ItemAlign.Start)
                 
                 Text(this.activeTaskQuestion)
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#111827')
+                  .fontColor($r('app.color.app_text_primary'))
                   .width('100%')
               }
               .width('100%')
               .padding(15)
-              .backgroundColor(Color.White)
-              .borderRadius(8)
-              .shadow({ radius: 3, color: '#0D000000' })
+              .backgroundColor($r('app.color.app_card_bg'))
+              .border({ width: 1, color: $r('app.color.app_border') })
+              .borderRadius(10)
 
               // ===== Selected Videos Panel (collapsible) =====
               if (this.activeTaskVideoPaths && this.activeTaskVideoPaths.length > 0) {
@@ -1763,11 +2446,11 @@ struct WorkspaceDetail {
                     Text(`关联视频片段 (${this.activeTaskVideoPaths.length})`)
                       .fontSize(13)
                       .fontWeight(FontWeight.Bold)
-                      .fontColor('#9CA3AF')
+                      .fontColor($r('app.color.app_text_secondary'))
                       .layoutWeight(1)
                     Text(this.isVideosCollapsed ? '展开 ▼' : '收起 ▲')
                       .fontSize(12)
-                      .fontColor('#9CA3AF')
+                      .fontColor($r('app.color.app_text_muted'))
                   }
                   .width('100%')
                   .padding({ top: 5, bottom: 5 })
@@ -1781,7 +2464,7 @@ struct WorkspaceDetail {
                         Stack({ alignContent: Alignment.TopEnd }) {
                           Row() {
                             if (this.findSegmentByFilepath(filepath) !== null) {
-                              Image(BASE_HOST + '/api/video/thumbnail/' + filepath)
+                              Image(BASE_HOST + this.findSegmentByFilepath(filepath)!.thumbnail_url)
                                 .width(100)
                                 .height(60)
                                 .borderRadius(6)
@@ -1798,13 +2481,13 @@ struct WorkspaceDetail {
 
                                 Text('来自监控：' + this.findSegmentByFilepath(filepath)!.video_name)
                                   .fontSize(12)
-                                  .fontColor('#9CA3AF')
+                                  .fontColor($r('app.color.app_text_muted'))
                                   .maxLines(1)
                                   .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                                 Text(`时间段：${this.findSegmentByFilepath(filepath)!.start_offset.toFixed(1)}s - ${this.findSegmentByFilepath(filepath)!.end_offset.toFixed(1)}s`)
                                   .fontSize(12)
-                                  .fontColor('#9CA3AF')
+                                  .fontColor($r('app.color.app_text_muted'))
                                   .maxLines(1)
                                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                               }
@@ -1826,21 +2509,21 @@ struct WorkspaceDetail {
                           .padding(12)
                           .backgroundColor($r('app.color.app_card_bg'))
                           .borderRadius(10)
-                          .shadow({ radius: 3, color: $r('app.color.app_shadow') })
+                          .border({ width: 1, color: $r('app.color.app_border') })
                           .onClick((): void => {
                             const seg = this.findSegmentByFilepath(filepath);
                             if (seg !== null) {
                               this.showSegmentDetail(seg);
                             } else {
-                              promptAction.showToast({ message: '该片段已删除，无法查看', duration: 1500 });
+                              this.showToast({ message: '该片段已删除，无法查看', duration: 1500 });
                             }
                           })
 
                           Text(`视频 ${index + 1}`)
                             .fontSize(10)
                             .fontWeight(FontWeight.Bold)
-                            .fontColor(Color.White)
-                            .backgroundColor('#3B82F6')
+                            .fontColor($r('app.color.app_text_on_inverted'))
+                            .backgroundColor($r('app.color.app_surface_inverted'))
                             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                             .borderRadius({ bottomLeft: 8, topRight: 8 })
                         }
@@ -1854,32 +2537,35 @@ struct WorkspaceDetail {
                 }
                 .width('100%')
                 .padding(10)
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 3, color: '#0D000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .border({ width: 1, color: $r('app.color.app_border') })
+                .borderRadius(10)
               }
 
               if (this.progressGroups.length > 0) {
                 ForEach(this.progressGroups, (group: ProgressGroup, idx: number): void => {
                   Column() {
                     Row() {
-                      Circle({ width: 10, height: 10 })
-                        .fill(group.isFailed ? '#EF4444' : (group.isCompleted ? '#10B981' : '#3B82F6'))
+                      Blank()
+                        .width(10)
+                        .height(10)
+                        .backgroundColor(group.isFailed ? $r('app.color.app_danger') : (group.isCompleted ? $r('app.color.app_success') : $r('app.color.app_selection')))
+                        .borderRadius(5)
                         .margin({ right: 10 })
 
                       Row() {
                         Text(group.title)
                           .fontSize(14)
                           .fontWeight(FontWeight.Bold)
-                          .fontColor('#374151')
+                          .fontColor($r('app.color.app_text_primary'))
 
                         if (group.badgeText) {
                           Text(group.badgeText)
                             .fontSize(10)
-                            .fontColor('#3B82F6')
-                            .backgroundColor('#EFF6FF')
-                            .borderRadius(4)
+                            .fontColor($r('app.color.app_selection'))
                             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                            .border({ width: 1, color: $r('app.color.app_selection') })
+                            .borderRadius(4)
                             .margin({ left: 6 })
                         }
                       }
@@ -1888,29 +2574,29 @@ struct WorkspaceDetail {
                       if (group.isFailed) {
                         Text('失败')
                           .fontSize(12)
-                          .fontColor('#EF4444')
+                          .fontColor($r('app.color.app_danger'))
                           .margin({ right: 10 })
                       } else if (group.isCompleted) {
                         Text('已完成')
                           .fontSize(12)
-                          .fontColor('#10B981')
+                          .fontColor($r('app.color.app_success'))
                           .margin({ right: 10 })
                       } else {
                         Text('运行中')
                           .fontSize(12)
-                          .fontColor('#3B82F6')
+                          .fontColor($r('app.color.app_selection'))
                           .margin({ right: 10 })
                       }
 
                       if (group.id !== 'answering') {
                         Text(group.isCollapsed ? '▼' : '▲')
                           .fontSize(12)
-                          .fontColor('#9CA3AF')
+                          .fontColor($r('app.color.app_text_muted'))
                       }
                     }
                     .width('100%')
                     .padding({ top: 12, bottom: 12, left: 15, right: 15 })
-                    .backgroundColor('#F3F4F6')
+                    .backgroundColor($r('app.color.app_card_subtle_bg'))
                     .borderRadius(8)
                     .onClick((): void => {
                       if (group.id !== 'answering') {
@@ -1926,11 +2612,11 @@ struct WorkspaceDetail {
                           Row() {
                             Text('•')
                               .fontSize(14)
-                              .fontColor('#4B5563')
+                              .fontColor($r('app.color.app_text_secondary'))
                               .margin({ right: 8 })
                             Text(detail)
                               .fontSize(13)
-                              .fontColor('#4B5563')
+                              .fontColor($r('app.color.app_text_secondary'))
                               .lineHeight(18)
                               .layoutWeight(1)
                           }
@@ -1940,20 +2626,20 @@ struct WorkspaceDetail {
                       }
                       .width('100%')
                       .padding({ left: 30, right: 15, top: 10, bottom: 10 })
-                      .backgroundColor(Color.White)
+                      .backgroundColor($r('app.color.app_card_bg'))
                       .borderWidth({ left: 2, right: 0, top: 0, bottom: 0 })
-                      .borderColor('#E5E7EB')
+                      .borderColor($r('app.color.app_border'))
                     }
                   }
                   .width('100%')
                   .borderRadius(8)
                   .clip(true)
-                  .shadow({ radius: 2, color: '#05000000' })
+                  .border({ width: 1, color: $r('app.color.app_border') })
                 })
               } else {
                 Text('等待分析任务启动...')
                   .fontSize(13)
-                  .fontColor('#9CA3AF')
+                  .fontColor($r('app.color.app_text_muted'))
                   .padding(15)
               }
 
@@ -1962,7 +2648,7 @@ struct WorkspaceDetail {
                   Text('AI 回答')
                     .fontSize(13)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor('#9CA3AF')
+                    .fontColor($r('app.color.app_text_muted'))
                     .alignSelf(ItemAlign.Start)
 
                   if (this.activeTaskAnswer) {
@@ -1972,8 +2658,8 @@ struct WorkspaceDetail {
                           ForEach(paraChunks, (chunk: TextChunk): void => {
                             Span(chunk.content)
                               .fontWeight(chunk.isBold ? FontWeight.Bold : FontWeight.Normal)
-                              .fontColor(chunk.isTimestamp ? '#3B82F6' : (this.activeTaskStatus === 'failed' ? '#EF4444' : '#1F2937'))
-                              .decoration(chunk.isTimestamp ? { type: TextDecorationType.Underline, color: '#3B82F6' } : { type: TextDecorationType.None })
+                              .fontColor(chunk.isTimestamp ? $r('app.color.app_selection') : (this.activeTaskStatus === 'failed' ? $r('app.color.app_danger') : $r('app.color.app_text_primary')))
+                              .decoration(chunk.isTimestamp ? { type: TextDecorationType.Underline, color: $r('app.color.app_selection') } : { type: TextDecorationType.None })
                               .onClick((): void => {
                                 if (chunk.isTimestamp) {
                                   this.handleTimestampClick(chunk.videoNum, chunk.timeStr);
@@ -1992,16 +2678,16 @@ struct WorkspaceDetail {
                   } else {
                     Text('思考中...')
                       .fontSize(14)
-                      .fontColor('#9CA3AF')
+                      .fontColor($r('app.color.app_text_muted'))
                       .width('100%')
                       .lineHeight(20)
                   }
                 }
                 .width('100%')
                 .padding(15)
-                .backgroundColor(Color.White)
-                .borderRadius(8)
-                .shadow({ radius: 3, color: '#0D000000' })
+                .backgroundColor($r('app.color.app_card_bg'))
+                .border({ width: 1, color: $r('app.color.app_border') })
+                .borderRadius(10)
               }
             }
             .width('100%')
@@ -2020,23 +2706,38 @@ struct WorkspaceDetail {
             if (this.showSelectExampleVideo) {
               // Video Selection grid for adding fragment
               Column({ space: 10 }) {
-                Row() {
-                  Text('选择监控源视频')
-                    .fontSize(18)
+                Row({ space: 8 }) {
+                  Text('选择视频源（监控录像 / 上传视频）')
+                    .fontSize(16)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.app_text_primary'))
                     .layoutWeight(1)
+
+                  Button('刷新')
+                    .fontSize(12)
+                    .height(32)
+                    .backgroundColor(Color.Transparent)
+                    .fontColor($r('app.color.app_text_primary'))
+                    .border({ width: 1, color: $r('app.color.app_border') })
+                    .borderRadius(7)
+                    .onClick((): void => {
+                      this.loadExampleVideos();
+                    })
                   
-                  Button('返回片段页')
-                    .fontSize(13)
-                    .backgroundColor('#666666')
-                    .fontColor(Color.White)
+                  Button('返回')
+                    .fontSize(12)
+                    .height(32)
+                    .backgroundColor(Color.Transparent)
+                    .fontColor($r('app.color.app_text_secondary'))
+                    .border({ width: 1, color: $r('app.color.app_border') })
+                    .borderRadius(7)
                     .onClick((): void => {
                       this.showSelectExampleVideo = false;
                     })
                 }
                 .width('100%')
                 .padding({ bottom: 10 })
+                .alignItems(VerticalAlign.Center)
 
                 if (this.exampleVideos.length > 0) {
                   Grid() {
@@ -2045,6 +2746,9 @@ struct WorkspaceDetail {
                         VideoItemCard({
                           name: video.name,
                           duration: video.duration,
+                          sourceType: video.source_type,
+                          earliestTime: video.earliest_time,
+                          latestTime: video.latest_time,
                           onCardClick: (): void => {
                             this.handleExampleVideoClick(index);
                           }
@@ -2059,16 +2763,17 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                 } else {
                   Column() {
-                    Text('未在 example 目录下发现原视频')
+                    Text('暂未搜索到同小组监控录像或已上传视频')
                       .fontSize(14)
                       .fontColor($r('app.color.app_text_muted'))
                       .margin({ bottom: 10 })
-                    Button('刷新')
-                      .width(80)
+                    Button('重新刷新')
+                      .width(100)
                       .height(35)
                       .fontSize(13)
-                      .backgroundColor($r('app.color.app_primary'))
-                      .fontColor(Color.White)
+                      .backgroundColor($r('app.color.app_surface_inverted'))
+                      .fontColor($r('app.color.app_text_on_inverted'))
+                      .borderRadius(8)
                       .onClick((): void => {
                         this.loadExampleVideos();
                       })
@@ -2100,7 +2805,7 @@ struct WorkspaceDetail {
                     ForEach(this.segments, (seg: WorkspaceVideoSegment): void => {
                       ListItem() {
                         Row() {
-                          Image(BASE_HOST + '/api/video/thumbnail/' + seg.filepath)
+                          Image(BASE_HOST + seg.thumbnail_url)
                             .width(100)
                             .height(60)
                             .borderRadius(6)
@@ -2155,7 +2860,7 @@ struct WorkspaceDetail {
                         .padding(15)
                         .backgroundColor($r('app.color.app_card_bg'))
                         .borderRadius(10)
-                        .shadow({ radius: 4, color: $r('app.color.app_shadow') })
+                        .border({ width: 1, color: $r('app.color.app_border') })
                         .onClick((): void => {
                           this.showSegmentDetail(seg);
                         })
@@ -2166,12 +2871,27 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                 }
 
-                Button('+ 截取新片段')
-                  .width('90%')
-                  .height(48)
-                  .backgroundColor($r('app.color.app_primary'))
-                  .fontColor(Color.White)
-                  .margin({ top: 15, bottom: 20 })
+                Button() {
+                  Row({ space: 7 }) {
+                    Blank()
+                      .width(3)
+                      .height(18)
+                      .backgroundColor($r('app.color.app_accent'))
+                    SymbolGlyph($r('sys.symbol.plus'))
+                      .fontSize(15)
+                      .fontColor([$r('app.color.app_text_on_inverted')])
+                    Text('截取新片段')
+                      .fontSize(13)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_text_on_inverted'))
+                  }
+                }
+                  .width(132)
+                  .height(40)
+                  .backgroundColor($r('app.color.app_surface_inverted'))
+                  .borderRadius(8)
+                  .alignSelf(ItemAlign.End)
+                  .margin({ right: 18, top: 15, bottom: 20 })
                   .onClick((): void => {
                     this.loadExampleVideos();
                     this.showSelectExampleVideo = true;
@@ -2180,6 +2900,74 @@ struct WorkspaceDetail {
               .width('100%')
               .layoutWeight(1)
             }
+
+          } else if (this.currentSubTab === 1) {
+            // ================== "人脸" Tab Content ==================
+            Column({ space: 12 }) {
+              Row() {
+                Text('工作区人脸识别与检索')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.app_text_primary'))
+                  .layoutWeight(1)
+
+                Button('刷新')
+                  .fontSize(12)
+                  .height(32)
+                  .backgroundColor(Color.Transparent)
+                  .fontColor($r('app.color.app_text_primary'))
+                  .border({ width: 1, color: $r('app.color.app_border') })
+                  .borderRadius(7)
+                  .onClick((): void => {
+                    this.loadFaceGroups();
+                  })
+              }
+              .width('90%')
+              .padding({ top: 10, bottom: 4 })
+
+              if (this.faceGroups.length > 0) {
+                Grid() {
+                  ForEach(this.faceGroups, (group: WorkspaceFaceGroupInfo): void => {
+                    GridItem() {
+                      FaceGroupCard({
+                        group: group,
+                        onCardClick: (): void => {
+                          this.openFaceGroupDetail(group);
+                        }
+                      })
+                    }
+                  })
+                }
+                .columnsTemplate('1fr 1fr')
+                .columnsGap(12)
+                .rowsGap(12)
+                .width('90%')
+                .layoutWeight(1)
+              } else {
+                Column({ space: 12 }) {
+                  Image($r('app.media.business_person_tracking'))
+                    .width(72)
+                    .height(72)
+                    .objectFit(ImageFit.Contain)
+                    .opacity(0.72)
+                  Text('暂未识别到人脸卡片')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.app_text_secondary'))
+                  Text('截取视频片段时开启“AI 特征提取与识别预处理”，系统将自动识别画面人脸，并将同一人脸在不同时间段的轨迹自动归类聚合。')
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_text_muted'))
+                    .textAlign(TextAlign.Center)
+                    .padding({ left: 30, right: 30 })
+                }
+                .width('100%')
+                .layoutWeight(1)
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
 
           } else {
             // ================== "问答" Tab Content ==================
@@ -2197,7 +2985,7 @@ struct WorkspaceDetail {
                     ForEach(this.segments, (seg: WorkspaceVideoSegment, index: number): void => {
                        ListItem() {
                         Row() {
-                          Image(BASE_HOST + '/api/video/thumbnail/' + seg.filepath)
+                          Image(BASE_HOST + seg.thumbnail_url)
                             .width(100)
                             .height(60)
                             .borderRadius(6)
@@ -2208,13 +2996,13 @@ struct WorkspaceDetail {
                             Text(seg.remark ? seg.remark : '未命名片段')
                               .fontSize(15)
                               .fontWeight(FontWeight.Bold)
-                              .fontColor(seg.isSelected ? '#3B82F6' : $r('app.color.app_text_primary'))
+                              .fontColor(seg.isSelected ? $r('app.color.app_selection') : $r('app.color.app_text_primary'))
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                             Text('来自监控：' + seg.video_name)
                               .fontSize(12)
-                              .fontColor('#9CA3AF')
+                              .fontColor($r('app.color.app_text_muted'))
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
@@ -2229,7 +3017,7 @@ struct WorkspaceDetail {
                             } else {
                               Text(`时间段：${seg.start_offset.toFixed(1)}s - ${seg.end_offset.toFixed(1)}s`)
                                 .fontSize(12)
-                                .fontColor('#9CA3AF')
+                                .fontColor($r('app.color.app_text_muted'))
                                 .maxLines(1)
                                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                             }
@@ -2239,16 +3027,16 @@ struct WorkspaceDetail {
                         }
                         .width('100%')
                         .padding(10)
-                        .backgroundColor(seg.isSelected ? '#EFF6FF' : $r('app.color.app_card_bg'))
+                        .backgroundColor(seg.isSelected ? $r('app.color.app_primary_soft') : $r('app.color.app_card_bg'))
                         .borderRadius(8)
                         .opacity(1.0)
                         .border({
-                          width: 1.5,
-                          color: seg.isSelected ? '#3B82F6' : Color.Transparent
+                          width: { left: seg.isSelected ? 3 : 1, right: 1, top: 1, bottom: 1 },
+                          color: seg.isSelected ? $r('app.color.app_selection') : $r('app.color.app_border')
                         })
                         .onClick((): void => {
                           if (seg.status === 'processing' || seg.status === 'pending') {
-                            promptAction.showToast({ message: '该片段正在后台预处理中，可同步提交问答', duration: 1500 });
+                            this.showToast({ message: '该片段正在后台预处理中，可同步提交问答', duration: 1500 });
                           }
                           if (seg.isSelected) {
                             this.toggleSegmentSelection(index, false);
@@ -2278,10 +3066,12 @@ struct WorkspaceDetail {
                   .fontSize(14)
                   .fontColor($r('app.color.app_text_primary'))
                   .alignSelf(ItemAlign.Start)
-                TextArea({ placeholder: '请输入问题，例如：画面里有没有人经过？有几个人？', text: this.questionText })
+                TextArea({ placeholder: '请输入要分析提问的具体问题', text: this.questionText })
                   .height(80)
                   .fontColor($r('app.color.app_text_primary'))
                   .backgroundColor($r('app.color.app_input_bg'))
+                  .border({ width: 1, color: $r('app.color.app_border') })
+                  .borderRadius(8)
                   .onChange((val: string): void => {
                     this.questionText = val;
                   })
@@ -2289,8 +3079,11 @@ struct WorkspaceDetail {
                 Row({ space: 15 }) {
                   Button('取消')
                     .layoutWeight(1)
-                    .backgroundColor($r('app.color.app_text_muted'))
-                    .fontColor(Color.White)
+                    .height(40)
+                    .backgroundColor(Color.Transparent)
+                    .fontColor($r('app.color.app_text_secondary'))
+                    .border({ width: 1, color: $r('app.color.app_border') })
+                    .borderRadius(8)
                     .onClick((): void => {
                       this.showCreateQA = false;
                       this.aiProgressText = '';
@@ -2299,8 +3092,10 @@ struct WorkspaceDetail {
 
                   Button('提交分析')
                     .layoutWeight(1)
-                    .backgroundColor($r('app.color.app_primary'))
-                    .fontColor(Color.White)
+                    .height(40)
+                    .backgroundColor($r('app.color.app_surface_inverted'))
+                    .fontColor($r('app.color.app_text_on_inverted'))
+                    .borderRadius(8)
                     .onClick((): void => {
                       this.submitQA();
                     })
@@ -2312,9 +3107,10 @@ struct WorkspaceDetail {
                   Text(this.aiProgressText)
                     .width('100%')
                     .padding(10)
-                    .backgroundColor('#E8F5E9')
-                    .borderRadius(10)
-                    .fontColor('#2E7D32')
+                    .backgroundColor($r('app.color.app_card_subtle_bg'))
+                    .border({ width: { left: 3 }, color: $r('app.color.app_success') })
+                    .borderRadius(6)
+                    .fontColor($r('app.color.app_success'))
                     .fontSize(13)
                 }
               }
@@ -2336,38 +3132,63 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                   .justifyContent(FlexAlign.Start)
                 } else {
-                  List({ space: 15 }) {
+                  List({ space: 12 }) {
                     ForEach(this.qaRecords, (record: QARecordInfo): void => {
                       ListItem() {
-                        Column({ space: 8 }) {
-                          Text('Q: ' + record.question)
-                            .fontWeight(FontWeight.Bold)
-                            .fontSize(15)
-                            .fontColor($r('app.color.app_text_primary'))
+                        Row() {
+                          Column({ space: 4 }) {
+                            Text(record.question)
+                              .fontSize(15)
+                              .fontWeight(FontWeight.Bold)
+                              .fontColor($r('app.color.app_text_primary'))
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                          Text('A: ' + (record.status === 'processing' ? '分析中...' : (record.answer ? formatAnswerToPlainText(record.answer) : record.status)))
-                            .fontColor(record.status === 'processing' ? '#007DFF' : $r('app.color.app_text_secondary'))
-                            .fontSize(14)
+                            Text('创建时间：' + record.created_at)
+                              .fontSize(12)
+                              .fontColor('#9CA3AF')
 
-                          Text('创建时间: ' + record.created_at)
-                            .fontSize(12)
-                            .fontColor($r('app.color.app_text_muted'))
+                            if (record.status === 'processing' || record.status === 'pending') {
+                              Text('AI 检索分析中...')
+                                .fontSize(12)
+                                .fontColor($r('app.color.app_primary'))
+                            } else if (record.status === 'failed') {
+                              Text('分析失败: ' + record.error_msg)
+                                .fontSize(12)
+                                .fontColor(Color.Red)
+                                .maxLines(1)
+                                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            } else {
+                              Text('包含片段：' + record.video_count + ' 个')
+                                .fontSize(12)
+                                .fontColor('#10B981')
+                            }
+                          }
+                          .alignItems(HorizontalAlign.Start)
+                          .layoutWeight(1)
+
+                          Image($r('app.media.business_ai_qa'))
+                            .width(28)
+                            .height(28)
+                            .objectFit(ImageFit.Contain)
+                            .opacity(0.78)
                         }
-                        .alignItems(HorizontalAlign.Start)
                         .width('100%')
                         .padding(15)
                         .backgroundColor($r('app.color.app_card_bg'))
                         .borderRadius(10)
-                        .shadow({ radius: 5, color: $r('app.color.app_shadow') })
+                        .border({
+                          width: { left: 3, right: 1, top: 1, bottom: 1 },
+                          color: record.status === 'failed' ? $r('app.color.app_danger') : (record.status === 'completed' ? $r('app.color.app_success') : $r('app.color.app_accent'))
+                        })
                         .onClick((): void => {
                           this.activeTaskId = record.id;
                           this.activeTaskQuestion = record.question;
                           this.activeTaskAnswer = record.answer;
                           this.activeTaskStatus = record.status;
-                          this.activeTaskProgress = [];
-                          this.progressGroups = [];
-                          this.manualCollapsedState = {};
-                          if (record.status === 'processing') {
+                          this.activeTaskVideoPaths = record.video_paths;
+
+                          if (record.status === 'processing' || record.status === 'pending') {
                             this.startPollingStatus(record.id);
                           } else {
                             this.fetchSingleStatus(record.id);
@@ -2380,12 +3201,28 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                 }
 
-                Button('+ 新建问答')
-                  .width('90%')
-                  .height(48)
-                  .backgroundColor($r('app.color.app_primary'))
-                  .fontColor(Color.White)
-                  .margin({ top: 15, bottom: 20 })
+                Button() {
+                  Row({ space: 7 }) {
+                    Blank()
+                      .width(3)
+                      .height(18)
+                      .backgroundColor($r('app.color.app_accent'))
+                    Image($r('app.media.business_ai_qa'))
+                      .width(19)
+                      .height(19)
+                      .objectFit(ImageFit.Contain)
+                    Text('新建问答')
+                      .fontSize(13)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_text_on_inverted'))
+                  }
+                }
+                  .width(120)
+                  .height(40)
+                  .backgroundColor($r('app.color.app_surface_inverted'))
+                  .borderRadius(8)
+                  .alignSelf(ItemAlign.End)
+                  .margin({ right: 18, top: 15, bottom: 20 })
                   .onClick((): void => {
                     for (let i = 0; i < this.segments.length; i++) {
                       this.segments[i].isSelected = false;
@@ -2405,77 +3242,18 @@ struct WorkspaceDetail {
             }
           }
 
-          // ===== Bottom Tab Bar =====
+          // ===== Workspace Bottom Navigation =====
           Row() {
-            Column() {
-              // Custom Video/Segment outline icon (1:1 aspect ratio)
-              Stack() {
-                Rect({ width: 22, height: 16 })
-                  .fill(Color.Transparent)
-                  .stroke(this.currentSubTab === 0 ? '#3B82F6' : '#9CA3AF')
-                  .strokeWidth(2)
-                  .strokeLineJoin(LineJoinStyle.Round)
-                Polygon({ width: 6, height: 8 })
-                  .points([[0, 0], [0, 8], [6, 4]])
-                  .fill(this.currentSubTab === 0 ? '#3B82F6' : '#9CA3AF')
-                  .margin({ left: 2 })
-              }
-              .width(22)
-              .height(22)
-              .margin({ bottom: 4 })
-
-              Text('片段')
-                .fontSize(11)
-                .fontColor(this.currentSubTab === 0 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
-            }
-            .alignItems(HorizontalAlign.Center)
-            .layoutWeight(1)
-            .onClick((): void => {
-              this.currentSubTab = 0;
-              this.showCreateQA = false;
-              this.showSelectExampleVideo = false;
-              this.loadSegments();
-            })
-
-            Column() {
-              // Custom Chat/Q&A outline icon (1:1 aspect ratio)
-              Stack() {
-                Rect({ width: 20, height: 14 })
-                  .fill(Color.Transparent)
-                  .stroke(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
-                  .strokeWidth(2)
-                  .strokeLineJoin(LineJoinStyle.Round)
-                  .borderRadius(2)
-                Polygon({ width: 5, height: 5 })
-                  .points([[5, 0], [0, 5], [5, 5]])
-                  .fill(this.currentSubTab === 1 ? '#3B82F6' : '#9CA3AF')
-                  .offset({ x: -5, y: 7 })
-              }
-              .width(22)
-              .height(22)
-              .margin({ bottom: 4 })
-
-              Text('问答')
-                .fontSize(11)
-                .fontColor(this.currentSubTab === 1 ? $r('app.color.app_primary') : $r('app.color.app_text_muted'))
-            }
-            .alignItems(HorizontalAlign.Center)
-            .layoutWeight(1)
-            .onClick((): void => {
-              this.currentSubTab = 1;
-              this.showCreateQA = false;
-              this.showSelectExampleVideo = false;
-              this.loadQARecords();
-            })
+            this.WorkspaceSubTabItem(0, '片段')
+            this.WorkspaceSubTabItem(1, '人脸')
+            this.WorkspaceSubTabItem(2, '问答')
           }
           .width('100%')
-          .height(56)
-          .backgroundColor('#F9FAFB')
-          .border({ width: { top: 1 }, color: '#E5E7EB' })
-          .padding({ top: 5, bottom: 5 })
+          .height(68)
+          .padding({ top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.app_nav_bar_bg'))
+          .border({ width: { top: 1 }, color: $r('app.color.app_border') })
         }
-        .width('100%')
-        .layoutWeight(1)
       }
     }
     .width('100%')
@@ -2488,6 +3266,9 @@ struct WorkspaceDetail {
 struct VideoItemCard {
   @Prop name: string = '';
   @Prop duration: number = 0;
+  @Prop sourceType: string = 'monitor';
+  @Prop earliestTime: string = '';
+  @Prop latestTime: string = '';
   onCardClick: () => void = (): void => {};
 
   build() {
@@ -2496,30 +3277,116 @@ struct VideoItemCard {
         Column()
           .width('100%')
           .height(95)
-          .linearGradient({
-            angle: 135,
-            colors: [['#E0F2FE', 0.0], ['#bae6fd', 1.0]]
-          })
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
           .borderRadius({ topLeft: 8, topRight: 8 })
 
-        Image($r('app.media.startIcon'))
-          .width(28)
-          .height(28)
-          .alignSelf(ItemAlign.Center)
-          .opacity(0.8)
-
-        Text(this.formatDuration(this.duration))
+        // 视频源分类徽章
+        Text(this.sourceType === 'monitor' ? '监控设备' : (this.sourceType === 'upload' ? '上传视频' : '示例视频'))
           .fontSize(10)
-          .fontColor(Color.White)
-          .backgroundColor('rgba(0, 0, 0, 0.65)')
-          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
-          .borderRadius(3)
-          .margin(5)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.sourceType === 'monitor' ? $r('app.color.app_selection') : $r('app.color.app_text_secondary'))
+          .backgroundColor($r('app.color.app_card_bg'))
+          .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+          .border({ width: 1, color: $r('app.color.app_border') })
+          .borderRadius(4)
+          .margin({ left: 6, top: 6 })
+          .alignSelf(ItemAlign.Start)
+
+        Image(this.sourceType === 'monitor' ? $r('app.media.business_monitor') : $r('app.media.business_clip_trim'))
+          .width(42)
+          .height(42)
+          .objectFit(ImageFit.Contain)
+          .alignSelf(ItemAlign.Center)
+          .opacity(0.82)
+
+        if (this.sourceType !== 'monitor') {
+          Text(this.formatDuration(this.duration))
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('rgba(0, 0, 0, 0.65)')
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius(3)
+            .margin(5)
+        } else {
+          Text(this.latestTime.length > 5 ? '持续录像中' : '无录像')
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('rgba(30, 64, 175, 0.75)')
+            .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+            .borderRadius(3)
+            .margin(5)
+        }
       }
       .width('100%')
 
-      Column() {
+      Column({ space: 2 }) {
         Text(this.name)
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        if (this.sourceType === 'monitor' && this.earliestTime && this.earliestTime.length >= 16 && this.latestTime && this.latestTime.length >= 16) {
+          Text(`可用: ${this.earliestTime.slice(11, 16)} - ${this.latestTime.slice(11, 16)}`)
+            .fontSize(10)
+            .fontColor($r('app.color.app_text_muted'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .padding(8)
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.app_card_bg'))
+    .borderRadius(8)
+    .border({ width: 1, color: $r('app.color.app_border') })
+    .onClick((): void => {
+      this.onCardClick();
+    })
+  }
+
+  formatDuration(sec: number): string {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+}
+
+@Component
+struct FaceGroupCard {
+  @Prop group: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  onCardClick: () => void = (): void => {};
+
+  build() {
+    Column() {
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        Column()
+          .width('100%')
+          .height(115)
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .borderRadius({ topLeft: 8, topRight: 8 })
+
+        Image(this.group.avatar_url ? (BASE_HOST + this.group.avatar_url) : $r('app.media.business_face_library'))
+          .width('100%')
+          .height(115)
+          .objectFit(ImageFit.Cover)
+          .borderRadius({ topLeft: 8, topRight: 8 })
+
+        Text(`${this.group.record_count} 条时间段记录`)
+          .fontSize(10)
+          .fontColor(Color.White)
+          .backgroundColor('rgba(30, 64, 175, 0.85)')
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .borderRadius(4)
+          .margin(6)
+      }
+      .width('100%')
+
+      Column({ space: 2 }) {
+        Text(this.group.name)
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.app_text_primary'))
@@ -2533,15 +3400,9 @@ struct VideoItemCard {
     .width('100%')
     .backgroundColor($r('app.color.app_card_bg'))
     .borderRadius(8)
-    .shadow({ radius: 3, color: $r('app.color.app_shadow') })
+    .border({ width: 1, color: $r('app.color.app_border') })
     .onClick((): void => {
       this.onCardClick();
     })
-  }
-
-  formatDuration(sec: number): string {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 }

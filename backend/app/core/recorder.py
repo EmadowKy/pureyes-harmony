@@ -48,11 +48,7 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
         cmd.extend([
             "-i", stream_url,
             "-an",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p",
-            "-force_key_frames", "expr:gte(t,n_forced*2)",
+            "-c:v", "copy",
             "-f", "segment",
             "-segment_time", "60",
             "-reset_timestamps", "1",
@@ -113,8 +109,11 @@ def start_all_recordings(app):
         try:
             monitors = Monitor.query.all()
             for m in monitors:
-                if m.stream_url and m.status == "online":
+                if m.stream_url and m.stream_url.strip():
+                    if m.status != "online":
+                        m.status = "online"
                     start_recording(m.id, m.stream_url)
+            db.session.commit()
         except Exception as e:
             print(f"[Recorder] Error during starting initial recordings: {e}")
             

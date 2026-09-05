@@ -1,5 +1,9 @@
 import { HttpUtil } from '../../utils/http'
-import promptAction from '@ohos.promptAction'
+
+interface ToastOptions {
+  message: string;
+  duration?: number;
+}
 
 export class MemberInfo {
   emp_id: string = '';
@@ -72,7 +76,7 @@ export struct RenameGroupDialog {
           .onClick((): void => {
             this.controller.close();
           })
-          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .backgroundColor(Color.Transparent)
           .border({ width: 1, color: $r('app.color.app_border') })
           .borderRadius(8)
 
@@ -90,7 +94,7 @@ export struct RenameGroupDialog {
         }
           .layoutWeight(1)
           .height(44)
-          .backgroundColor($r('app.color.app_primary'))
+          .backgroundColor($r('app.color.app_surface_inverted'))
           .borderRadius(8)
           .onClick((): void => {
             this.confirm(this.groupName);
@@ -119,6 +123,14 @@ export struct GroupTab {
   @State selectedInviteEmpId: string = '';
   @State showMemberDetail: boolean = false;
   @State isLoading: boolean = false;
+
+  showToast(options: ToastOptions): void {
+    try {
+      this.getUIContext().getPromptAction().showToast(options);
+    } catch (error) {
+      console.warn('[UI] Toast display failed:', JSON.stringify(error));
+    }
+  }
 
   renameDialogController: CustomDialogController = new CustomDialogController({
     builder: RenameGroupDialog({
@@ -273,13 +285,13 @@ export struct GroupTab {
 
   async submitInvite(empId?: string): Promise<void> {
     if (!this.group.is_creator) {
-      promptAction.showToast({ message: '只有组长可以邀请成员', duration: 2000 });
+      this.showToast({ message: '只有组长可以邀请成员', duration: 2000 });
       return;
     }
 
     const targetEmpId = (empId || this.selectedInviteEmpId || this.inviteKeyword).trim();
     if (!targetEmpId) {
-      promptAction.showToast({ message: '请输入工号', duration: 2000 });
+      this.showToast({ message: '请输入工号', duration: 2000 });
       return;
     }
 
@@ -287,18 +299,18 @@ export struct GroupTab {
     payload.emp_id = targetEmpId;
     const res = await HttpUtil.post(`/groups/${this.groupId}/invite`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '邀请已发送', duration: 2000 });
+      this.showToast({ message: '邀请已发送', duration: 2000 });
       this.resetInviteState();
       this.loadGroup();
     } else {
-      promptAction.showToast({ message: res.message || '邀请失败', duration: 2000 });
+      this.showToast({ message: res.message || '邀请失败', duration: 2000 });
     }
   }
 
   async renameGroup(name: string): Promise<void> {
     const nextName = name.trim();
     if (!nextName) {
-      promptAction.showToast({ message: '请输入小组名称', duration: 2000 });
+      this.showToast({ message: '请输入小组名称', duration: 2000 });
       return;
     }
 
@@ -306,11 +318,11 @@ export struct GroupTab {
     payload.name = nextName;
     const res = await HttpUtil.put(`/groups/${this.groupId}`, payload);
     if (res.code === 0) {
-      promptAction.showToast({ message: '小组名称已更新', duration: 2000 });
+      this.showToast({ message: '小组名称已更新', duration: 2000 });
       AppStorage.setOrCreate('refreshGroupFlag', Math.random());
       this.loadGroup();
     } else {
-      promptAction.showToast({ message: res.message || '更新失败', duration: 2000 });
+      this.showToast({ message: res.message || '更新失败', duration: 2000 });
     }
   }
 
@@ -318,21 +330,21 @@ export struct GroupTab {
     const res = await HttpUtil.del(`/groups/${this.groupId}/members/${member.emp_id}`);
     if (res.code === 0) {
       const label = member.status === 'pending' ? '邀请已撤回' : '成员已移除';
-      promptAction.showToast({ message: label, duration: 2000 });
+      this.showToast({ message: label, duration: 2000 });
       this.loadGroup();
     } else {
-      promptAction.showToast({ message: res.message || '操作失败', duration: 2000 });
+      this.showToast({ message: res.message || '操作失败', duration: 2000 });
     }
   }
 
   async leaveGroup(): Promise<void> {
     const res = await HttpUtil.post(`/groups/${this.groupId}/leave`);
     if (res.code === 0) {
-      promptAction.showToast({ message: '已退出小组', duration: 2000 });
+      this.showToast({ message: '已退出小组', duration: 2000 });
       AppStorage.setOrCreate('currentGroupId', 0);
       AppStorage.setOrCreate('refreshGroupFlag', Math.random());
     } else {
-      promptAction.showToast({ message: res.message || '退出失败', duration: 2000 });
+      this.showToast({ message: res.message || '退出失败', duration: 2000 });
     }
   }
 
@@ -388,6 +400,7 @@ export struct GroupTab {
     }
     .width(36)
     .height(36)
+    .padding(0)
     .backgroundColor(background)
     .border({ width: 1, color: $r('app.color.app_border') })
     .borderRadius(8)
@@ -426,10 +439,8 @@ export struct GroupTab {
         .textAlign(TextAlign.End)
     }
     .width('100%')
-    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor($r('app.color.app_card_subtle_bg'))
-    .border({ width: 1, color: $r('app.color.app_border') })
-    .borderRadius(8)
+    .padding({ left: 2, right: 2, top: 10, bottom: 10 })
+    .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
   }
 
   @Builder MemberDetailOverlay() {
@@ -480,7 +491,7 @@ export struct GroupTab {
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: 1, color: $r('app.color.app_border') })
-      .borderRadius(8)
+      .borderRadius(12)
     }
     .width('100%')
     .height('100%')
@@ -498,7 +509,7 @@ export struct GroupTab {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        this.IconButton('send', Color.White, $r('app.color.app_primary'), (): void => {
+        this.IconButton('send', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
           this.submitInvite();
         })
       }
@@ -559,7 +570,7 @@ export struct GroupTab {
     .padding(14)
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
-    .borderRadius(8)
+    .borderRadius(10)
   }
 
   @Builder MemberList() {
@@ -581,6 +592,11 @@ export struct GroupTab {
         ForEach(this.members, (member: MemberInfo): void => {
           ListItem() {
             Row({ space: 12 }) {
+              Blank()
+                .width(3)
+                .height(48)
+                .backgroundColor(member.status === 'pending' ? $r('app.color.app_accent') : $r('app.color.app_selection'))
+
               Image(member.avatar ? member.avatar : $r('app.media.foreground'))
                 .width(50)
                 .height(50)
@@ -599,10 +615,7 @@ export struct GroupTab {
 
                   Text(this.statusLabel(member))
                     .fontSize(12)
-                    .fontColor(member.status === 'pending' ? '#B45309' : $r('app.color.app_primary'))
-                    .backgroundColor($r('app.color.app_primary_soft'))
-                    .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-                    .borderRadius(8)
+                    .fontColor(member.status === 'pending' ? $r('app.color.app_warning') : $r('app.color.app_success'))
                 }
 
                 Text(`工号: ${member.emp_id}`)
@@ -634,7 +647,7 @@ export struct GroupTab {
             .padding(15)
             .backgroundColor($r('app.color.app_card_bg'))
             .border({ width: 1, color: $r('app.color.app_border') })
-            .borderRadius(8)
+            .borderRadius(10)
           }
         })
       }
@@ -649,10 +662,10 @@ export struct GroupTab {
   build() {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 12 }) {
-        Row() {
+        Row({ space: 12 }) {
           Column({ space: 4 }) {
             Text(this.group.name || '小组成员')
-              .fontSize(20)
+              .fontSize(26)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.app_text_primary'))
             Text(`成员 ${this.group.member_count} · 待确认 ${this.group.pending_count}`)
@@ -672,30 +685,40 @@ export struct GroupTab {
             })
           }
         }
-        .width('90%')
-        .padding({ left: 16, right: 16, top: 16, bottom: 16 })
-        .backgroundColor($r('app.color.app_card_bg'))
-        .border({ width: 1, color: $r('app.color.app_border') })
-        .borderRadius(8)
-        .margin({ top: 18 })
+        .width('100%')
+        .padding({ left: 18, right: 18, top: 22, bottom: 4 })
 
         if (this.group.is_creator && this.group.id !== 0) {
           this.InvitePanel()
         }
 
         if (this.members.length === 0 && !this.isLoading) {
-          Column() {
+          Column({ space: 10 }) {
+            Stack() {
+              Image($r('app.media.business_team'))
+                .width(46)
+                .height(46)
+                .objectFit(ImageFit.Contain)
+            }
+            .width(64)
+            .height(64)
+            .borderRadius(14)
+            .backgroundColor($r('app.color.app_card_subtle_bg'))
+            .border({ width: 1, color: $r('app.color.app_border') })
+
             Text(this.groupId ? '暂无成员' : '请先创建或选择小组')
-              .fontSize(16)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+
+            Text(this.groupId ? '邀请同事后，成员会显示在这里。' : '从顶部选择一个小组以查看成员。')
+              .fontSize(13)
               .fontColor($r('app.color.app_text_secondary'))
           }
           .width('90%')
           .padding(28)
-          .backgroundColor($r('app.color.app_card_bg'))
-          .border({ width: 1, color: $r('app.color.app_border') })
-          .borderRadius(8)
           .layoutWeight(1)
-          .justifyContent(FlexAlign.Start)
+          .justifyContent(FlexAlign.Center)
         } else {
           this.MemberList()
         }

@@ -29,6 +29,7 @@ graph TD
     C --> C3[03-Flask RESTful API]
     C --> C4[04-AI 视觉分析引擎]
     C --> C5[05-数据库 Schema]
+    C --> C6[06-鸿蒙原生特色特性]
 
     D --> D1[01-硬件与环境依赖]
     D --> D2[02-后端部署与运维]
@@ -53,6 +54,7 @@ graph TD
 - [03-后端 RESTful API 接口规范详解](./developer-guide/03-backend-flask-api.md)
 - [04-AI 多模态视觉分析引擎原理](./developer-guide/04-ai-mva-engine.md)
 - [05-数据库设计与实体关系模型](./developer-guide/05-database-schema.md)
+- [06-鸿蒙原生特色特性接入与技术架构](./developer-guide/06-harmonyos-native-features.md)
 
 ### 3. 自建服务器部署手册
 适合运维工程师及有私有化部署需求的团队：

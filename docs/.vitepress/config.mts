@@ -43,7 +43,8 @@ export default withMermaid(
               { text: '02. 鸿蒙前端 ArkTS 架构设计', link: '/developer-guide/02-frontend-arkts' },
               { text: '03. 后端 RESTful API 接口规范', link: '/developer-guide/03-backend-flask-api' },
               { text: '04. AI 多模态视觉分析引擎原理', link: '/developer-guide/04-ai-mva-engine' },
-              { text: '05. 数据库设计与实体关系模型', link: '/developer-guide/05-database-schema' }
+              { text: '05. 数据库设计与实体关系模型', link: '/developer-guide/05-database-schema' },
+              { text: '06. 鸿蒙原生特色特性接入与技术架构', link: '/developer-guide/06-harmonyos-native-features' }
             ]
           }
         ],

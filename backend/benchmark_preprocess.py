@@ -65,7 +65,7 @@ async def run_benchmark():
     for cfg in configs:
         print(f"\n🚀 正在测试: {cfg['name']} (采样率: {cfg['fps']} 帧/秒, 画质: {cfg['res']})...")
         # 清空当前 video_id 的历史记录以准确统计本次提取数量
-        db_client.records = [r for r in db_client.records if r.get('video_id') != video_id]
+        db_client.delete_video(video_id)
 
         t_start = time.perf_counter()
         await pipeline.process_clip(

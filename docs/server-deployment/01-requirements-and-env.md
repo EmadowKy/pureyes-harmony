@@ -36,6 +36,7 @@ gunicorn==23.0.0
 # 身份认证与安全
 PyJWT==2.8.0
 Werkzeug>=3.0.0
+cryptography>=42.0.0
 
 # 视频与图像处理
 opencv-python==4.8.1.78
@@ -46,6 +47,7 @@ Pillow>=10.0.0
 PyYAML>=6.0.1
 requests>=2.31.0
 python-dotenv==1.0.1
+filelock>=3.13.0
 
 # AI 视觉分析引擎核心依赖
 ultralytics>=8.2.0        # YOLOv8 目标检测网络

@@ -33,6 +33,7 @@ class QAVideoSelection(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     record_id = db.Column(db.String(64), db.ForeignKey("qa_records.id"), nullable=False)
     monitor_id = db.Column(db.Integer, db.ForeignKey("monitors.id"), nullable=False)
+    segment_id = db.Column(db.Integer, db.ForeignKey("workspace_video_segments.id"), nullable=True)
     
     start_time = db.Column(db.DateTime, nullable=False)
     end_time = db.Column(db.DateTime, nullable=False)
@@ -42,6 +43,7 @@ class QAVideoSelection(db.Model):
             "id": self.id,
             "record_id": self.record_id,
             "monitor_id": self.monitor_id,
+            "segment_id": self.segment_id,
             "start_time": self.start_time.isoformat() + "Z",
             "end_time": self.end_time.isoformat() + "Z"
         }
