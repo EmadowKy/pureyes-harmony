@@ -25,6 +25,12 @@ class AgentTurnItem {
   createdAt: string = '';
 }
 
+class AgentTurnPayload {
+  question: string = '';
+  conversation_id: string = '';
+  segment_ids: Array<number> = [];
+}
+
 @Component
 export struct AgentConversationPanel {
   @Prop workspaceId: number = 0;
@@ -177,11 +183,12 @@ export struct AgentConversationPanel {
       this.liveProgress = '先选择至少一个视频片段，再开始调查。';
       return;
     }
-    const payload: Record<string, Object> = { question: question };
+    const payload = new AgentTurnPayload();
+    payload.question = question;
     if (this.selectedConversationId.length > 0) {
-      payload['conversation_id'] = this.selectedConversationId;
+      payload.conversation_id = this.selectedConversationId;
     } else {
-      payload['segment_ids'] = this.selectedSegmentIds;
+      payload.segment_ids = this.selectedSegmentIds;
     }
 
     this.isSending = true;
