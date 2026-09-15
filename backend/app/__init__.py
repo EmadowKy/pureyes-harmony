@@ -56,6 +56,25 @@ def _ensure_qa_selection_schema():
         print(f"[DB] QA selection schema check skipped: {exc}")
 
 
+def _ensure_agent_conversation_schema():
+    """Add conversation fields to existing QA records without dropping history."""
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(db.engine)
+        columns = {column["name"] for column in inspector.get_columns("qa_records")}
+        additions = []
+        if "conversation_id" not in columns:
+            additions.append("ALTER TABLE qa_records ADD COLUMN conversation_id VARCHAR(64)")
+        if "turn_index" not in columns:
+            additions.append("ALTER TABLE qa_records ADD COLUMN turn_index INTEGER NOT NULL DEFAULT 1")
+        if additions:
+            with db.engine.begin() as conn:
+                for statement in additions:
+                    conn.execute(text(statement))
+    except Exception as exc:
+        print(f"[DB] Agent conversation schema check skipped: {exc}")
+
+
 def _encrypt_legacy_api_keys():
     """Encrypt API keys written by versions that stored them as plain text."""
     try:
@@ -130,6 +149,7 @@ def create_app():
         _ensure_monitor_schema()
         _ensure_user_schema()
         _ensure_qa_selection_schema()
+        _ensure_agent_conversation_schema()
         _encrypt_legacy_api_keys()
         from app.models.blacklist import TokenBlacklist
         TokenBlacklist.cleanup_expired(max_age_hours=25)

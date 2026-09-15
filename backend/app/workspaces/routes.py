@@ -2,6 +2,7 @@ import uuid
 import time
 import re
 import math
+import json
 from datetime import datetime
 from flask import request, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -9,6 +10,7 @@ from app.core.db import db
 from app.models.workspace import Workspace, WorkspaceVideoSegment
 from app.models.group import GroupMember
 from app.models.qa_record import QARecord, QAVideoSelection
+from app.models.agent_conversation import AgentConversation
 from app.core.response import success, fail
 from app.core.media_auth import build_media_url, path_scope
 from . import workspaces_bp
@@ -58,6 +60,8 @@ from flask import current_app
 # Global in-memory running tasks registry
 running_tasks = {}
 TASK_MEMORY_RETENTION_SECONDS = 3600
+MAX_AGENT_HISTORY_TURNS = 4
+MAX_AGENT_HISTORY_CHARS = 6000
 
 
 def _prune_running_tasks():
@@ -83,6 +87,48 @@ def _require_workspace_member(workspace_id, emp_id=None):
     if not member:
         return None, fail(message="not a group member", code=5001, http_status=403)
     return workspace, None
+
+
+def _conversation_context(conversation_id, before_turn):
+    """Build a bounded, answer-only memory window for a follow-up turn."""
+    if not conversation_id:
+        return ""
+    records = (QARecord.query.filter(
+        QARecord.conversation_id == conversation_id,
+        QARecord.turn_index < before_turn,
+        QARecord.status == "completed",
+    ).order_by(QARecord.turn_index.desc()).limit(MAX_AGENT_HISTORY_TURNS).all())
+    records.reverse()
+    parts = []
+    for record in records:
+        answer = (record.answer or "").strip()
+        if not answer:
+            continue
+        if len(answer) > 1200:
+            answer = answer[:1200] + "…"
+        parts.append(f"第 {record.turn_index} 轮问题：{record.question}\n第 {record.turn_index} 轮结论：{answer}")
+    context = "\n\n".join(parts)
+    return context[-MAX_AGENT_HISTORY_CHARS:]
+
+
+def _conversation_segments(conversation):
+    segment_ids = conversation.segment_ids()
+    if not segment_ids:
+        return []
+    return WorkspaceVideoSegment.query.filter(
+        WorkspaceVideoSegment.workspace_id == conversation.workspace_id,
+        WorkspaceVideoSegment.id.in_(segment_ids),
+    ).all()
+
+
+def _serialize_conversation(conversation):
+    data = conversation.to_dict()
+    data["turn_count"] = QARecord.query.filter_by(conversation_id=conversation.id).count()
+    latest = (QARecord.query.filter_by(conversation_id=conversation.id)
+              .order_by(QARecord.turn_index.desc()).first())
+    data["latest_status"] = latest.status if latest else "idle"
+    data["latest_question"] = latest.question if latest else ""
+    return data
 
 
 def _parse_preprocess_options(data):
@@ -426,7 +472,7 @@ def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, vid
         print(f"[FACE RECOGNITION ERROR] Failed to process face recognition: {err}")
         raise RuntimeError("face recognition preprocessing failed") from err
 
-def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
+def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, conversation_context=""):
     with app.app_context():
         try:
             # Stage 1: Video Slicing
@@ -511,7 +557,8 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
                 video_paths=video_paths,
                 config_path=config_path,
                 progress_callback=progress_callback,
-                segment_metas=segment_metas
+                segment_metas=segment_metas,
+                conversation_context=conversation_context,
             )
 
             if result.get("success", True) is False:
@@ -538,6 +585,10 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None):
                 record.answer = answer
                 import json
                 record.progress_json = json.dumps(running_tasks[task_id]['progress'])
+                if record.conversation_id:
+                    conversation = db.session.get(AgentConversation, record.conversation_id)
+                    if conversation:
+                        conversation.updated_at = datetime.utcnow()
                 db.session.commit()
 
             running_tasks[task_id]['status'] = "completed"
@@ -645,12 +696,28 @@ def submit_qa(workspace_id):
     data = request.get_json() or {}
     question = data.get("question")
     segment_ids = data.get("segment_ids", [])
+    conversation_id = data.get("conversation_id")
 
-    if not isinstance(question, str) or not question.strip() or not isinstance(segment_ids, list) or not segment_ids:
-        return fail(message="question and segment_ids are required", code=5004, http_status=400)
+    if not isinstance(question, str) or not question.strip():
+        return fail(message="question is required", code=5004, http_status=400)
     question = question.strip()
     if len(question) > 4000:
         return fail(message="question is too long", code=5022, http_status=400)
+
+    conversation = None
+    if conversation_id:
+        if not isinstance(conversation_id, str) or len(conversation_id) > 64:
+            return fail(message="invalid conversation_id", code=5025, http_status=400)
+        conversation = db.session.get(AgentConversation, conversation_id)
+        if not conversation or conversation.workspace_id != workspace_id:
+            return fail(message="conversation not found in this workspace", code=5026, http_status=404)
+        if conversation.creator_id != emp_id:
+            return fail(message="only the conversation creator can continue this investigation", code=5027, http_status=403)
+        if not segment_ids:
+            segment_ids = conversation.segment_ids()
+
+    if not isinstance(segment_ids, list) or not segment_ids:
+        return fail(message="select at least one video segment", code=5004, http_status=400)
     if len(segment_ids) > 20 or any(type(segment_id) is not int for segment_id in segment_ids):
         return fail(message="segment_ids must contain at most 20 integer IDs", code=5023, http_status=400)
     segment_ids = list(dict.fromkeys(segment_ids))
@@ -664,8 +731,29 @@ def submit_qa(workspace_id):
             return fail(message=f"segment {seg_id} preprocessing is still running", code=5021, http_status=409)
         selected_segments.append(segment)
 
+    if conversation is None:
+        conversation = AgentConversation(
+            id=uuid.uuid4().hex,
+            workspace_id=workspace_id,
+            creator_id=emp_id,
+            title=question[:80],
+            segment_ids_json=json.dumps(segment_ids, ensure_ascii=False),
+        )
+        db.session.add(conversation)
+
+    last_turn = (db.session.query(db.func.max(QARecord.turn_index))
+                 .filter_by(conversation_id=conversation.id).scalar() or 0)
+    turn_index = int(last_turn) + 1
     task_id = uuid.uuid4().hex
-    record = QARecord(id=task_id, workspace_id=workspace_id, creator_id=emp_id, question=question, status="processing")
+    record = QARecord(
+        id=task_id,
+        workspace_id=workspace_id,
+        creator_id=emp_id,
+        question=question,
+        status="processing",
+        conversation_id=conversation.id,
+        turn_index=turn_index,
+    )
     db.session.add(record)
     
     video_paths = []
@@ -687,6 +775,7 @@ def submit_qa(workspace_id):
         db.session.add(qvs)
             
     db.session.commit()
+    conversation_context = _conversation_context(conversation.id, turn_index)
     
     # Initialize in-memory task tracker
     _prune_running_tasks()
@@ -704,16 +793,25 @@ def submit_qa(workspace_id):
         "progress_queue": Queue(),
         "answer": None,
         "error": None,
-        "video_paths": video_paths
+        "video_paths": video_paths,
+        "conversation_id": conversation.id,
+        "turn_index": turn_index,
     }
     
     # Start thread
     app = current_app._get_current_object()
-    t = threading.Thread(target=process_qa_thread, args=(app, task_id, question, video_paths, segment_metas))
+    t = threading.Thread(
+        target=process_qa_thread,
+        args=(app, task_id, question, video_paths, segment_metas, conversation_context),
+    )
     t.daemon = True
     t.start()
     
-    return success(message="qa task submitted", data={"task_id": task_id})
+    return success(message="agent turn submitted", data={
+        "task_id": task_id,
+        "conversation_id": conversation.id,
+        "turn_index": turn_index,
+    })
 
 
 @workspaces_bp.get("/<int:workspace_id>/qa")
@@ -739,6 +837,38 @@ def list_qa_records(workspace_id):
     return success(data=results)
 
 
+@workspaces_bp.get("/<int:workspace_id>/agent/conversations")
+@jwt_required()
+def list_agent_conversations(workspace_id):
+    """List persistent investigation threads visible in the current workspace."""
+    _, error = _require_workspace_member(workspace_id)
+    if error:
+        return error
+    conversations = (AgentConversation.query.filter_by(workspace_id=workspace_id)
+                     .order_by(AgentConversation.updated_at.desc()).all())
+    return success(data=[_serialize_conversation(item) for item in conversations])
+
+
+@workspaces_bp.get("/agent/conversations/<conversation_id>/messages")
+@jwt_required()
+def get_agent_conversation_messages(conversation_id):
+    conversation = db.session.get(AgentConversation, conversation_id)
+    if not conversation:
+        return fail(message="conversation not found", code=5026, http_status=404)
+    _, error = _require_workspace_member(conversation.workspace_id)
+    if error:
+        return error
+    records = (QARecord.query.filter_by(conversation_id=conversation_id)
+               .order_by(QARecord.turn_index.asc()).all())
+    messages = []
+    for record in records:
+        data = record.to_dict()
+        selections = QAVideoSelection.query.filter_by(record_id=record.id).all()
+        data["selections"] = [selection.to_dict() for selection in selections]
+        messages.append(data)
+    return success(data={"conversation": _serialize_conversation(conversation), "messages": messages})
+
+
 @workspaces_bp.get("/qa/<task_id>/status")
 @jwt_required()
 def get_qa_status(task_id):
@@ -758,7 +888,9 @@ def get_qa_status(task_id):
             "progress": task_info["progress"],
             "answer": task_info["answer"],
             "error": task_info["error"],
-            "video_paths": task_info.get("video_paths", [])
+            "video_paths": task_info.get("video_paths", []),
+            "conversation_id": task_info.get("conversation_id", record.conversation_id),
+            "turn_index": task_info.get("turn_index", record.turn_index),
         })
     else:
         progress_data = []
@@ -814,7 +946,9 @@ def get_qa_status(task_id):
             "progress": progress_data,
             "answer": record.answer if record.status == "completed" else None,
             "error": record.answer if record.status == "failed" else None,
-            "video_paths": video_paths
+            "video_paths": video_paths,
+            "conversation_id": record.conversation_id,
+            "turn_index": record.turn_index,
         })
 
 

@@ -21,7 +21,13 @@ class MVA2Runner:
         self.tools = ReActTools(self.db)
         self.max_feedback_loops = 10  # 支持最大 10 轮 ReAct 循环
 
-    async def execute_on_demand_multi(self, video_items: List[Dict[str, Any]], user_query: str, progress_callback: Optional[Callable] = None) -> str:
+    async def execute_on_demand_multi(
+        self,
+        video_items: List[Dict[str, Any]],
+        user_query: str,
+        progress_callback: Optional[Callable] = None,
+        conversation_context: str = "",
+    ) -> str:
         logger.info("="*60)
         logger.info(f"MVA V2 Multi-Video Agent Runner started for query: '{user_query}' with {len(video_items)} videos")
         logger.info("="*60)
@@ -79,6 +85,14 @@ class MVA2Runner:
             f"（注意：视频序号必须是对应上面列表中的数字字符串 \"1\", \"2\"，必须包含英文方括号与双引号，前端依赖此格式生成蓝色可点击跳转播放链接！）"
         )
 
+        history_prompt = ""
+        if conversation_context:
+            history_prompt = (
+                "\n\n【本次调查已确认的历史上下文】\n"
+                f"{conversation_context}\n"
+                "历史内容是辅助线索，不是当前问题的替代答案。若有不确定或需要核验之处，必须继续调用工具。"
+            )
+
         messages = [
             {
                 "role": "system",
@@ -86,7 +100,7 @@ class MVA2Runner:
             },
             {
                 "role": "user",
-                "content": f"{meta_prompt}\n\n"
+                "content": f"{meta_prompt}{history_prompt}\n\n"
                            f"用户提出的分析问题 (question): '{user_query}'\n\n"
                            f"请开始你的跨视频对比与推演。请一步一步思考，使用工具搜集事实线索，不要瞎猜。"
             }
@@ -169,9 +183,12 @@ class MVA2Runner:
                 # 执行具体工具
                 observation = ""
                 try:
-                    if tool_name == "spatiotemporal_search":
+                    if tool_name in ("spatiotemporal_search", "search_objects", "track_target"):
                         q_type = tool_params.get("query_type", "semantic")
                         q_text = tool_params.get("query_text", "")
+                        if tool_name == "track_target":
+                            q_type = "identity"
+                            q_text = tool_params.get("track_id", q_text)
                         selected_video = resolve_selected_video(video_items, tool_params)
                         if not selected_video:
                             observation = "错误: video_id 不属于本次用户选择的视频列表。"
@@ -188,6 +205,21 @@ class MVA2Runner:
                             "role": "user",
                             "content": observation
                         })
+
+                    elif tool_name == "search_face_tracks":
+                        workspace_id = video_items[0].get("meta", {}).get("workspace_id")
+                        segment_ids = [
+                            item.get("meta", {}).get("id") for item in video_items
+                            if item.get("meta", {}).get("id") is not None
+                        ]
+                        if workspace_id is None:
+                            observation = "错误: 当前调查缺少工作区上下文，不能查询人脸轨迹。"
+                        else:
+                            res = self.tools.search_face_tracks(
+                                int(workspace_id), segment_ids, tool_params.get("query_text", "")
+                            )
+                            observation = f"系统观察反馈 (人脸轨迹索引):\n{json.dumps(res, ensure_ascii=False)}"
+                        messages.append({"role": "user", "content": observation})
                         
                     elif tool_name == "read_frame_image":
                         selected_video = resolve_selected_video(video_items, tool_params)
@@ -285,7 +317,7 @@ class MVA2Runner:
 
         return final_answer_result
 
-    async def execute_on_demand(self, video_path: str, video_id: str, start_sec: float, end_sec: float, user_query: str, progress_callback: Optional[Callable] = None, segment_meta: Optional[Dict[str, Any]] = None) -> str:
+    async def execute_on_demand(self, video_path: str, video_id: str, start_sec: float, end_sec: float, user_query: str, progress_callback: Optional[Callable] = None, segment_meta: Optional[Dict[str, Any]] = None, conversation_context: str = "") -> str:
         """
         向后兼容旧版单视频调用接口，自动包装并转发给多视频 Agent。
         """
@@ -302,13 +334,16 @@ class MVA2Runner:
             "end_sec": end_sec,
             "meta": meta
         }
-        return await self.execute_on_demand_multi([video_item], user_query, progress_callback)
+        return await self.execute_on_demand_multi(
+            [video_item], user_query, progress_callback, conversation_context
+        )
 
     def run_on_sample(self, sample: Dict[str, Any], video_base_dir: str, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         import os, cv2
         question = sample.get("question", "")
         video_filenames = sample.get("video_paths", sample.get("videos", []))
         segment_metas = sample.get("segment_metas", [])
+        conversation_context = sample.get("conversation_context", "")
 
         if not video_filenames:
             return {"error": "No video paths provided", "success": False}
@@ -346,7 +381,9 @@ class MVA2Runner:
 
         try:
             final_answer = asyncio.run(
-                self.execute_on_demand_multi(video_items, question, progress_callback)
+                self.execute_on_demand_multi(
+                    video_items, question, progress_callback, conversation_context
+                )
             )
         except Exception as e:
             logger.error(f"Error processing multi-videos: {e}")

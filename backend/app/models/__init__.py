@@ -5,6 +5,7 @@ from .monitor import Monitor
 from .workspace import Workspace, WorkspaceVideoSegment
 from .qa_record import QARecord, QAVideoSelection
 from .face import WorkspaceFaceGroup, WorkspaceFaceRecord
+from .agent_conversation import AgentConversation
 
 __all__ = [
     "User",
@@ -17,5 +18,6 @@ __all__ = [
     "QARecord",
     "QAVideoSelection",
     "WorkspaceFaceGroup",
-    "WorkspaceFaceRecord"
+    "WorkspaceFaceRecord",
+    "AgentConversation",
 ]

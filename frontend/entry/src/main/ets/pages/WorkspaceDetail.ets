@@ -1,5 +1,6 @@
 import { HttpUtil, BASE_HOST } from '../utils/http'
 import { QARecordInfo } from './tabs/WorkspaceTab'
+import { AgentConversationPanel } from './components/AgentConversationPanel'
 
 interface ToastOptions {
   message: string;
@@ -2971,7 +2972,9 @@ struct WorkspaceDetail {
 
           } else {
             // ================== "问答" Tab Content ==================
-            if (this.showCreateQA) {
+            if (this.currentSubTab === 2) {
+              AgentConversationPanel({ workspaceId: this.workspaceId })
+            } else if (this.showCreateQA) {
               // Create Q&A Form choosing segments
               Column({ space: 10 }) {
                 Text('新建问答 - 选择包含的视频片段')

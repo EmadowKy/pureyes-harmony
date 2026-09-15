@@ -12,6 +12,9 @@ class QARecord(db.Model):
     answer = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="processing")  # processing, completed, failed
     progress_json = db.Column(db.Text, nullable=True)
+    # New fields are nullable to preserve every historical one-shot record.
+    conversation_id = db.Column(db.String(64), db.ForeignKey("agent_conversations.id"), nullable=True, index=True)
+    turn_index = db.Column(db.Integer, nullable=False, default=1)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -24,6 +27,8 @@ class QARecord(db.Model):
             "answer": self.answer,
             "status": self.status,
             "progress_json": self.progress_json,
+            "conversation_id": self.conversation_id,
+            "turn_index": self.turn_index,
             "created_at": self.created_at.isoformat() + "Z"
         }
 
