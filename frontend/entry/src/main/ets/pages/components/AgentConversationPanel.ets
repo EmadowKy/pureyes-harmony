@@ -23,6 +23,11 @@ class AgentTurnItem {
   status: string = 'processing';
   turnIndex: number = 1;
   createdAt: string = '';
+  toolCalls: Array<AgentToolCall> = [];
+}
+
+class AgentToolCall {
+  name: string = '';
 }
 
 class AgentTurnPayload {
@@ -134,6 +139,14 @@ export struct AgentConversationPanel {
       turn.status = (item['status'] as string) || 'processing';
       turn.turnIndex = (item['turn_index'] as number) || (i + 1);
       turn.createdAt = (item['created_at'] as string) || '';
+      const rawCalls = (item['tool_calls'] as Array<Record<string, Object>>) || [];
+      for (let callIndex = 0; callIndex < rawCalls.length; callIndex++) {
+        const call = new AgentToolCall();
+        call.name = (rawCalls[callIndex]['name'] as string) || '';
+        if (call.name.length > 0) {
+          turn.toolCalls.push(call);
+        }
+      }
       if (turn.status === 'processing') {
         processingId = turn.id;
       }
@@ -259,6 +272,15 @@ export struct AgentConversationPanel {
     return '正在推理';
   }
 
+  toolNameLabel(toolName: string): string {
+    if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '查找目标';
+    if (toolName === 'track_target') return '追踪轨迹';
+    if (toolName === 'search_face_tracks') return '人脸线索';
+    if (toolName === 'read_frame_image') return '核验画面';
+    if (toolName === 'get_video_metadata') return '读取元数据';
+    return '工具调用';
+  }
+
   @Builder ConversationRail() {
     List({ space: 8 }) {
       ForEach(this.conversations, (item: AgentConversationItem): void => {
@@ -328,6 +350,24 @@ export struct AgentConversationPanel {
                 .fontColor(turn.status === 'failed' ? '#9C3D3D' : '#38536A')
                 .lineHeight(22)
                 .copyOption(CopyOptions.InApp)
+              if (turn.toolCalls.length > 0) {
+                Flex({ wrap: FlexWrap.Wrap }) {
+                  Text('本轮查证')
+                    .fontSize(11)
+                    .fontColor('#6B8499')
+                    .margin({ right: 6, top: 4, bottom: 4 })
+                  ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
+                    Text(this.toolNameLabel(call.name))
+                      .fontSize(11)
+                      .fontColor('#2A688C')
+                      .padding({ left: 7, right: 7, top: 4, bottom: 4 })
+                      .backgroundColor('#EAF5FA')
+                      .borderRadius(6)
+                      .margin({ right: 6, top: 3, bottom: 3 })
+                  }, (call: AgentToolCall, index: number): string => `${call.name}-${index}`)
+                }
+                .width('100%')
+              }
             }
           }
           .width('100%')

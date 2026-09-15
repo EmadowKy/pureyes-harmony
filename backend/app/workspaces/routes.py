@@ -131,6 +131,29 @@ def _serialize_conversation(conversation):
     return data
 
 
+def _tool_calls_from_progress(progress_json):
+    """Expose a compact, user-safe tool timeline without returning model reasoning."""
+    if not progress_json:
+        return []
+    try:
+        progress = json.loads(progress_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    calls = []
+    for entry in progress:
+        data = entry.get("data") or {}
+        if entry.get("stage") != "reasoning" or data.get("phase") != "action":
+            continue
+        tool_name = data.get("tool_name")
+        if not tool_name:
+            continue
+        calls.append({
+            "name": tool_name,
+            "params": data.get("tool_params") or {},
+        })
+    return calls[-12:]
+
+
 def _parse_preprocess_options(data):
     try:
         sample_fps = float(data.get("sample_fps", 1.0))
@@ -865,6 +888,7 @@ def get_agent_conversation_messages(conversation_id):
         data = record.to_dict()
         selections = QAVideoSelection.query.filter_by(record_id=record.id).all()
         data["selections"] = [selection.to_dict() for selection in selections]
+        data["tool_calls"] = _tool_calls_from_progress(record.progress_json)
         messages.append(data)
     return success(data={"conversation": _serialize_conversation(conversation), "messages": messages})
 
