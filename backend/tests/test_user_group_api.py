@@ -442,6 +442,90 @@ class UserGroupApiTest(unittest.TestCase):
         )
         self.assertEqual(invalid_qa.status_code, 400, invalid_qa.get_json())
 
+    def test_agent_conversation_keeps_evidence_scope_and_turn_memory(self):
+        self.create_user("agent_owner", "Agent Owner")
+        owner_headers = self.auth_headers("agent_owner", "pass1234")
+        group_response = self.client.post(
+            "/api/groups/", headers=owner_headers, json={"name": "Agent Conversation Group"}
+        )
+        group_id = group_response.get_json()["data"]["id"]
+        workspace_response = self.client.post(
+            f"/api/workspaces/{group_id}", headers=owner_headers,
+            json={"name": "Agent Conversation Workspace"},
+        )
+        workspace_id = workspace_response.get_json()["data"]["id"]
+
+        with self.app.app_context():
+            from app.models.workspace import WorkspaceVideoSegment
+
+            segment = WorkspaceVideoSegment(
+                workspace_id=workspace_id,
+                video_name="agent-evidence.mp4",
+                start_offset=0,
+                end_offset=10,
+                duration=10,
+                filepath="storage/slices/agent-evidence.mp4",
+                status="completed",
+            )
+            db.session.add(segment)
+            db.session.commit()
+            segment_id = segment.id
+
+        from app.workspaces import routes as workspace_routes
+
+        class NoopThread:
+            def __init__(self, *args, **kwargs):
+                self.daemon = False
+
+            def start(self):
+                return None
+
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            first_turn = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa",
+                headers=owner_headers,
+                json={"question": "入口处有什么人？", "segment_ids": [segment_id]},
+            )
+        self.assertEqual(first_turn.status_code, 200, first_turn.get_json())
+        first_data = first_turn.get_json()["data"]
+        conversation_id = first_data["conversation_id"]
+        self.assertEqual(first_data["turn_index"], 1)
+
+        with self.app.app_context():
+            from app.models.qa_record import QARecord
+
+            record = db.session.get(QARecord, first_data["task_id"])
+            record.status = "completed"
+            record.answer = "一名行人经过入口。"
+            db.session.commit()
+            memory = workspace_routes._conversation_context(conversation_id, 2)
+            self.assertIn("入口处有什么人", memory)
+            self.assertIn("一名行人经过入口", memory)
+
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            follow_up = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa",
+                headers=owner_headers,
+                json={"question": "他后来去了哪里？", "conversation_id": conversation_id},
+            )
+        self.assertEqual(follow_up.status_code, 200, follow_up.get_json())
+        self.assertEqual(follow_up.get_json()["data"]["conversation_id"], conversation_id)
+        self.assertEqual(follow_up.get_json()["data"]["turn_index"], 2)
+
+        conversations = self.client.get(
+            f"/api/workspaces/{workspace_id}/agent/conversations", headers=owner_headers
+        )
+        self.assertEqual(conversations.status_code, 200, conversations.get_json())
+        self.assertEqual(conversations.get_json()["data"][0]["turn_count"], 2)
+
+        messages = self.client.get(
+            f"/api/workspaces/agent/conversations/{conversation_id}/messages", headers=owner_headers
+        )
+        self.assertEqual(messages.status_code, 200, messages.get_json())
+        loaded = messages.get_json()["data"]["messages"]
+        self.assertEqual([item["turn_index"] for item in loaded], [1, 2])
+        self.assertEqual(loaded[1]["question"], "他后来去了哪里？")
+
     def test_spatiotemporal_database_replaces_records_atomically(self):
         from app.mva_v2 import database as database_module
 

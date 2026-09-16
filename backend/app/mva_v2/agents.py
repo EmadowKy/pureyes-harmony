@@ -163,6 +163,39 @@ class ReActTools:
             "sampled_results": formatted_results
         }
 
+    def search_face_tracks(self, workspace_id: int, segment_ids: List[int], query_text: str) -> Dict[str, Any]:
+        """Return face appearances already indexed in the selected workspace scope."""
+        try:
+            from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+            query = (query_text or "").strip().lower()
+            groups = WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).all()
+            matched_groups = []
+            for group in groups:
+                normalized_id = query.replace("人脸#", "").replace("人脸 #", "")
+                if query and query not in group.name.lower() and str(group.id) != normalized_id:
+                    continue
+                records_query = WorkspaceFaceRecord.query.filter_by(
+                    workspace_id=workspace_id, group_id=group.id
+                )
+                if segment_ids:
+                    records_query = records_query.filter(WorkspaceFaceRecord.segment_id.in_(segment_ids))
+                records = records_query.order_by(WorkspaceFaceRecord.start_time_offset).limit(30).all()
+                if records:
+                    matched_groups.append({
+                        "face_group_id": group.id,
+                        "face_group_name": group.name,
+                        "occurrences": [{
+                            "segment_id": record.segment_id,
+                            "video_name": record.video_name,
+                            "start_time": record.start_time_str,
+                            "end_time": record.end_time_str,
+                        } for record in records],
+                    })
+            return {"matched_face_groups": matched_groups, "match_count": len(matched_groups)}
+        except Exception as exc:
+            logger.error("Face-track search failed: %s", exc)
+            return {"matched_face_groups": [], "match_count": 0, "error": str(exc)}
+
     def read_frame_image(self, video_path: str, timestamp_sec: float, video_id: str) -> Optional[str]:
         """
         从物理视频截取某一秒的画面。
@@ -250,20 +283,28 @@ class ReActSystemPrompt:
 
 ### 可用的工具箱（Tools List）：
 
-1. "spatiotemporal_search"：检索时空特征数据库（包含 YOLO 目标与多目标追踪 ID 记录）。
+1. "search_objects"：在已建立的目标、轨迹索引中查找人物、车辆或物品。
    参数：
-   - "query_type": 字符串，'semantic'（搜索场景或特定动作行为）或 'identity'（追踪特定追踪ID的同一个人或物体）
    - "query_text": 检索文本（例如 "红衣男子" 或 "有人在跑步"）
    - "video_id": 字符串，当前视频的文件名（如 "slice_2_7918a9ee.mp4"）
    返回：匹配到的轨迹和关键帧的列表，包含时间戳、帧序号、track_id等。
 
-2. "read_frame_image"：从视频片段的特定时间点截取图像，送入你的视觉感知中。
+2. "track_target"：沿已有 track_id 追踪同一个人物或物体，查找其出现时段与位置。
+   参数：
+   - "track_id": 字符串，由 search_objects 的结果提供
+   - "video_id": 字符串，当前视频的文件名
+
+3. "search_face_tracks"：查询预处理得到的人脸出现轨迹。只能把它作为视觉线索，不得将其表述为司法级身份确认。
+   参数：
+   - "query_text": 字符串，例如 "人脸 #2"；不知道编号时传空字符串列出可用人脸分组
+
+4. "read_frame_image"：从视频片段的特定时间点截取图像，送入你的视觉感知中。
    参数：
    - "timestamp_sec": 浮点数，截图的目标时间（秒）
    - "video_id": 字符串，视频文件名
    返回：截取出的临时图像文件的绝对路径。在下一轮对话的开头，你将会直接看见这张图像。
 
-3. "get_video_metadata"：获取视频的持续时间、帧率和帧数。
+5. "get_video_metadata"：获取视频的持续时间、帧率和帧数。
    参数：
    - "video_id": 字符串，必须是当前用户已选择的视频文件名
    返回：{"duration_seconds": 秒数, "fps": 帧率, "frame_count": 总帧数}
