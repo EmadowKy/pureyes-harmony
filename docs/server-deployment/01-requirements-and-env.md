@@ -52,11 +52,12 @@ filelock>=3.13.0
 # AI 视觉分析引擎核心依赖
 ultralytics>=8.2.0        # YOLOv8 目标检测网络
 supervision>=0.21.0       # ByteTrack 目标追踪工具
-onnxruntime>=1.17.0       # ONNX 引擎 (用于加载 OSNet 行人重识别特征提取)
+onnxruntime>=1.17.0,<1.19.0  # ONNX 引擎；与 numpy<2.0 的 CPU 部署兼容
 lancedb>=0.6.0            # 嵌入式时空特征向量数据库
 pydantic>=2.0.0           # 数据校验与结构化解析
 transformers>=4.40.0      # 多模态视觉模型 Tokenizer / 特征提取
 rapidocr-onnxruntime>=1.4.4,<2.0  # 基于 ONNXRuntime 的 OCR 推理运行时
+shapely>=2.0.0,<2.1.0      # OCR 几何依赖；避免升级至仅支持 NumPy 2 的构建
 ```
 
 ---
