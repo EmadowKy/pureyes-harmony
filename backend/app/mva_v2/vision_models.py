@@ -117,12 +117,13 @@ class ClipSemanticEmbedder:
         return self._features(text=text)
 
 
-class PaddleTextRecognizer:
-    """Lazy PaddleOCR adapter for Chinese/English text in video frames.
+class OnnxTextRecognizer:
+    """Lazy RapidOCR/ONNXRuntime adapter for Chinese and English frame text.
 
-    ``OCR_MODEL_ROOT`` must contain ``det``, ``rec`` and (optionally) ``cls``
-    model folders.  Requiring an explicit local path prevents a user request
-    from triggering PaddleOCR's implicit model download.
+    ``OCR_MODEL_ROOT`` must contain the three PP-OCR ONNX files used below.
+    The implementation deliberately uses the project's existing ONNXRuntime
+    rather than PaddlePaddle, which keeps CPU-only deployments small and avoids
+    an on-demand model download.
     """
 
     _lock = threading.Lock()
@@ -133,56 +134,52 @@ class PaddleTextRecognizer:
         self.model_root = model_root or os.environ.get("OCR_MODEL_ROOT", "")
         self.language = os.environ.get("OCR_LANGUAGE", "ch")
 
+    def _model_paths(self) -> Dict[str, str]:
+        return {
+            "det_model_path": os.path.join(self.model_root, "ch_PP-OCRv4_det_infer.onnx"),
+            "rec_model_path": os.path.join(self.model_root, "ch_PP-OCRv4_rec_infer.onnx"),
+            "cls_model_path": os.path.join(self.model_root, "ch_ppocr_mobile_v2.0_cls_infer.onnx"),
+        }
+
     @property
     def status(self) -> Dict[str, Any]:
         return {
-            "configured": bool(self.model_root and os.path.isdir(os.path.join(self.model_root, "det")) and os.path.isdir(os.path.join(self.model_root, "rec"))),
-            "loaded": PaddleTextRecognizer._engine is not None,
+            "configured": bool(self.model_root and all(os.path.isfile(path) for path in self._model_paths().values())),
+            "loaded": OnnxTextRecognizer._engine is not None,
             "model_root": self.model_root or None,
-            "error": PaddleTextRecognizer._load_error,
+            "error": OnnxTextRecognizer._load_error,
         }
 
     def _ensure_loaded(self) -> None:
-        if PaddleTextRecognizer._engine is not None:
+        if OnnxTextRecognizer._engine is not None:
             return
-        if PaddleTextRecognizer._load_error:
-            raise VisionModelUnavailable(f"OCR engine could not be loaded: {PaddleTextRecognizer._load_error}")
+        if OnnxTextRecognizer._load_error:
+            raise VisionModelUnavailable(f"OCR engine could not be loaded: {OnnxTextRecognizer._load_error}")
         if not self.status["configured"]:
-            raise VisionModelUnavailable("OCR model is not configured; set OCR_MODEL_ROOT with local det/ and rec/ model folders")
-        with PaddleTextRecognizer._lock:
-            if PaddleTextRecognizer._engine is not None:
+            raise VisionModelUnavailable("OCR model is not configured; set OCR_MODEL_ROOT with local PP-OCR ONNX model files")
+        with OnnxTextRecognizer._lock:
+            if OnnxTextRecognizer._engine is not None:
                 return
             try:
-                from paddleocr import PaddleOCR
+                from rapidocr_onnxruntime import RapidOCR
 
-                options: Dict[str, Any] = {"use_angle_cls": True, "lang": self.language, "show_log": False}
-                for option, directory in (("det_model_dir", "det"), ("rec_model_dir", "rec"), ("cls_model_dir", "cls")):
-                    path = os.path.join(self.model_root, directory)
-                    if os.path.isdir(path):
-                        options[option] = path
-                PaddleTextRecognizer._engine = PaddleOCR(**options)
-                PaddleTextRecognizer._load_error = None
-                logger.info("Loaded PaddleOCR (%s)", self.model_root or "installed cache")
+                OnnxTextRecognizer._engine = RapidOCR(**self._model_paths())
+                OnnxTextRecognizer._load_error = None
+                logger.info("Loaded RapidOCR ONNX models from %s", self.model_root)
             except Exception as exc:
-                PaddleTextRecognizer._load_error = str(exc)
+                OnnxTextRecognizer._load_error = str(exc)
                 raise VisionModelUnavailable(f"OCR engine could not be loaded: {exc}") from exc
 
     def extract(self, image: np.ndarray) -> List[Dict[str, Any]]:
         if image is None or image.size == 0:
             return []
         self._ensure_loaded()
-        raw = PaddleTextRecognizer._engine.ocr(image, cls=True)
+        raw, _elapsed = OnnxTextRecognizer._engine(image)
         results: List[Dict[str, Any]] = []
-        # PaddleOCR returns either [lines] or [[lines]] depending on version.
-        lines = raw[0] if raw and len(raw) == 1 and isinstance(raw[0], list) else raw
-        for line in lines or []:
-            if not isinstance(line, (tuple, list)) or len(line) < 2:
+        for line in raw or []:
+            if not isinstance(line, (tuple, list)) or len(line) < 3:
                 continue
-            points, text_confidence = line[0], line[1]
-            if not isinstance(text_confidence, (tuple, list)) or len(text_confidence) < 2:
-                continue
-            text = str(text_confidence[0]).strip()
-            confidence = float(text_confidence[1])
+            points, text, confidence = line[0], str(line[1]).strip(), float(line[2])
             if not text or confidence < 0.45:
                 continue
             try:
@@ -193,3 +190,8 @@ class PaddleTextRecognizer:
                 continue
             results.append({"text": text, "confidence": round(confidence, 4), "bbox": bbox})
         return results
+
+
+# Backwards-compatible import name for deployments that imported the early
+# adapter directly. New code should use OnnxTextRecognizer.
+PaddleTextRecognizer = OnnxTextRecognizer

@@ -12,7 +12,7 @@ import numpy as np
 from app.mva_v2 import database
 from app.mva_v2.agents import ReActTools
 from app.mva_v2.pipeline import BoundingBox, JITVideoPipeline, TrackedObject
-from app.mva_v2.vision_models import PaddleTextRecognizer, VisionModelUnavailable
+from app.mva_v2.vision_models import OnnxTextRecognizer, VisionModelUnavailable
 
 
 class FakeSemanticEmbedder:
@@ -132,9 +132,9 @@ class MultimodalEvidenceTest(unittest.TestCase):
         self.assertEqual([1.0, 0.0, 0.0], object_record["clip_vector"])
         self.assertEqual([0.0, 1.0], object_record["reid_vector"])
 
-    def test_ocr_never_downloads_models_when_no_local_path_is_configured(self):
+    def test_ocr_requires_explicit_local_onnx_models(self):
         with patch.dict(os.environ, {"OCR_MODEL_ROOT": ""}, clear=False):
-            recognizer = PaddleTextRecognizer()
+            recognizer = OnnxTextRecognizer()
             self.assertFalse(recognizer.status["configured"])
             with self.assertRaises(VisionModelUnavailable):
                 recognizer.extract(np.zeros((16, 16, 3), dtype=np.uint8))

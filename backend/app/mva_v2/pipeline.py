@@ -14,7 +14,7 @@ import logging
 import math
 import threading
 from ultralytics import YOLO
-from .vision_models import ClipSemanticEmbedder, PaddleTextRecognizer, VisionModelUnavailable
+from .vision_models import ClipSemanticEmbedder, OnnxTextRecognizer, VisionModelUnavailable
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ class JITVideoPipeline:
         # 语义和文字模型均惰性加载：没有部署它们时，目标/ReID 索引仍可工作，
         # 但不会伪造零向量或空 OCR 结果。
         self.semantic_embedder = ClipSemanticEmbedder()
-        self.text_recognizer = PaddleTextRecognizer()
+        self.text_recognizer = OnnxTextRecognizer()
         self._unavailable_modalities = set()
         self.frame_queue = asyncio.Queue(maxsize=50)
 

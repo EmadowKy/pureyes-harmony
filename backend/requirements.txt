@@ -49,5 +49,4 @@ pydantic>=2.0.0
 transformers>=4.40.0
 
 # 视频画面文字识别（按需加载；模型文件由 OCR_MODEL_ROOT 指定）
-paddleocr>=2.8.1,<3.0
-paddlepaddle>=2.6.2,<3.0
+rapidocr-onnxruntime>=1.4.4,<2.0
