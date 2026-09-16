@@ -14,6 +14,7 @@ import logging
 import math
 import threading
 from ultralytics import YOLO
+from .vision_models import ClipSemanticEmbedder, PaddleTextRecognizer, VisionModelUnavailable
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -138,10 +139,15 @@ class FeatureExtractor:
             self._initialize_session()
 
     def _initialize_session(self):
-
-        # 寻找并初始化本地 OSNet ONNX 行人重识别模型
+        # 寻找并初始化本地 OSNet ONNX 行人重识别模型。
+        # 环境变量优先，兼容历史项目根目录和新的 backend/models 目录。
         backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        model_path = os.path.join(os.path.dirname(backend_dir), "models", "osnet_x1_0.onnx")
+        candidates = [
+            os.environ.get("REID_MODEL_PATH"),
+            os.path.join(os.path.dirname(backend_dir), "models", "osnet_x1_0.onnx"),
+            os.path.join(backend_dir, "models", "osnet_x1_0.onnx"),
+        ]
+        model_path = next((path for path in candidates if path and os.path.isfile(path)), None)
         
         # 寻找并注入 PyTorch 内置的 CUDA/cuDNN DLL 路径，实现 Windows 平台零配置 GPU 推理
         try:
@@ -164,8 +170,8 @@ class FeatureExtractor:
             logger.warning(f"Failed to inject PyTorch CUDA/cuDNN DLL paths: {dll_err}")
 
         import onnxruntime as ort
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Critical ReID model file not found at expected path: {model_path}")
+        if not model_path:
+            raise FileNotFoundError("ReID model not found; set REID_MODEL_PATH or place osnet_x1_0.onnx in models/")
             
         try:
             available_providers = ort.get_available_providers()
@@ -216,10 +222,6 @@ class FeatureExtractor:
             feat = feat / norm
         return feat
 
-    def extract_clip(self, image: np.ndarray) -> np.ndarray:
-        # 网络受限，返回零向量填充。高层语义过滤由 database.py 中的类别路由引擎自动承接
-        return np.zeros(512, dtype=np.float32)
-
 class JITVideoPipeline:
     """按需即时提取管线 (JIT Processing Engine)"""
     def __init__(self, db_client: Any):
@@ -227,7 +229,35 @@ class JITVideoPipeline:
         self.detector = YoloDetector()
         self.tracker = ByteTracker()
         self.extractor = FeatureExtractor()
+        # 语义和文字模型均惰性加载：没有部署它们时，目标/ReID 索引仍可工作，
+        # 但不会伪造零向量或空 OCR 结果。
+        self.semantic_embedder = ClipSemanticEmbedder()
+        self.text_recognizer = PaddleTextRecognizer()
+        self._unavailable_modalities = set()
         self.frame_queue = asyncio.Queue(maxsize=50)
+
+    def _warn_unavailable_once(self, modality: str, exc: Exception) -> None:
+        if modality not in self._unavailable_modalities:
+            self._unavailable_modalities.add(modality)
+            logger.warning("%s preprocessing is unavailable: %s", modality, exc)
+
+    def _embed_image(self, image: np.ndarray) -> List[float]:
+        try:
+            return self.semantic_embedder.embed_image(image).tolist()
+        except VisionModelUnavailable as exc:
+            self._warn_unavailable_once("CLIP", exc)
+        except Exception as exc:
+            self._warn_unavailable_once("CLIP", exc)
+        return []
+
+    def _read_text(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        try:
+            return self.text_recognizer.extract(image)
+        except VisionModelUnavailable as exc:
+            self._warn_unavailable_once("OCR", exc)
+        except Exception as exc:
+            self._warn_unavailable_once("OCR", exc)
+        return []
         
     def _detect_motion(self, prev_frame: np.ndarray, curr_frame: np.ndarray) -> bool:
         if prev_frame is None:
@@ -305,32 +335,66 @@ class JITVideoPipeline:
                         scale = target_h / float(h)
                         frame = cv2.resize(frame, (int(w * scale), target_h))
 
-                    # 运动检测与 YOLO 追踪提取
-                    has_motion = self._detect_motion(prev_frame, frame)
-                    if has_motion:
-                        bboxes = self.detector.detect(frame)
-                        if bboxes:
-                            tracked_objs = self.tracker.update(bboxes, frame)
-                            for track in tracked_objs:
-                                # OSNet 是行人重识别模型，不对车辆等类别生成误导性向量。
-                                reid_vector = []
-                                if track.bbox.class_name == "person":
-                                    try:
-                                        reid_vector = self.extractor.extract_reid(track.image_crop).tolist()
-                                    except Exception as reid_err:
-                                        logger.warning(f"Skipping invalid person ReID crop: {reid_err}")
-                                record = {
-                                    "video_id": video_id,
-                                    "workspace_id": workspace_id,
-                                    "timestamp": frame_idx / fps,
-                                    "frame_idx": frame_idx,
-                                    "track_id": track.track_id,
-                                    "class_name": track.bbox.class_name,
-                                    "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
-                                    "reid_vector": reid_vector,
-                                    "clip_vector": [0.0] * 512
-                                }
-                                all_records.append(record)
+                    # 每一张用户选择的采样帧都进入检测；不能以运动检测作为
+                    # “是否有信息”的代理，否则静止的人、车辆、招牌都会被漏掉。
+                    timestamp = frame_idx / fps
+                    frame_clip_vector = self._embed_image(frame)
+                    bboxes = self.detector.detect(frame)
+                    if bboxes:
+                        tracked_objs = self.tracker.update(bboxes, frame)
+                        for track in tracked_objs:
+                            # OSNet 仅对人生成身份向量；车辆等对象仍会保留 CLIP 语义向量。
+                            reid_vector = []
+                            if track.bbox.class_name == "person":
+                                try:
+                                    reid_vector = self.extractor.extract_reid(track.image_crop).tolist()
+                                except Exception as reid_err:
+                                    logger.warning(f"Skipping invalid person ReID crop: {reid_err}")
+                            object_clip_vector = self._embed_image(track.image_crop)
+                            all_records.append({
+                                "video_id": video_id,
+                                "workspace_id": workspace_id,
+                                "timestamp": timestamp,
+                                "frame_idx": frame_idx,
+                                "track_id": track.track_id,
+                                "class_name": track.bbox.class_name,
+                                "bbox": [track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2],
+                                "reid_vector": reid_vector,
+                                "clip_vector": object_clip_vector,
+                                "modality": "object",
+                            })
+
+                    # 全帧语义向量覆盖没有被 YOLO 框住的场景、衣着和活动线索。
+                    if frame_clip_vector:
+                        all_records.append({
+                            "video_id": video_id,
+                            "workspace_id": workspace_id,
+                            "timestamp": timestamp,
+                            "frame_idx": frame_idx,
+                            "track_id": f"scene_{frame_idx}",
+                            "class_name": "scene",
+                            "bbox": [0, 0, int(frame.shape[1]), int(frame.shape[0])],
+                            "reid_vector": [],
+                            "clip_vector": frame_clip_vector,
+                            "modality": "scene",
+                        })
+
+                    # OCR 以独立文字记录入库，供文字检索使用；不伪装成检测目标。
+                    for text_index, text_hit in enumerate(self._read_text(frame)):
+                        all_records.append({
+                            "video_id": video_id,
+                            "workspace_id": workspace_id,
+                            "timestamp": timestamp,
+                            "frame_idx": frame_idx,
+                            "track_id": f"text_{frame_idx}_{text_index}",
+                            "class_name": "text",
+                            "bbox": text_hit["bbox"],
+                            "reid_vector": [],
+                            "clip_vector": [],
+                            "modality": "ocr",
+                            "ocr_text": text_hit["text"],
+                            "ocr_confidence": text_hit["confidence"],
+                        })
 
                     prev_frame = frame.copy()
 

@@ -56,6 +56,8 @@ onnxruntime>=1.17.0       # ONNX 引擎 (用于加载 OSNet 行人重识别特�
 lancedb>=0.6.0            # 嵌入式时空特征向量数据库
 pydantic>=2.0.0           # 数据校验与结构化解析
 transformers>=4.40.0      # 多模态视觉模型 Tokenizer / 特征提取
+paddleocr>=2.8.1,<3.0     # OCR 接口
+paddlepaddle>=2.6.2,<3.0  # OCR 推理运行时
 ```
 
 ---
@@ -68,11 +70,30 @@ transformers>=4.40.0      # 多模态视觉模型 Tokenizer / 特征提取
 | :--- | :--- | :--- | :--- |
 | **YOLOv8 目标检测权重** | `yolov8n.pt` | `backend/yolov8n.pt` 及根目录 | 用于检测画面中的人员、车辆等实体，文件大小约 6.5 MB。 |
 | **OSNet 重识别权重** | `osnet_x1_0.pth` / `osnet_x1_0.onnx` | `models/` 或 `backend/models/` | 用于跨镜头行人重识别 (Person ReID) 特征向量提取，可通过 `convert_osnet.py` 转换。 |
+| **中文 CLIP 语义权重** | Hugging Face 模型目录 | 由 `CLIP_MODEL_PATH` 指向 | 用于“描述搜画面”、衣着/场景/物品语义检索。必须是包含 processor 配置的本地目录，不会在用户提问时自动下载。 |
+| **PaddleOCR 模型** | `det/`、`rec/`、可选 `cls/` | 由 `OCR_MODEL_ROOT` 指向 | 用于招牌、车牌、屏幕与字幕文字索引；每条结果均带有时间戳、位置和置信度。 |
 | **ByteTrack 追踪配置** | `bytetrack_fixed.yaml` | `backend/app/mva_v2/bytetrack_fixed.yaml` | 多目标跨帧连续追踪的算法配置文件。 |
 
 ---
 
-## 4. 系统底层依赖工具安装 (Ubuntu 示例)
+## 4. 视觉模型路径环境变量
+
+生产服务应在 systemd 的 service override 中设置以下变量，而不是将模型权重提交进 Git：
+
+```ini
+[Service]
+Environment=YOLO_MODEL_PATH=/srv/pureyes/backend/models/yolov8n.pt
+Environment=REID_MODEL_PATH=/srv/pureyes/models/osnet_x1_0.onnx
+Environment=CLIP_MODEL_PATH=/srv/pureyes/models/chinese-clip
+Environment=OCR_MODEL_ROOT=/srv/pureyes/models/paddleocr
+Environment=OCR_LANGUAGE=ch
+```
+
+其中 YOLO 和 ReID 缺失会阻止目标预处理；CLIP 或 OCR 缺失时系统会明确记录该模态不可用，但不会写入伪造的零向量。补齐模型后重新预处理目标片段，即可生成相应的语义或文字索引。
+
+---
+
+## 5. 系统底层依赖工具安装 (Ubuntu 示例)
 
 ```bash
 # 更新 apt 软件源并安装基础依赖与 FFmpeg

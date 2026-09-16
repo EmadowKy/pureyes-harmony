@@ -205,6 +205,67 @@ class SpatiotemporalDB:
         sampled = [candidates[int(i * step)] for i in range(top_k)]
         return sampled
 
+    def search_clip_vectors(self, query_vector: list, video_id: str = None, top_k: int = 15) -> List[Dict[str, Any]]:
+        """Cosine-search real CLIP image vectors produced during preprocessing."""
+        import numpy as np
+
+        query = np.asarray(query_vector, dtype=np.float32).reshape(-1)
+        if query.size == 0 or not np.all(np.isfinite(query)):
+            return []
+        query_norm = float(np.linalg.norm(query))
+        if query_norm <= 0:
+            return []
+        query = query / query_norm
+        scored = []
+        for record in self.snapshot():
+            if video_id and record.get("video_id") != video_id:
+                continue
+            vector = record.get("clip_vector")
+            if not vector:
+                continue
+            candidate = np.asarray(vector, dtype=np.float32).reshape(-1)
+            if candidate.shape != query.shape or not np.all(np.isfinite(candidate)):
+                continue
+            norm = float(np.linalg.norm(candidate))
+            if norm <= 0:
+                continue
+            copy = record.copy()
+            copy["semantic_similarity"] = round(float(np.dot(query, candidate / norm)), 4)
+            scored.append(copy)
+        scored.sort(key=lambda item: item["semantic_similarity"], reverse=True)
+        return scored[:max(1, int(top_k))]
+
+    def search_ocr_text(self, query_text: str, video_id: str = None, top_k: int = 30) -> List[Dict[str, Any]]:
+        """Find OCR hits by a normalized query and retain their temporal evidence."""
+        query = "".join((query_text or "").casefold().split())
+        if not query:
+            return []
+        scored = []
+        for record in self.snapshot():
+            if record.get("modality") != "ocr":
+                continue
+            if video_id and record.get("video_id") != video_id:
+                continue
+            text = str(record.get("ocr_text") or "")
+            normalized = "".join(text.casefold().split())
+            if not normalized:
+                continue
+            if query in normalized:
+                score = 1.0 if query == normalized else min(0.99, len(query) / len(normalized) + 0.25)
+            else:
+                # Multi-token queries still surface a useful partial hit without
+                # pretending it was an exact match.
+                terms = [term for term in query.replace("，", " ").replace(",", " ").split() if term]
+                matched = sum(1 for term in terms if term in normalized)
+                if not matched:
+                    continue
+                score = matched / max(1, len(terms)) * 0.7
+            copy = record.copy()
+            copy["ocr_match_score"] = round(score, 4)
+            scored.append(copy)
+        scored.sort(key=lambda item: (item["ocr_match_score"], item.get("ocr_confidence", 0)), reverse=True)
+        return scored[:max(1, int(top_k))]
+
     def search_identity(self, 
                         query_reid_vector: list, 
                         relax_threshold: bool = False,
