@@ -266,6 +266,8 @@ export struct AgentConversationPanel {
 
   toolLabel(progressText: string): string {
     if (progressText.indexOf('search_objects') >= 0) return '查找目标';
+    if (progressText.indexOf('search_visual_semantics') >= 0) return '检索画面语义';
+    if (progressText.indexOf('search_video_text') >= 0) return '检索画面文字';
     if (progressText.indexOf('track_target') >= 0) return '追踪轨迹';
     if (progressText.indexOf('search_face_tracks') >= 0) return '查询人脸线索';
     if (progressText.indexOf('read_frame_image') >= 0) return '核验画面';
@@ -274,6 +276,8 @@ export struct AgentConversationPanel {
 
   toolNameLabel(toolName: string): string {
     if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '查找目标';
+    if (toolName === 'search_visual_semantics') return '画面语义';
+    if (toolName === 'search_video_text') return '画面文字';
     if (toolName === 'track_target') return '追踪轨迹';
     if (toolName === 'search_face_tracks') return '人脸线索';
     if (toolName === 'read_frame_image') return '核验画面';
@@ -399,7 +403,7 @@ export struct AgentConversationPanel {
         .padding(10)
         .onChange((value: string): void => { this.composerText = value; })
       Row() {
-        Text('工具可按需查找目标、追踪轨迹、查询人脸线索、核验单帧。')
+        Text('可查找目标、相似画面、画面文字、人脸线索，并核验单帧。')
           .fontSize(11)
           .fontColor('#6B8499')
           .layoutWeight(1)
@@ -514,7 +518,7 @@ export struct AgentConversationPanel {
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor('#17324D')
-          Text(this.selectedConversationId ? '证据优先 · 支持连续追问' : '从一段录像开始建立可核验的调查线')
+          Text(this.selectedConversationId ? '证据优先 · 支持连续追问' : '从一段录像开始建立可核验的调查线 · 目标、语义与文字均可追溯')
             .fontSize(11)
             .fontColor('#668198')
         }

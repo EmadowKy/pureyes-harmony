@@ -18,7 +18,7 @@ class MVA2Runner:
     def __init__(self, db_client: SpatiotemporalDB = None):
         self.db = db_client or SpatiotemporalDB()
         self.pipeline = JITVideoPipeline(self.db)
-        self.tools = ReActTools(self.db)
+        self.tools = ReActTools(self.db, semantic_embedder=self.pipeline.semantic_embedder)
         self.max_feedback_loops = 10  # 支持最大 10 轮 ReAct 循环
 
     async def execute_on_demand_multi(
@@ -205,6 +205,28 @@ class MVA2Runner:
                             "role": "user",
                             "content": observation
                         })
+
+                    elif tool_name == "search_visual_semantics":
+                        selected_video = resolve_selected_video(video_items, tool_params)
+                        if not selected_video:
+                            observation = "错误: video_id 不属于本次用户选择的视频列表。"
+                        else:
+                            res = self.tools.search_visual_semantics(
+                                tool_params.get("query_text", ""), selected_video["video_id"]
+                            )
+                            observation = f"系统观察反馈 (CLIP 画面语义检索):\n{json.dumps(res, ensure_ascii=False)}"
+                        messages.append({"role": "user", "content": observation})
+
+                    elif tool_name == "search_video_text":
+                        selected_video = resolve_selected_video(video_items, tool_params)
+                        if not selected_video:
+                            observation = "错误: video_id 不属于本次用户选择的视频列表。"
+                        else:
+                            res = self.tools.search_video_text(
+                                tool_params.get("query_text", ""), selected_video["video_id"]
+                            )
+                            observation = f"系统观察反馈 (OCR 文字索引):\n{json.dumps(res, ensure_ascii=False)}"
+                        messages.append({"role": "user", "content": observation})
 
                     elif tool_name == "search_face_tracks":
                         workspace_id = video_items[0].get("meta", {}).get("workspace_id")

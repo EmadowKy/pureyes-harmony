@@ -48,8 +48,57 @@ class ReActParser:
             return None, None, None, None
 
 class ReActTools:
-    def __init__(self, db_client: Any):
+    def __init__(self, db_client: Any, semantic_embedder: Any = None):
         self.db = db_client
+        self.semantic_embedder = semantic_embedder
+
+    @staticmethod
+    def _sample(records: List[Dict[str, Any]], limit: int = 15) -> List[Dict[str, Any]]:
+        if len(records) <= limit:
+            return records
+        step = len(records) / limit
+        return [records[int(index * step)] for index in range(limit)]
+
+    def search_visual_semantics(self, query_text: str, video_id: str) -> Dict[str, Any]:
+        """Search real CLIP image embeddings, never the historical zero-vector placeholder."""
+        if not self.semantic_embedder:
+            return {"available": False, "error": "语义模型尚未初始化", "matches": []}
+        try:
+            embedded = self.semantic_embedder.embed_text(query_text)
+            query_vector = embedded.tolist() if hasattr(embedded, "tolist") else list(embedded)
+            records = self.db.search_clip_vectors(query_vector, video_id=video_id, top_k=60)
+        except Exception as exc:
+            logger.warning("Visual semantic search unavailable: %s", exc)
+            return {"available": False, "error": str(exc), "matches": []}
+        sampled = self._sample(records)
+        return {
+            "available": True,
+            "match_count": len(records),
+            "matches": [{
+                "timestamp_sec": round(record["timestamp"], 2),
+                "frame_idx": record["frame_idx"],
+                "class_name": record.get("class_name"),
+                "track_id": record.get("track_id"),
+                "similarity": record.get("semantic_similarity"),
+                "bbox": record.get("bbox"),
+            } for record in sampled],
+        }
+
+    def search_video_text(self, query_text: str, video_id: str) -> Dict[str, Any]:
+        """Search OCR-indexed text and return timestamped, reviewable evidence."""
+        records = self.db.search_ocr_text(query_text, video_id=video_id, top_k=60)
+        sampled = self._sample(records)
+        return {
+            "match_count": len(records),
+            "matches": [{
+                "timestamp_sec": round(record["timestamp"], 2),
+                "frame_idx": record["frame_idx"],
+                "text": record.get("ocr_text"),
+                "confidence": record.get("ocr_confidence"),
+                "match_score": record.get("ocr_match_score"),
+                "bbox": record.get("bbox"),
+            } for record in sampled],
+        }
 
     def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str) -> Dict[str, Any]:
         """
@@ -289,22 +338,32 @@ class ReActSystemPrompt:
    - "video_id": 字符串，当前视频的文件名（如 "slice_2_7918a9ee.mp4"）
    返回：匹配到的轨迹和关键帧的列表，包含时间戳、帧序号、track_id等。
 
-2. "track_target"：沿已有 track_id 追踪同一个人物或物体，查找其出现时段与位置。
+2. "search_visual_semantics"：用 CLIP 语义向量检索画面内容。适合“穿什么颜色”“某个场景/物品”“画面里像不像某种活动”等问题；结果只是候选，必须再用 read_frame_image 核验。
+   参数：
+   - "query_text": 字符串，例如 "穿红色外套的人"、"停在路边的白色轿车"
+   - "video_id": 字符串，当前视频文件名
+
+3. "search_video_text"：在 OCR 文字索引中查找招牌、车牌、屏幕文字或字幕。文字识别可能有误，结论前必须用 read_frame_image 核验。
+   参数：
+   - "query_text": 要寻找的文字或关键词，例如 "A12345"、"出口"
+   - "video_id": 字符串，当前视频文件名
+
+4. "track_target"：沿已有 track_id 追踪同一个人物或物体，查找其出现时段与位置。
    参数：
    - "track_id": 字符串，由 search_objects 的结果提供
    - "video_id": 字符串，当前视频的文件名
 
-3. "search_face_tracks"：查询预处理得到的人脸出现轨迹。只能把它作为视觉线索，不得将其表述为司法级身份确认。
+5. "search_face_tracks"：查询预处理得到的人脸出现轨迹。只能把它作为视觉线索，不得将其表述为司法级身份确认。
    参数：
    - "query_text": 字符串，例如 "人脸 #2"；不知道编号时传空字符串列出可用人脸分组
 
-4. "read_frame_image"：从视频片段的特定时间点截取图像，送入你的视觉感知中。
+6. "read_frame_image"：从视频片段的特定时间点截取图像，送入你的视觉感知中。
    参数：
    - "timestamp_sec": 浮点数，截图的目标时间（秒）
    - "video_id": 字符串，视频文件名
    返回：截取出的临时图像文件的绝对路径。在下一轮对话的开头，你将会直接看见这张图像。
 
-5. "get_video_metadata"：获取视频的持续时间、帧率和帧数。
+7. "get_video_metadata"：获取视频的持续时间、帧率和帧数。
    参数：
    - "video_id": 字符串，必须是当前用户已选择的视频文件名
    返回：{"duration_seconds": 秒数, "fps": 帧率, "frame_count": 总帧数}
