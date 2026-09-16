@@ -120,10 +120,9 @@ class ClipSemanticEmbedder:
 class PaddleTextRecognizer:
     """Lazy PaddleOCR adapter for Chinese/English text in video frames.
 
-    ``OCR_MODEL_ROOT`` is optional.  When provided it must contain ``det``,
-    ``rec`` and (optionally) ``cls`` model folders.  Without it PaddleOCR uses
-    its normal installed cache, but it is still only instantiated when video
-    preprocessing actually requests OCR.
+    ``OCR_MODEL_ROOT`` must contain ``det``, ``rec`` and (optionally) ``cls``
+    model folders.  Requiring an explicit local path prevents a user request
+    from triggering PaddleOCR's implicit model download.
     """
 
     _lock = threading.Lock()
@@ -137,7 +136,7 @@ class PaddleTextRecognizer:
     @property
     def status(self) -> Dict[str, Any]:
         return {
-            "configured": bool(self.model_root) or PaddleTextRecognizer._engine is not None,
+            "configured": bool(self.model_root and os.path.isdir(os.path.join(self.model_root, "det")) and os.path.isdir(os.path.join(self.model_root, "rec"))),
             "loaded": PaddleTextRecognizer._engine is not None,
             "model_root": self.model_root or None,
             "error": PaddleTextRecognizer._load_error,
@@ -148,6 +147,8 @@ class PaddleTextRecognizer:
             return
         if PaddleTextRecognizer._load_error:
             raise VisionModelUnavailable(f"OCR engine could not be loaded: {PaddleTextRecognizer._load_error}")
+        if not self.status["configured"]:
+            raise VisionModelUnavailable("OCR model is not configured; set OCR_MODEL_ROOT with local det/ and rec/ model folders")
         with PaddleTextRecognizer._lock:
             if PaddleTextRecognizer._engine is not None:
                 return
@@ -155,11 +156,10 @@ class PaddleTextRecognizer:
                 from paddleocr import PaddleOCR
 
                 options: Dict[str, Any] = {"use_angle_cls": True, "lang": self.language, "show_log": False}
-                if self.model_root:
-                    for option, directory in (("det_model_dir", "det"), ("rec_model_dir", "rec"), ("cls_model_dir", "cls")):
-                        path = os.path.join(self.model_root, directory)
-                        if os.path.isdir(path):
-                            options[option] = path
+                for option, directory in (("det_model_dir", "det"), ("rec_model_dir", "rec"), ("cls_model_dir", "cls")):
+                    path = os.path.join(self.model_root, directory)
+                    if os.path.isdir(path):
+                        options[option] = path
                 PaddleTextRecognizer._engine = PaddleOCR(**options)
                 PaddleTextRecognizer._load_error = None
                 logger.info("Loaded PaddleOCR (%s)", self.model_root or "installed cache")

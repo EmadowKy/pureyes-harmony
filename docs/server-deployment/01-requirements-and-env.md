@@ -89,7 +89,7 @@ Environment=OCR_MODEL_ROOT=/srv/pureyes/models/paddleocr
 Environment=OCR_LANGUAGE=ch
 ```
 
-其中 YOLO 和 ReID 缺失会阻止目标预处理；CLIP 或 OCR 缺失时系统会明确记录该模态不可用，但不会写入伪造的零向量。补齐模型后重新预处理目标片段，即可生成相应的语义或文字索引。
+其中 YOLO 和 ReID 缺失会阻止目标预处理；CLIP 或 OCR 缺失时系统会明确记录该模态不可用，但不会写入伪造的零向量，也不会在用户请求时自动下载模型。OCR 必须提供包含 `det/` 与 `rec/` 的本地目录。补齐模型后重新预处理目标片段，即可生成相应的语义或文字索引。
 
 ---
 
