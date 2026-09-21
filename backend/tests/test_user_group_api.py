@@ -35,6 +35,7 @@ class UserGroupApiTest(unittest.TestCase):
         cls.covers_base = Path(_tmpdir.name) / "covers"
         monitor_routes.RECORDINGS_BASE = str(cls.recordings_base)
         monitor_routes.COVERS_BASE = str(cls.covers_base)
+        monitor_routes.RECORDING_FINALIZE_GRACE_SECONDS = 0
         monitor_routes.start_recording = lambda monitor_id, stream_url: True
         monitor_routes.stop_recording = lambda monitor_id: None
 
@@ -742,7 +743,9 @@ class UserGroupApiTest(unittest.TestCase):
         recordings_dir = self.recordings_base / str(monitor_id)
         recordings_dir.mkdir(parents=True, exist_ok=True)
         recording_name = "20260712_120000.mp4"
-        (recordings_dir / recording_name).write_bytes(b"")
+        # The history API must only expose finalized, plausible media files.
+        (recordings_dir / recording_name).write_bytes(b"0" * (70 * 1024))
+        (recordings_dir / "20260712_120100.mp4").write_bytes(b"incomplete recording")
 
         history = self.client.get(
             f"/api/monitors/{monitor_id}/history?anchor=2026-07-12T12:00:30&granularity=minute&window=2",
@@ -750,15 +753,24 @@ class UserGroupApiTest(unittest.TestCase):
         )
         self.assertEqual(history.status_code, 200, history.get_json())
         payload = history.get_json()["data"]
-        self.assertEqual(payload["selected_record"]["filename"], recording_name)
-        self.assertTrue(payload["records"])
+        self.assertEqual(payload["coverage_start"], "2026-07-12T12:00:00")
+        self.assertEqual(payload["coverage_end"], "2026-07-12T12:01:00")
+        self.assertEqual(payload["available_ranges"], [{
+            "start_time": "2026-07-12T12:00:00",
+            "end_time": "2026-07-12T12:01:00",
+        }])
+        self.assertNotIn("records", payload)
 
         playback = self.client.get(
             f"/api/monitors/{monitor_id}/playback?time=2026-07-12T12:00:30",
             headers=member_headers,
         )
         self.assertEqual(playback.status_code, 200, playback.get_json())
-        self.assertEqual(playback.get_json()["data"]["record"]["filename"], recording_name)
+        playback_data = playback.get_json()["data"]
+        self.assertEqual(playback_data["seek_offset_seconds"], 30)
+        self.assertEqual(playback_data["segment_end_time"], "2026-07-12T12:01:00")
+        self.assertIn("media_token=", playback_data["playback_url"])
+        self.assertNotIn("filename", playback_data)
 
         cover_recording_name = "20260712_120100.mp4"
         (recordings_dir / cover_recording_name).write_bytes(b"fake-video")
@@ -778,6 +790,9 @@ class UserGroupApiTest(unittest.TestCase):
             monitor_payload = listed.get_json()["data"][0]
             self.assertTrue(monitor_payload["cover_url"].startswith(f"/api/monitors/{monitor_id}/cover?media_token="))
             self.assertTrue(monitor_payload["cover_updated_at"])
+            self.assertEqual(monitor_payload["stream_url"], "")
+            self.assertTrue(monitor_payload["source_configured"])
+            self.assertFalse(monitor_payload["can_manage"])
 
             cover = self.client.get(monitor_payload["cover_url"])
             self.assertEqual(cover.status_code, 200, cover.get_json() if cover.is_json else cover.status)
@@ -796,6 +811,16 @@ class UserGroupApiTest(unittest.TestCase):
         self.assertEqual(allowed_delete.status_code, 200, allowed_delete.get_json())
         self.assertFalse(recordings_dir.exists())
         self.assertFalse((self.covers_base / f"{monitor_id}.jpg").exists())
+
+    def test_video_source_is_not_forced_to_transcode_when_ffprobe_is_missing(self):
+        from app import video_stream_routes
+
+        with patch.object(video_stream_routes, "get_ffmpeg_path", return_value="ffprobe-not-installed"):
+            compatible, reason, needs_transcode = video_stream_routes._check_video_compatible("ignored.mp4")
+
+        self.assertTrue(compatible)
+        self.assertFalse(needs_transcode)
+        self.assertIn("unavailable", reason)
 
 
 if __name__ == "__main__":

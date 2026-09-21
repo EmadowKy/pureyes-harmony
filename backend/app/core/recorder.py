@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -14,6 +15,19 @@ recorder_lock = threading.Lock()
 
 # Base storage path for recordings
 VIDEO_STORAGE_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "streams"))
+SEGMENT_SECONDS = int(os.environ.get("MONITOR_RECORDING_SEGMENT_SECONDS", "60"))
+RETENTION_HOURS = max(1, int(os.environ.get("MONITOR_RECORDING_RETENTION_HOURS", "24")))
+MIN_FREE_GB = max(0.0, float(os.environ.get("MONITOR_MIN_FREE_DISK_GB", "2")))
+SUPERVISOR_INTERVAL_SECONDS = max(15, int(os.environ.get("MONITOR_RECORDER_SUPERVISOR_SECONDS", "30")))
+
+
+def recording_state(monitor_id: int) -> str:
+    """Return the actual process state instead of trusting a stored label."""
+    with recorder_lock:
+        proc = recording_processes.get(monitor_id)
+        if not proc:
+            return "stopped"
+        return "recording" if proc.poll() is None else "failed"
 
 def start_recording(monitor_id: int, stream_url: str) -> bool:
     """
@@ -50,7 +64,7 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
             "-an",
             "-c:v", "copy",
             "-f", "segment",
-            "-segment_time", "60",
+            "-segment_time", str(SEGMENT_SECONDS),
             "-reset_timestamps", "1",
             "-segment_format", "mp4",
             "-strftime", "1",
@@ -116,6 +130,8 @@ def start_all_recordings(app):
     # Start cleanup thread
     t = threading.Thread(target=cleanup_old_recordings_loop, daemon=True)
     t.start()
+    supervisor = threading.Thread(target=recording_supervisor_loop, args=(app,), daemon=True)
+    supervisor.start()
 
 def stop_all_recordings():
     """
@@ -127,39 +143,64 @@ def stop_all_recordings():
     for mid in monitor_ids:
         stop_recording(mid)
 
+def _delete_expired_recordings() -> None:
+    """Apply retention and a disk-watermark guard to finalized recordings."""
+    if not os.path.exists(VIDEO_STORAGE_BASE):
+        return
+    now = datetime.now()
+    cutoff = now - timedelta(hours=RETENTION_HOURS)
+    candidates = []
+    for monitor_dir in os.listdir(VIDEO_STORAGE_BASE):
+        monitor_path = os.path.join(VIDEO_STORAGE_BASE, monitor_dir)
+        if not os.path.isdir(monitor_path):
+            continue
+        for file in os.listdir(monitor_path):
+            if not file.endswith(".mp4"):
+                continue
+            file_path = os.path.join(monitor_path, file)
+            try:
+                file_time = datetime.strptime(os.path.splitext(file)[0], "%Y%m%d_%H%M%S")
+            except ValueError:
+                file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+            if file_time < cutoff:
+                os.remove(file_path)
+            else:
+                candidates.append((file_time, file_path))
+
+    # Never allow a monitor recorder to fill the system volume. Delete oldest
+    # retained files only while below the configured free-space watermark.
+    target_free_bytes = int(MIN_FREE_GB * 1024 * 1024 * 1024)
+    for _, file_path in sorted(candidates):
+        if shutil.disk_usage(VIDEO_STORAGE_BASE).free >= target_free_bytes:
+            break
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+
+
 def cleanup_old_recordings_loop():
     """
     Loop that runs in a background thread to remove recordings older than 24 hours.
     """
     while True:
         try:
-            if os.path.exists(VIDEO_STORAGE_BASE):
-                now = datetime.now()
-                cutoff = now - timedelta(hours=24)
-                
-                # Scan monitor folders
-                for monitor_dir in os.listdir(VIDEO_STORAGE_BASE):
-                    monitor_path = os.path.join(VIDEO_STORAGE_BASE, monitor_dir)
-                    if os.path.isdir(monitor_path):
-                        for file in os.listdir(monitor_path):
-                            if file.endswith(".mp4"):
-                                file_path = os.path.join(monitor_path, file)
-                                try:
-                                    # Parse date from segment name: %Y%m%d_%H%M%S.mp4
-                                    basename = os.path.splitext(file)[0]
-                                    file_time = datetime.strptime(basename, "%Y%m%d_%H%M%S")
-                                    if file_time < cutoff:
-                                        print(f"[Recorder] Cleaning up expired segment file: {file_path}")
-                                        os.remove(file_path)
-                                except Exception as parse_err:
-                                    # Fall back to file modification time if parse fails
-                                    try:
-                                        mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
-                                        if mtime < cutoff:
-                                            os.remove(file_path)
-                                    except:
-                                        pass
+            _delete_expired_recordings()
         except Exception as e:
             print(f"[Recorder] Error cleaning up expired recordings: {e}")
             
         time.sleep(300)  # Check every 5 minutes
+
+
+def recording_supervisor_loop(app):
+    """Restart a failed recorder rather than leaving a monitor falsely online."""
+    while True:
+        try:
+            with app.app_context():
+                for monitor in Monitor.query.filter(Monitor.stream_url.isnot(None)).all():
+                    stream_url = (monitor.stream_url or "").strip()
+                    if stream_url and recording_state(monitor.id) != "recording":
+                        start_recording(monitor.id, stream_url)
+        except Exception as exc:
+            print(f"[Recorder] supervisor error: {exc}")
+        time.sleep(SUPERVISOR_INTERVAL_SECONDS)

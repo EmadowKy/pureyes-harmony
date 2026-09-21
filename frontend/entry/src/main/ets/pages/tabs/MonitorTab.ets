@@ -14,14 +14,9 @@ export class MonitorInfo {
   live_url: string = '';
   media_url: string = '';
   status: string = '';
-}
-
-export class MonitorRecordInfo {
-  start_time: string = '';
-  end_time: string = '';
-  filename: string = '';
-  url: string = '';
-  isSelected: boolean = false;
+  recording_state: string = '';
+  source_configured: boolean = false;
+  can_manage: boolean = false;
 }
 
 class AddMonitorPayload {
@@ -118,12 +113,15 @@ export struct MonitorTab {
   @State granularity: string = 'minute';
   @State selectedTimeText: string = '';
   @State timelineLabel: string = '';
-  @State timelineRecords: Array<MonitorRecordInfo> = [];
-  @State selectedRecordIndex: number = -1;
-  @State timelineOffsetValue: number = 0;
-  @State isTimelineShifting: boolean = false;
+  @State timelineStartEpoch: number = 0;
+  @State timelineEndEpoch: number = 0;
+  @State timelinePositionSeconds: number = 0;
+  @State timelineAvailabilityText: string = '';
+  @State timelineErrorText: string = '';
+  @State retentionHours: number = 24;
   @State jumpTimeText: string = '';
   @State playbackOffsetSeconds: number = 0;
+  @State playbackSegmentEndEpoch: number = 0;
   @State editingMonitorId: number = 0;
   @State editingMonitorName: string = '';
   @State editingMonitorUrl: string = '';
@@ -185,12 +183,15 @@ export struct MonitorTab {
     this.granularity = 'minute';
     this.selectedTimeText = '';
     this.timelineLabel = '';
-    this.timelineRecords = [];
-    this.selectedRecordIndex = -1;
-    this.timelineOffsetValue = 0;
-    this.isTimelineShifting = false;
+    this.timelineStartEpoch = 0;
+    this.timelineEndEpoch = 0;
+    this.timelinePositionSeconds = 0;
+    this.timelineAvailabilityText = '';
+    this.timelineErrorText = '';
+    this.retentionHours = 24;
     this.jumpTimeText = '';
     this.playbackOffsetSeconds = 0;
+    this.playbackSegmentEndEpoch = 0;
     this.editingMonitorId = 0;
     this.editingMonitorName = '';
     this.editingMonitorUrl = '';
@@ -243,19 +244,6 @@ export struct MonitorTab {
     return 60;
   }
 
-  timelineSliderLimit(): number {
-    if (this.granularity === 'second') {
-      return 90;
-    }
-    if (this.granularity === 'minute') {
-      return 60;
-    }
-    if (this.granularity === 'hour') {
-      return 24;
-    }
-    return 30;
-  }
-
   timestampFromText(value: string): number {
     const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
     if (!match) {
@@ -271,25 +259,13 @@ export struct MonitorTab {
     ).getTime();
   }
 
-  calculatePlaybackOffsetSeconds(targetTime: string, startTime: string, endTime: string): number {
-    const targetMs = this.timestampFromText(targetTime);
-    const startMs = this.timestampFromText(startTime);
-    const endMs = this.timestampFromText(endTime);
-    if (isNaN(targetMs) || isNaN(startMs)) {
-      return 0;
-    }
+  formatEpochSeconds(epochSeconds: number): string {
+    return this.formatDateTime(new Date(epochSeconds * 1000));
+  }
 
-    let offset = Math.floor((targetMs - startMs) / 1000);
-    if (offset < 0) {
-      offset = 0;
-    }
-    if (!isNaN(endMs)) {
-      const maxOffset = Math.max(0, Math.floor((endMs - startMs) / 1000) - 1);
-      if (offset > maxOffset) {
-        offset = maxOffset;
-      }
-    }
-    return offset;
+  clampTimelinePosition(value: number): number {
+    const duration = Math.max(0, this.timelineEndEpoch - this.timelineStartEpoch);
+    return Math.max(0, Math.min(duration, value));
   }
 
   seekPlaybackOffset(): void {
@@ -320,6 +296,9 @@ export struct MonitorTab {
           monitor.id = item['id'] as number;
           monitor.name = item['name'] as string;
           monitor.status = (item['status'] as string) || '';
+          monitor.recording_state = (item['recording_state'] as string) || '';
+          monitor.source_configured = Boolean(item['source_configured']);
+          monitor.can_manage = Boolean(item['can_manage']);
 
           const rawUrl = ((item['stream_url'] as string) || '').trim();
           monitor.raw_stream_url = rawUrl;
@@ -327,15 +306,9 @@ export struct MonitorTab {
           monitor.cover_url = coverUrl ? this.buildHttpUrl(coverUrl) : '';
           monitor.live_url = ((item['live_url'] as string) || '').trim();
           monitor.media_url = ((item['media_url'] as string) || '').trim();
-          if (!rawUrl) {
-            monitor.stream_url = '';
-          } else if (rawUrl.startsWith('rtsp://') || rawUrl.startsWith('rtmp://')) {
-            monitor.stream_url = monitor.live_url ? `${BASE_HOST}${monitor.live_url}` : '';
-          } else if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-            monitor.stream_url = rawUrl;
-          } else {
-            monitor.stream_url = monitor.media_url ? `${BASE_HOST}${monitor.media_url}` : '';
-          }
+          // All viewers use the server's signed HLS relay. Source addresses
+          // (and their credentials) never become part of the viewing UI.
+          monitor.stream_url = monitor.live_url ? `${BASE_HOST}${monitor.live_url}` : '';
           return monitor;
         });
       } else {
@@ -532,14 +505,14 @@ export struct MonitorTab {
   }
 
   async openMonitor(monitor: MonitorInfo): Promise<void> {
-    if (!monitor.stream_url) {
+    if (!monitor.source_configured || !monitor.stream_url) {
       this.showToast({ message: '该监控设备未配置有效的视频源地址！', duration: 2000 });
       return;
     }
 
     this.selectedMonitorId = monitor.id;
     this.selectedMonitorName = monitor.name;
-    this.isLiveStream = monitor.stream_url.includes('/live/');
+    this.isLiveStream = true;
     this.playbackMode = 'live';
     this.playbackOffsetSeconds = 0;
     this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
@@ -554,54 +527,76 @@ export struct MonitorTab {
     }
     const res = await HttpUtil.get(`/monitors/${this.selectedMonitorId}/history?anchor=${encodeURIComponent(anchorIso)}&granularity=${this.granularity}&window=6`);
     if (res.code !== 0 || !res.data) {
-      this.timelineRecords = [];
-      this.timelineLabel = '';
-      this.selectedRecordIndex = -1;
+      this.timelineErrorText = res.message || '无法读取录像可用时间，请稍后重试';
+      this.timelineAvailabilityText = '';
       return;
     }
 
     const dataObj = JSON.parse(res.data) as Record<string, Object>;
-    const recordsObj = (dataObj['records'] as Array<Record<string, Object>>) || [];
-    const selectedRecord = (dataObj['selected_record'] as Record<string, Object>) || null;
     const selectedTime = (dataObj['selected_time'] as string) || anchorIso;
+    const coverageStart = (dataObj['coverage_start'] as string) || '';
+    const coverageEnd = (dataObj['coverage_end'] as string) || '';
+    const availableRanges = (dataObj['available_ranges'] as Array<Record<string, Object>>) || [];
 
     this.selectedTimeText = selectedTime;
     this.jumpTimeText = this.formatDateTime(new Date(selectedTime));
-    this.timelineLabel = `${this.granularityLabel()}级回放窗口`;
-    this.timelineOffsetValue = 0;
-    this.selectedRecordIndex = -1;
-    this.timelineRecords = recordsObj.map((item: Record<string, Object>, index: number): MonitorRecordInfo => {
-      const record = new MonitorRecordInfo();
-      record.start_time = item['start_time'] as string;
-      record.end_time = item['end_time'] as string;
-      record.filename = item['filename'] as string;
-      record.url = this.buildHttpUrl(item['url'] as string);
-      record.isSelected = selectedRecord !== null && (item['filename'] as string) === (selectedRecord['filename'] as string);
-      if (record.isSelected) {
-        this.selectedRecordIndex = index;
-      }
-      return record;
-    });
-
-    if (selectedRecord && activatePlayback) {
-      this.playbackOffsetSeconds = this.calculatePlaybackOffsetSeconds(
-        selectedTime,
-        selectedRecord['start_time'] as string,
-        selectedRecord['end_time'] as string
-      );
-      this.playbackMode = 'history';
-      this.isLiveStream = false;
-      this.selectedMonitorUrl = this.buildHttpUrl(selectedRecord['url'] as string);
-    } else if (!selectedRecord && activatePlayback) {
-      this.showToast({ message: '该时间点没有对应录制片段', duration: 2000 });
+    this.timelineLabel = `${this.granularityLabel()}级精度`;
+    this.timelineErrorText = '';
+    this.retentionHours = Number(dataObj['retention_hours'] || 24);
+    this.timelineStartEpoch = Math.floor(this.timestampFromText(coverageStart) / 1000);
+    this.timelineEndEpoch = Math.floor(this.timestampFromText(coverageEnd) / 1000);
+    const selectedEpoch = Math.floor(this.timestampFromText(selectedTime) / 1000);
+    if (isNaN(this.timelineStartEpoch) || isNaN(this.timelineEndEpoch) || this.timelineEndEpoch <= this.timelineStartEpoch) {
+      this.timelineStartEpoch = 0;
+      this.timelineEndEpoch = 0;
+      this.timelinePositionSeconds = 0;
+      this.timelineAvailabilityText = `当前没有已完成录像，录像最长保留约 ${this.retentionHours} 小时`;
+    } else {
+      this.timelinePositionSeconds = this.clampTimelinePosition(selectedEpoch - this.timelineStartEpoch);
+      const gapCount = Math.max(0, availableRanges.length - 1);
+      this.timelineAvailabilityText = `可回放：${this.formatEpochSeconds(this.timelineStartEpoch)} ～ ${this.formatEpochSeconds(this.timelineEndEpoch)}${gapCount > 0 ? ` · ${gapCount} 处录像缺口` : ''}`;
     }
+
+    if (activatePlayback) {
+      await this.startHistoricalPlayback(selectedTime);
+    }
+  }
+
+  async startHistoricalPlayback(targetTime: string): Promise<void> {
+    const res = await HttpUtil.get(`/monitors/${this.selectedMonitorId}/playback?time=${encodeURIComponent(targetTime)}`);
+    if (res.code !== 0 || !res.data) {
+      this.timelineErrorText = res.message || '该时间没有可回放录像';
+      this.showToast({ message: this.timelineErrorText, duration: 2200 });
+      return;
+    }
+    const dataObj = JSON.parse(res.data) as Record<string, Object>;
+    const playbackUrl = (dataObj['playback_url'] as string) || '';
+    const segmentEnd = (dataObj['segment_end_time'] as string) || '';
+    if (!playbackUrl || !segmentEnd) {
+      this.timelineErrorText = '回放地址无效，请重新选择时间';
+      return;
+    }
+    this.playbackOffsetSeconds = Number(dataObj['seek_offset_seconds'] || 0);
+    this.playbackSegmentEndEpoch = Math.floor(this.timestampFromText(segmentEnd) / 1000);
+    this.playbackMode = 'history';
+    this.isLiveStream = false;
+    // Keep the signed media token intact; buildHttpUrl only adds a cache buster.
+    this.selectedMonitorUrl = this.buildHttpUrl(playbackUrl);
+  }
+
+  async playNextContinuousSegment(): Promise<void> {
+    if (this.playbackMode !== 'history' || this.playbackSegmentEndEpoch <= 0) {
+      return;
+    }
+    const nextTime = this.formatEpochSeconds(this.playbackSegmentEndEpoch);
+    await this.loadTimeline(nextTime, true);
   }
 
   async switchGranularity(key: string): Promise<void> {
     this.granularity = key;
     if (this.selectedMonitorId) {
       const anchor = this.selectedTimeText || this.formatDateTime(new Date());
-      await this.loadTimeline(anchor, this.playbackMode === 'history');
+      await this.loadTimeline(anchor, false);
     }
   }
 
@@ -618,7 +613,7 @@ export struct MonitorTab {
       this.selectedTimeText = nowText;
       this.jumpTimeText = nowText;
       this.showToast({ message: '不能跳转到未来时间', duration: 2000 });
-      await this.loadTimeline(nowText, this.playbackMode === 'history');
+      await this.loadTimeline(nowText, false);
       return;
     }
     await this.loadTimeline(isoTime, true);
@@ -630,38 +625,13 @@ export struct MonitorTab {
       return;
     }
     this.playbackMode = 'live';
-    this.isLiveStream = monitor.stream_url.includes('/live/');
+    this.isLiveStream = true;
     this.playbackOffsetSeconds = 0;
     this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
     const nowText = this.formatDateTime(new Date());
     this.selectedTimeText = nowText;
     this.jumpTimeText = nowText;
     await this.loadTimeline(nowText, false);
-  }
-
-  async shiftTimeline(offsetSteps: number): Promise<void> {
-    if (!this.selectedTimeText || this.isTimelineShifting) {
-      return;
-    }
-    const date = new Date(this.selectedTimeText.replace(' ', 'T'));
-    if (isNaN(date.getTime())) {
-      this.timelineOffsetValue = 0;
-      return;
-    }
-
-    this.isTimelineShifting = true;
-    try {
-      let shifted = new Date(date.getTime() + offsetSteps * this.granularityStepSeconds() * 1000);
-      const now = new Date();
-      if (shifted.getTime() > now.getTime()) {
-        shifted = now;
-        this.showToast({ message: '不能移动到未来时间', duration: 1600 });
-      }
-      await this.loadTimeline(this.formatDateTime(shifted), this.playbackMode === 'history');
-    } finally {
-      this.timelineOffsetValue = 0;
-      this.isTimelineShifting = false;
-    }
   }
 
   build() {
@@ -701,7 +671,13 @@ export struct MonitorTab {
               }
             })
             .onError((): void => {
-              this.showToast({ message: '视频流加载失败，监控无画面！', duration: 2000 });
+              this.timelineErrorText = this.playbackMode === 'history' ? '该时段录像加载失败，请重新选择时间' : '实时视频暂时不可用';
+              this.showToast({ message: this.timelineErrorText, duration: 2200 });
+            })
+            .onFinish((): void => {
+              if (this.playbackMode === 'history') {
+                this.playNextContinuousSegment();
+              }
             })
 
           Row() {
@@ -764,101 +740,71 @@ export struct MonitorTab {
         .padding({ left: 16, right: 16, top: 12 })
 
         Row() {
-          Text(this.timelineLabel || '历史回放时间轴')
+          Text('连续回放时间轴')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
             .layoutWeight(1)
-          Text(this.selectedTimeText)
+          Text(this.timelineLabel || '分级精度')
             .fontSize(12)
             .fontColor($r('app.color.app_text_secondary'))
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 18, bottom: 8 })
 
-        Column({ space: 4 }) {
+        Column({ space: 7 }) {
           Row() {
-            Text('前移')
+            Text(this.timelineStartEpoch > 0 ? this.formatEpochSeconds(this.timelineStartEpoch) : '暂无录像')
               .fontSize(11)
               .fontColor($r('app.color.app_text_secondary'))
             Blank()
-            Text('中央指针')
+            Text(this.selectedTimeText || '选择回放时间')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor($r('app.color.app_text_primary'))
             Blank()
-            Text('后移')
+            Text(this.timelineEndEpoch > 0 ? this.formatEpochSeconds(this.timelineEndEpoch) : '')
               .fontSize(11)
               .fontColor($r('app.color.app_text_secondary'))
           }
           .width('100%')
 
-          Slider({ value: this.timelineOffsetValue, min: -this.timelineSliderLimit(), max: this.timelineSliderLimit(), step: 1 })
+          Slider({
+            value: this.timelinePositionSeconds,
+            min: 0,
+            max: Math.max(1, this.timelineEndEpoch - this.timelineStartEpoch),
+            step: this.granularityStepSeconds()
+          })
             .blockColor($r('app.color.app_primary'))
             .trackColor($r('app.color.app_text_muted'))
             .selectedColor($r('app.color.app_primary'))
             .width('100%')
             .onChange((value: number, mode: SliderChangeMode): void => {
-              if (this.isTimelineShifting) {
+              if (this.timelineStartEpoch <= 0) {
                 return;
               }
-              const rounded = Math.round(value);
-              this.timelineOffsetValue = rounded;
+              const rounded = this.clampTimelinePosition(Math.round(value / this.granularityStepSeconds()) * this.granularityStepSeconds());
+              this.timelinePositionSeconds = rounded;
               if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                if (rounded !== 0) {
-                  this.shiftTimeline(rounded);
-                } else {
-                  this.timelineOffsetValue = 0;
-                }
+                const target = this.formatEpochSeconds(this.timelineStartEpoch + rounded);
+                this.selectedTimeText = target;
+                this.jumpTimeText = target;
+                this.loadTimeline(target, true);
               }
             })
+
+          Text(this.timelineAvailabilityText)
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.timelineErrorText) {
+            Text(this.timelineErrorText)
+              .fontSize(12)
+              .fontColor($r('app.color.app_danger'))
+          }
         }
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 8 })
-        if (this.timelineRecords.length === 0) {
-          Column() {
-            Text('当前时间附近没有找到可回放的录制片段')
-              .fontSize(15)
-              .fontColor($r('app.color.app_text_secondary'))
-              .margin({ top: 18 })
-          }
-          .width('100%')
-          .padding(16)
-        } else {
-          Scroll() {
-            Row({ space: 10 }) {
-              ForEach(this.timelineRecords, (record: MonitorRecordInfo, index: number): void => {
-                Column({ space: 4 }) {
-                  Text(record.start_time.slice(11, 19))
-                    .fontSize(13)
-                    .fontColor(record.isSelected ? $r('app.color.app_text_on_inverted') : $r('app.color.app_text_primary'))
-                    .fontWeight(FontWeight.Medium)
-                  Text(record.end_time.slice(11, 19))
-                    .fontSize(11)
-                    .fontColor(record.isSelected ? $r('app.color.app_text_on_inverted') : $r('app.color.app_text_secondary'))
-                }
-                .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-                .backgroundColor(record.isSelected ? $r('app.color.app_surface_inverted') : $r('app.color.app_card_bg'))
-                .border({ width: 1, color: record.isSelected ? $r('app.color.app_surface_inverted') : $r('app.color.app_border') })
-                .borderRadius(6)
-                .onClick((): void => {
-                  this.selectedRecordIndex = index;
-                  this.playbackMode = 'history';
-                  this.isLiveStream = false;
-                  this.selectedMonitorUrl = this.buildHttpUrl(record.url.replace(BASE_HOST, '').split('?')[0]);
-                  this.playbackOffsetSeconds = 0;
-                  this.selectedTimeText = record.start_time;
-                  this.jumpTimeText = this.formatDateTime(new Date(record.start_time));
-                  for (let i = 0; i < this.timelineRecords.length; i++) {
-                    this.timelineRecords[i].isSelected = i === index;
-                  }
-                })
-              })
-            }
-            .padding({ left: 16, right: 16, bottom: 16 })
-          }
-          .width('100%')
-          .height(86)
-        }
+        .padding({ left: 16, right: 16, bottom: 16 })
 
       } else {
         Row({ space: 12 }) {
@@ -973,7 +919,7 @@ export struct MonitorTab {
                       .textAlign(TextAlign.Center)
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(monitor.raw_stream_url || '未配置地址')
+                    Text(!monitor.source_configured ? '未配置视频源' : monitor.recording_state === 'recording' ? '服务器正在连续保存录像' : '录像连接正在恢复')
                       .fontSize(10)
                       .fontColor($r('app.color.app_text_secondary'))
                       .padding({ left: 8, right: 8 })
@@ -985,12 +931,14 @@ export struct MonitorTab {
                       this.MonitorIconButton('open', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
                         this.openMonitor(monitor);
                       })
-                      this.MonitorIconButton('edit', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
-                        this.openEditMonitor(monitor);
-                      })
-                      this.MonitorIconButton('delete', $r('app.color.app_danger'), $r('app.color.app_card_subtle_bg'), (): void => {
-                        this.confirmDeleteMonitor(monitor);
-                      })
+                      if (monitor.can_manage) {
+                        this.MonitorIconButton('edit', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+                          this.openEditMonitor(monitor);
+                        })
+                        this.MonitorIconButton('delete', $r('app.color.app_danger'), $r('app.color.app_card_subtle_bg'), (): void => {
+                          this.confirmDeleteMonitor(monitor);
+                        })
+                      }
                       Blank()
                     }
                     .width('100%')
