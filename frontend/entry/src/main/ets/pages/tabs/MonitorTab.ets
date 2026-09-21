@@ -41,6 +41,16 @@ class GranularityOption {
   }
 }
 
+class TimelineRange {
+  startEpoch: number = 0;
+  endEpoch: number = 0;
+
+  constructor(startEpoch: number, endEpoch: number) {
+    this.startEpoch = startEpoch;
+    this.endEpoch = endEpoch;
+  }
+}
+
 const GRANULARITIES: Array<GranularityOption> = [
   new GranularityOption('day', '天', 86400),
   new GranularityOption('hour', '时', 3600),
@@ -116,8 +126,9 @@ export struct MonitorTab {
   @State timelineStartEpoch: number = 0;
   @State timelineEndEpoch: number = 0;
   @State timelinePositionSeconds: number = 0;
-  @State timelineAvailabilityText: string = '';
+  @State timelineRanges: Array<TimelineRange> = [];
   @State timelineErrorText: string = '';
+  @State hasReplayAtSelectedTime: boolean = false;
   @State retentionHours: number = 24;
   @State jumpTimeText: string = '';
   @State playbackOffsetSeconds: number = 0;
@@ -186,8 +197,9 @@ export struct MonitorTab {
     this.timelineStartEpoch = 0;
     this.timelineEndEpoch = 0;
     this.timelinePositionSeconds = 0;
-    this.timelineAvailabilityText = '';
+    this.timelineRanges = [];
     this.timelineErrorText = '';
+    this.hasReplayAtSelectedTime = false;
     this.retentionHours = 24;
     this.jumpTimeText = '';
     this.playbackOffsetSeconds = 0;
@@ -266,6 +278,41 @@ export struct MonitorTab {
   clampTimelinePosition(value: number): number {
     const duration = Math.max(0, this.timelineEndEpoch - this.timelineStartEpoch);
     return Math.max(0, Math.min(duration, value));
+  }
+
+  buildTimelineRanges(rawRanges: Array<Record<string, Object>>, startEpoch: number, endEpoch: number): Array<TimelineRange> {
+    const ranges: Array<TimelineRange> = [];
+    for (let i = 0; i < rawRanges.length; i++) {
+      const item = rawRanges[i];
+      const rangeStart = Math.floor(this.timestampFromText((item['start_time'] as string) || '') / 1000);
+      const rangeEnd = Math.floor(this.timestampFromText((item['end_time'] as string) || '') / 1000);
+      const clippedStart = Math.max(startEpoch, rangeStart);
+      const clippedEnd = Math.min(endEpoch, rangeEnd);
+      if (!isNaN(clippedStart) && !isNaN(clippedEnd) && clippedEnd > clippedStart) {
+        ranges.push(new TimelineRange(clippedStart, clippedEnd));
+      }
+    }
+    return ranges;
+  }
+
+  isReplayableAt(epoch: number): boolean {
+    for (let i = 0; i < this.timelineRanges.length; i++) {
+      const range = this.timelineRanges[i];
+      if (epoch >= range.startEpoch && epoch < range.endEpoch) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  timelineRangeLeft(range: TimelineRange): string {
+    const duration = Math.max(1, this.timelineEndEpoch - this.timelineStartEpoch);
+    return `${Math.max(0, Math.min(100, (range.startEpoch - this.timelineStartEpoch) * 100 / duration))}%`;
+  }
+
+  timelineRangeWidth(range: TimelineRange): string {
+    const duration = Math.max(1, this.timelineEndEpoch - this.timelineStartEpoch);
+    return `${Math.max(1, Math.min(100, (range.endEpoch - range.startEpoch) * 100 / duration))}%`;
   }
 
   seekPlaybackOffset(): void {
@@ -528,14 +575,15 @@ export struct MonitorTab {
     const res = await HttpUtil.get(`/monitors/${this.selectedMonitorId}/history?anchor=${encodeURIComponent(anchorIso)}&granularity=${this.granularity}&window=6`);
     if (res.code !== 0 || !res.data) {
       this.timelineErrorText = res.message || '无法读取录像可用时间，请稍后重试';
-      this.timelineAvailabilityText = '';
+      this.timelineRanges = [];
+      this.hasReplayAtSelectedTime = false;
       return;
     }
 
     const dataObj = JSON.parse(res.data) as Record<string, Object>;
     const selectedTime = (dataObj['selected_time'] as string) || anchorIso;
-    const coverageStart = (dataObj['coverage_start'] as string) || '';
-    const coverageEnd = (dataObj['coverage_end'] as string) || '';
+    const windowStart = (dataObj['window_start'] as string) || '';
+    const windowEnd = (dataObj['window_end'] as string) || '';
     const availableRanges = (dataObj['available_ranges'] as Array<Record<string, Object>>) || [];
 
     this.selectedTimeText = selectedTime;
@@ -543,18 +591,19 @@ export struct MonitorTab {
     this.timelineLabel = `${this.granularityLabel()}级精度`;
     this.timelineErrorText = '';
     this.retentionHours = Number(dataObj['retention_hours'] || 24);
-    this.timelineStartEpoch = Math.floor(this.timestampFromText(coverageStart) / 1000);
-    this.timelineEndEpoch = Math.floor(this.timestampFromText(coverageEnd) / 1000);
+    this.timelineStartEpoch = Math.floor(this.timestampFromText(windowStart) / 1000);
+    this.timelineEndEpoch = Math.floor(this.timestampFromText(windowEnd) / 1000);
     const selectedEpoch = Math.floor(this.timestampFromText(selectedTime) / 1000);
     if (isNaN(this.timelineStartEpoch) || isNaN(this.timelineEndEpoch) || this.timelineEndEpoch <= this.timelineStartEpoch) {
       this.timelineStartEpoch = 0;
       this.timelineEndEpoch = 0;
       this.timelinePositionSeconds = 0;
-      this.timelineAvailabilityText = `当前没有已完成录像，录像最长保留约 ${this.retentionHours} 小时`;
+      this.timelineRanges = [];
+      this.hasReplayAtSelectedTime = false;
     } else {
       this.timelinePositionSeconds = this.clampTimelinePosition(selectedEpoch - this.timelineStartEpoch);
-      const gapCount = Math.max(0, availableRanges.length - 1);
-      this.timelineAvailabilityText = `可回放：${this.formatEpochSeconds(this.timelineStartEpoch)} ～ ${this.formatEpochSeconds(this.timelineEndEpoch)}${gapCount > 0 ? ` · ${gapCount} 处录像缺口` : ''}`;
+      this.timelineRanges = this.buildTimelineRanges(availableRanges, this.timelineStartEpoch, this.timelineEndEpoch);
+      this.hasReplayAtSelectedTime = this.isReplayableAt(selectedEpoch);
     }
 
     if (activatePlayback) {
@@ -566,6 +615,10 @@ export struct MonitorTab {
     const res = await HttpUtil.get(`/monitors/${this.selectedMonitorId}/playback?time=${encodeURIComponent(targetTime)}`);
     if (res.code !== 0 || !res.data) {
       this.timelineErrorText = res.message || '该时间没有可回放录像';
+      this.playbackMode = 'history';
+      this.isLiveStream = false;
+      this.selectedMonitorUrl = '';
+      this.hasReplayAtSelectedTime = false;
       this.showToast({ message: this.timelineErrorText, duration: 2200 });
       return;
     }
@@ -574,12 +627,17 @@ export struct MonitorTab {
     const segmentEnd = (dataObj['segment_end_time'] as string) || '';
     if (!playbackUrl || !segmentEnd) {
       this.timelineErrorText = '回放地址无效，请重新选择时间';
+      this.playbackMode = 'history';
+      this.isLiveStream = false;
+      this.selectedMonitorUrl = '';
+      this.hasReplayAtSelectedTime = false;
       return;
     }
     this.playbackOffsetSeconds = Number(dataObj['seek_offset_seconds'] || 0);
     this.playbackSegmentEndEpoch = Math.floor(this.timestampFromText(segmentEnd) / 1000);
     this.playbackMode = 'history';
     this.isLiveStream = false;
+    this.hasReplayAtSelectedTime = true;
     // Keep the signed media token intact; buildHttpUrl only adds a cache buster.
     this.selectedMonitorUrl = this.buildHttpUrl(playbackUrl);
   }
@@ -659,26 +717,49 @@ export struct MonitorTab {
         .padding({ left: 18, right: 18, top: 16, bottom: 12 })
 
         Stack({ alignContent: Alignment.TopStart }) {
-          Video({ src: this.selectedMonitorUrl, controller: this.videoController })
+          if (this.playbackMode === 'live' || this.hasReplayAtSelectedTime) {
+            Video({ src: this.selectedMonitorUrl, controller: this.videoController })
+              .width('100%')
+              .height(220)
+              .autoPlay(true)
+              .controls(false)
+              .objectFit(ImageFit.Contain)
+              .onPrepared((): void => {
+                if (this.playbackMode === 'history' && this.playbackOffsetSeconds > 0) {
+                  this.seekPlaybackOffset();
+                }
+              })
+              .onError((): void => {
+                this.timelineErrorText = this.playbackMode === 'history' ? '该时段录像加载失败，请重新选择时间' : '实时视频暂时不可用';
+                if (this.playbackMode === 'history') {
+                  this.hasReplayAtSelectedTime = false;
+                  this.selectedMonitorUrl = '';
+                }
+                this.showToast({ message: this.timelineErrorText, duration: 2200 });
+              })
+              .onFinish((): void => {
+                if (this.playbackMode === 'history') {
+                  this.playNextContinuousSegment();
+                }
+              })
+          }
+
+          if (this.playbackMode === 'history' && !this.hasReplayAtSelectedTime) {
+            Column({ space: 8 }) {
+              Text('无回放录像')
+                .fontSize(17)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('rgba(255, 255, 255, 0.92)')
+              Text('请在时间轴中选择亮色录像段')
+                .fontSize(12)
+                .fontColor('rgba(255, 255, 255, 0.58)')
+            }
             .width('100%')
-            .height(220)
-            .autoPlay(true)
-            .controls(false)
-            .objectFit(ImageFit.Contain)
-            .onPrepared((): void => {
-              if (this.playbackMode === 'history' && this.playbackOffsetSeconds > 0) {
-                this.seekPlaybackOffset();
-              }
-            })
-            .onError((): void => {
-              this.timelineErrorText = this.playbackMode === 'history' ? '该时段录像加载失败，请重新选择时间' : '实时视频暂时不可用';
-              this.showToast({ message: this.timelineErrorText, duration: 2200 });
-            })
-            .onFinish((): void => {
-              if (this.playbackMode === 'history') {
-                this.playNextContinuousSegment();
-              }
-            })
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+            .backgroundColor(Color.Black)
+          }
 
           Row() {
             Blank()
@@ -712,11 +793,6 @@ export struct MonitorTab {
               this.loadTimeline(this.selectedTimeText, true);
             }
           })
-          ForEach(GRANULARITIES, (item: GranularityOption): void => {
-            this.MonitorFilterButton(item.label, this.granularity === item.key, (): void => {
-              this.switchGranularity(item.key);
-            })
-          }, (item: GranularityOption, idx: number): string => idx.toString())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16 })
@@ -740,63 +816,91 @@ export struct MonitorTab {
         .padding({ left: 16, right: 16, top: 12 })
 
         Row() {
-          Text('连续回放时间轴')
+          Text('录像时间轴')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
             .layoutWeight(1)
-          Text(this.timelineLabel || '分级精度')
+          Text('亮色为可回放录像')
             .fontSize(12)
             .fontColor($r('app.color.app_text_secondary'))
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 18, bottom: 8 })
 
-        Column({ space: 7 }) {
+        Column({ space: 9 }) {
           Row() {
             Text(this.timelineStartEpoch > 0 ? this.formatEpochSeconds(this.timelineStartEpoch) : '暂无录像')
               .fontSize(11)
               .fontColor($r('app.color.app_text_secondary'))
+              .maxLines(1)
             Blank()
             Text(this.selectedTimeText || '选择回放时间')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(this.playbackMode === 'history' && !this.hasReplayAtSelectedTime ? $r('app.color.app_danger') : $r('app.color.app_text_primary'))
+              .fontWeight(FontWeight.Medium)
+              .maxLines(1)
             Blank()
             Text(this.timelineEndEpoch > 0 ? this.formatEpochSeconds(this.timelineEndEpoch) : '')
               .fontSize(11)
               .fontColor($r('app.color.app_text_secondary'))
+              .maxLines(1)
           }
           .width('100%')
 
-          Slider({
-            value: this.timelinePositionSeconds,
-            min: 0,
-            max: Math.max(1, this.timelineEndEpoch - this.timelineStartEpoch),
-            step: this.granularityStepSeconds()
-          })
-            .blockColor($r('app.color.app_primary'))
-            .trackColor($r('app.color.app_text_muted'))
-            .selectedColor($r('app.color.app_primary'))
-            .width('100%')
-            .onChange((value: number, mode: SliderChangeMode): void => {
-              if (this.timelineStartEpoch <= 0) {
-                return;
-              }
-              const rounded = this.clampTimelinePosition(Math.round(value / this.granularityStepSeconds()) * this.granularityStepSeconds());
-              this.timelinePositionSeconds = rounded;
-              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                const target = this.formatEpochSeconds(this.timelineStartEpoch + rounded);
-                this.selectedTimeText = target;
-                this.jumpTimeText = target;
-                this.loadTimeline(target, true);
-              }
+          Stack({ alignContent: Alignment.CenterStart }) {
+            Blank()
+              .width('100%')
+              .height(8)
+              .backgroundColor($r('app.color.app_card_subtle_bg'))
+              .borderRadius(4)
+            ForEach(this.timelineRanges, (range: TimelineRange): void => {
+              Blank()
+                .width(this.timelineRangeWidth(range))
+                .height(8)
+                .backgroundColor($r('app.color.app_primary'))
+                .borderRadius(4)
+                .position({ x: this.timelineRangeLeft(range), y: 12 })
+            }, (range: TimelineRange, idx: number): string => `${range.startEpoch}-${idx}`)
+            Slider({
+              value: this.timelinePositionSeconds,
+              min: 0,
+              max: Math.max(1, this.timelineEndEpoch - this.timelineStartEpoch),
+              step: this.granularityStepSeconds()
             })
+              .blockColor($r('app.color.app_surface_inverted'))
+              .trackColor(Color.Transparent)
+              .selectedColor(Color.Transparent)
+              .width('100%')
+              .onChange((value: number, mode: SliderChangeMode): void => {
+                if (this.timelineStartEpoch <= 0) {
+                  return;
+                }
+                const rounded = this.clampTimelinePosition(Math.round(value / this.granularityStepSeconds()) * this.granularityStepSeconds());
+                this.timelinePositionSeconds = rounded;
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  const target = this.formatEpochSeconds(this.timelineStartEpoch + rounded);
+                  this.selectedTimeText = target;
+                  this.jumpTimeText = target;
+                  this.loadTimeline(target, true);
+                }
+              })
+          }
+          .width('100%')
+          .height(34)
 
-          Text(this.timelineAvailabilityText)
-            .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Row({ space: 8 }) {
+            Text('时间精度')
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ right: 2 })
+            ForEach(GRANULARITIES, (item: GranularityOption): void => {
+              this.MonitorFilterButton(item.label, this.granularity === item.key, (): void => {
+                this.switchGranularity(item.key);
+              })
+            }, (item: GranularityOption, idx: number): string => idx.toString())
+          }
+          .width('100%')
           if (this.timelineErrorText) {
             Text(this.timelineErrorText)
               .fontSize(12)
