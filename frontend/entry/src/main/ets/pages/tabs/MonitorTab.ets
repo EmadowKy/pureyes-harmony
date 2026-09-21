@@ -122,14 +122,12 @@ export struct MonitorTab {
   @State playbackMode: string = 'live';
   @State granularity: string = 'minute';
   @State selectedTimeText: string = '';
-  @State timelineLabel: string = '';
   @State timelineStartEpoch: number = 0;
   @State timelineEndEpoch: number = 0;
   @State timelinePositionSeconds: number = 0;
   @State timelineRanges: Array<TimelineRange> = [];
   @State timelineErrorText: string = '';
   @State hasReplayAtSelectedTime: boolean = false;
-  @State retentionHours: number = 24;
   @State jumpTimeText: string = '';
   @State playbackOffsetSeconds: number = 0;
   @State playbackSegmentEndEpoch: number = 0;
@@ -193,14 +191,12 @@ export struct MonitorTab {
     this.playbackMode = 'live';
     this.granularity = 'minute';
     this.selectedTimeText = '';
-    this.timelineLabel = '';
     this.timelineStartEpoch = 0;
     this.timelineEndEpoch = 0;
     this.timelinePositionSeconds = 0;
     this.timelineRanges = [];
     this.timelineErrorText = '';
     this.hasReplayAtSelectedTime = false;
-    this.retentionHours = 24;
     this.jumpTimeText = '';
     this.playbackOffsetSeconds = 0;
     this.playbackSegmentEndEpoch = 0;
@@ -236,15 +232,6 @@ export struct MonitorTab {
       return '';
     }
     return this.formatDateTime(date).replace(' ', 'T');
-  }
-
-  granularityLabel(): string {
-    for (let i = 0; i < GRANULARITIES.length; i++) {
-      if (GRANULARITIES[i].key === this.granularity) {
-        return GRANULARITIES[i].label;
-      }
-    }
-    return '分';
   }
 
   granularityStepSeconds(): number {
@@ -588,9 +575,7 @@ export struct MonitorTab {
 
     this.selectedTimeText = selectedTime;
     this.jumpTimeText = this.formatDateTime(new Date(selectedTime));
-    this.timelineLabel = `${this.granularityLabel()}级精度`;
     this.timelineErrorText = '';
-    this.retentionHours = Number(dataObj['retention_hours'] || 24);
     this.timelineStartEpoch = Math.floor(this.timestampFromText(windowStart) / 1000);
     this.timelineEndEpoch = Math.floor(this.timestampFromText(windowEnd) / 1000);
     const selectedEpoch = Math.floor(this.timestampFromText(selectedTime) / 1000);
@@ -638,6 +623,7 @@ export struct MonitorTab {
     this.playbackMode = 'history';
     this.isLiveStream = false;
     this.hasReplayAtSelectedTime = true;
+    this.timelineErrorText = '';
     // Keep the signed media token intact; buildHttpUrl only adds a cache buster.
     this.selectedMonitorUrl = this.buildHttpUrl(playbackUrl);
   }
@@ -848,14 +834,14 @@ export struct MonitorTab {
           }
           .width('100%')
 
-          Stack({ alignContent: Alignment.CenterStart }) {
-            Blank()
+          Stack({ alignContent: Alignment.Center }) {
+            Row()
               .width('100%')
               .height(8)
               .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(4)
             ForEach(this.timelineRanges, (range: TimelineRange): void => {
-              Blank()
+              Row()
                 .width(this.timelineRangeWidth(range))
                 .height(8)
                 .backgroundColor($r('app.color.app_primary'))
@@ -878,10 +864,10 @@ export struct MonitorTab {
                 }
                 const rounded = this.clampTimelinePosition(Math.round(value / this.granularityStepSeconds()) * this.granularityStepSeconds());
                 this.timelinePositionSeconds = rounded;
+                const target = this.formatEpochSeconds(this.timelineStartEpoch + rounded);
+                this.selectedTimeText = target;
+                this.jumpTimeText = target;
                 if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                  const target = this.formatEpochSeconds(this.timelineStartEpoch + rounded);
-                  this.selectedTimeText = target;
-                  this.jumpTimeText = target;
                   this.loadTimeline(target, true);
                 }
               })
