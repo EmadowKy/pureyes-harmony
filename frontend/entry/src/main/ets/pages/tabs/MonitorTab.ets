@@ -128,6 +128,7 @@ export struct MonitorTab {
   @State timelineRanges: Array<TimelineRange> = [];
   @State timelineErrorText: string = '';
   @State hasReplayAtSelectedTime: boolean = false;
+  @State isLoadingPlayback: boolean = false;
   @State jumpTimeText: string = '';
   @State playbackOffsetSeconds: number = 0;
   @State playbackSegmentEndEpoch: number = 0;
@@ -136,6 +137,9 @@ export struct MonitorTab {
   @State editingMonitorUrl: string = '';
   videoController: VideoController = new VideoController();
   coverRefreshTimer: number = 0;
+  liveTimelineTimer: number = 0;
+  liveTimelineRefreshTicks: number = 0;
+  isRefreshingLiveTimeline: boolean = false;
   isLoadingMonitors: boolean = false;
 
   showToast(options: ToastOptions): void {
@@ -158,12 +162,17 @@ export struct MonitorTab {
   aboutToAppear(): void {
     this.loadMonitors();
     this.startCoverRefreshTimer();
+    this.startLiveTimelineTimer();
   }
 
   aboutToDisappear(): void {
     if (this.coverRefreshTimer) {
       clearInterval(this.coverRefreshTimer);
       this.coverRefreshTimer = 0;
+    }
+    if (this.liveTimelineTimer) {
+      clearInterval(this.liveTimelineTimer);
+      this.liveTimelineTimer = 0;
     }
   }
 
@@ -176,6 +185,46 @@ export struct MonitorTab {
         await this.loadMonitors();
       }
     }, 60000);
+  }
+
+  startLiveTimelineTimer(): void {
+    if (this.liveTimelineTimer) {
+      clearInterval(this.liveTimelineTimer);
+    }
+    this.liveTimelineTimer = setInterval((): void => {
+      if (!this.selectedMonitorId || this.playbackMode !== 'live') {
+        this.liveTimelineRefreshTicks = 0;
+        return;
+      }
+      this.followLiveEdge();
+      this.liveTimelineRefreshTicks += 1;
+      if (this.liveTimelineRefreshTicks >= 15) {
+        this.liveTimelineRefreshTicks = 0;
+        this.refreshLiveTimeline();
+      }
+    }, 1000);
+  }
+
+  followLiveEdge(): void {
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const duration = Math.max(1, this.timelineEndEpoch - this.timelineStartEpoch);
+    this.timelineEndEpoch = nowEpoch;
+    this.timelineStartEpoch = nowEpoch - duration;
+    this.timelinePositionSeconds = duration;
+    this.selectedTimeText = this.formatEpochSeconds(nowEpoch);
+    this.jumpTimeText = this.selectedTimeText;
+  }
+
+  async refreshLiveTimeline(): Promise<void> {
+    if (this.isRefreshingLiveTimeline || this.playbackMode !== 'live') {
+      return;
+    }
+    this.isRefreshingLiveTimeline = true;
+    try {
+      await this.loadTimeline(this.formatDateTime(new Date()), false);
+    } finally {
+      this.isRefreshingLiveTimeline = false;
+    }
   }
 
   onGroupChange(): void {
@@ -197,6 +246,7 @@ export struct MonitorTab {
     this.timelineRanges = [];
     this.timelineErrorText = '';
     this.hasReplayAtSelectedTime = false;
+    this.isLoadingPlayback = false;
     this.jumpTimeText = '';
     this.playbackOffsetSeconds = 0;
     this.playbackSegmentEndEpoch = 0;
@@ -576,16 +626,24 @@ export struct MonitorTab {
     this.selectedTimeText = selectedTime;
     this.jumpTimeText = this.formatDateTime(new Date(selectedTime));
     this.timelineErrorText = '';
-    this.timelineStartEpoch = Math.floor(this.timestampFromText(windowStart) / 1000);
-    this.timelineEndEpoch = Math.floor(this.timestampFromText(windowEnd) / 1000);
+    const responseStartEpoch = Math.floor(this.timestampFromText(windowStart) / 1000);
+    const responseEndEpoch = Math.floor(this.timestampFromText(windowEnd) / 1000);
     const selectedEpoch = Math.floor(this.timestampFromText(selectedTime) / 1000);
-    if (isNaN(this.timelineStartEpoch) || isNaN(this.timelineEndEpoch) || this.timelineEndEpoch <= this.timelineStartEpoch) {
+    if (isNaN(responseStartEpoch) || isNaN(responseEndEpoch) || responseEndEpoch <= responseStartEpoch) {
       this.timelineStartEpoch = 0;
       this.timelineEndEpoch = 0;
       this.timelinePositionSeconds = 0;
       this.timelineRanges = [];
       this.hasReplayAtSelectedTime = false;
     } else {
+      if (this.playbackMode === 'live' && !activatePlayback) {
+        const duration = responseEndEpoch - responseStartEpoch;
+        this.timelineEndEpoch = selectedEpoch;
+        this.timelineStartEpoch = selectedEpoch - duration;
+      } else {
+        this.timelineStartEpoch = responseStartEpoch;
+        this.timelineEndEpoch = responseEndEpoch;
+      }
       this.timelinePositionSeconds = this.clampTimelinePosition(selectedEpoch - this.timelineStartEpoch);
       this.timelineRanges = this.buildTimelineRanges(availableRanges, this.timelineStartEpoch, this.timelineEndEpoch);
       this.hasReplayAtSelectedTime = this.isReplayableAt(selectedEpoch);
@@ -633,15 +691,39 @@ export struct MonitorTab {
       return;
     }
     const nextTime = this.formatEpochSeconds(this.playbackSegmentEndEpoch);
+    if (this.shouldSwitchToLive(this.playbackSegmentEndEpoch)) {
+      await this.goLive();
+      return;
+    }
     await this.loadTimeline(nextTime, true);
+  }
+
+  async goHistory(targetTime: string): Promise<void> {
+    this.playbackMode = 'history';
+    this.isLiveStream = false;
+    this.isLoadingPlayback = true;
+    this.timelineErrorText = '';
+    this.hasReplayAtSelectedTime = false;
+    this.selectedMonitorUrl = '';
+    try {
+      await this.loadTimeline(targetTime, true);
+    } finally {
+      this.isLoadingPlayback = false;
+    }
   }
 
   async switchGranularity(key: string): Promise<void> {
     this.granularity = key;
     if (this.selectedMonitorId) {
-      const anchor = this.selectedTimeText || this.formatDateTime(new Date());
+      const anchor = this.playbackMode === 'live' ? this.formatDateTime(new Date()) : (this.selectedTimeText || this.formatDateTime(new Date()));
       await this.loadTimeline(anchor, false);
     }
+  }
+
+  shouldSwitchToLive(targetEpoch: number): boolean {
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const tolerance = Math.max(2, Math.min(30, Math.floor(this.granularityStepSeconds() / 2)));
+    return targetEpoch >= nowEpoch - tolerance;
   }
 
   async jumpToTime(): Promise<void> {
@@ -653,14 +735,16 @@ export struct MonitorTab {
     const targetDate = new Date(isoTime);
     const now = new Date();
     if (!isNaN(targetDate.getTime()) && targetDate.getTime() > now.getTime()) {
-      const nowText = this.formatDateTime(now);
-      this.selectedTimeText = nowText;
-      this.jumpTimeText = nowText;
-      this.showToast({ message: '不能跳转到未来时间', duration: 2000 });
-      await this.loadTimeline(nowText, false);
+      this.showToast({ message: '已回到实时画面', duration: 1600 });
+      await this.goLive();
       return;
     }
-    await this.loadTimeline(isoTime, true);
+    const targetEpoch = Math.floor(targetDate.getTime() / 1000);
+    if (this.shouldSwitchToLive(targetEpoch)) {
+      await this.goLive();
+      return;
+    }
+    await this.goHistory(isoTime);
   }
 
   async goLive(): Promise<void> {
@@ -670,6 +754,9 @@ export struct MonitorTab {
     }
     this.playbackMode = 'live';
     this.isLiveStream = true;
+    this.isLoadingPlayback = false;
+    this.timelineErrorText = '';
+    this.liveTimelineRefreshTicks = 0;
     this.playbackOffsetSeconds = 0;
     this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
     const nowText = this.formatDateTime(new Date());
@@ -732,11 +819,11 @@ export struct MonitorTab {
 
           if (this.playbackMode === 'history' && !this.hasReplayAtSelectedTime) {
             Column({ space: 8 }) {
-              Text('无回放录像')
+              Text(this.isLoadingPlayback ? '正在加载回放' : '无回放录像')
                 .fontSize(17)
                 .fontWeight(FontWeight.Medium)
                 .fontColor('rgba(255, 255, 255, 0.92)')
-              Text('请在时间轴中选择亮色录像段')
+              Text(this.isLoadingPlayback ? '正在定位所选时间' : '请在时间轴中选择亮色录像段')
                 .fontSize(12)
                 .fontColor('rgba(255, 255, 255, 0.58)')
             }
@@ -770,21 +857,6 @@ export struct MonitorTab {
         .clip(true)
         .backgroundColor(Color.Black)
 
-        Row({ space: 8 }) {
-          this.MonitorFilterButton('实时', this.playbackMode === 'live', (): void => {
-            this.goLive();
-          })
-          this.MonitorFilterButton('回放', this.playbackMode === 'history', (): void => {
-            if (this.selectedTimeText) {
-              this.loadTimeline(this.selectedTimeText, true);
-            }
-          })
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 16 })
-        .backgroundColor($r('app.color.app_card_bg'))
-        .border({ width: 1, color: $r('app.color.app_border') })
-
         Row({ space: 10 }) {
           TextInput({ placeholder: 'YYYY-MM-DD HH:mm:ss', text: this.jumpTimeText })
             .layoutWeight(1)
@@ -807,9 +879,28 @@ export struct MonitorTab {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
             .layoutWeight(1)
-          Text('亮色为可回放录像')
-            .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
+          if (this.playbackMode === 'history') {
+            Button('回到实时')
+              .height(32)
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_on_inverted'))
+              .backgroundColor($r('app.color.app_surface_inverted'))
+              .borderRadius(16)
+              .onClick((): void => {
+                this.goLive();
+              })
+          } else {
+            Row({ space: 6 }) {
+              Row()
+                .width(7)
+                .height(7)
+                .borderRadius(4)
+                .backgroundColor(Color.Red)
+              Text('跟随最新')
+                .fontSize(12)
+                .fontColor($r('app.color.app_text_secondary'))
+            }
+          }
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 18, bottom: 8 })
@@ -868,7 +959,12 @@ export struct MonitorTab {
                 this.selectedTimeText = target;
                 this.jumpTimeText = target;
                 if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                  this.loadTimeline(target, true);
+                  const targetEpoch = this.timelineStartEpoch + rounded;
+                  if (this.shouldSwitchToLive(targetEpoch)) {
+                    this.goLive();
+                  } else {
+                    this.goHistory(target);
+                  }
                 }
               })
           }
@@ -887,6 +983,16 @@ export struct MonitorTab {
             }, (item: GranularityOption, idx: number): string => idx.toString())
           }
           .width('100%')
+          Row({ space: 6 }) {
+            Row()
+              .width(18)
+              .height(5)
+              .borderRadius(3)
+              .backgroundColor($r('app.color.app_primary'))
+            Text('可回放录像')
+              .fontSize(11)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
           if (this.timelineErrorText) {
             Text(this.timelineErrorText)
               .fontSize(12)
