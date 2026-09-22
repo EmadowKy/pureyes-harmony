@@ -31,14 +31,18 @@ def _normalise(vector: np.ndarray) -> np.ndarray:
 class ClipSemanticEmbedder:
     """Lazy local CLIP/Chinese-CLIP image and text embedding adapter.
 
-    Set ``CLIP_MODEL_PATH`` to an already downloaded Hugging Face model folder.
-    Loading is deliberately local-files-only: a user query must never trigger a
-    surprise multi-hundred-megabyte download on the production server.
+    Set ``CLIP_MODEL_PATH`` to an already downloaded model folder.  Both the
+    Transformers layout and the official Chinese-CLIP native checkpoint
+    (``clip_cn_vit-b-16.pt``) are supported. Loading is deliberately
+    local-files-only: a user query must never trigger a surprise
+    multi-hundred-megabyte download on the production server.
     """
 
     _lock = threading.Lock()
     _model: Any = None
     _processor: Any = None
+    _tokenizer: Any = None
+    _backend: Optional[str] = None
     _loaded_path: Optional[str] = None
     _load_error: Optional[str] = None
 
@@ -48,7 +52,11 @@ class ClipSemanticEmbedder:
 
     @property
     def configured(self) -> bool:
-        return bool(self.model_path and os.path.isdir(self.model_path))
+        if not self.model_path or not os.path.isdir(self.model_path):
+            return False
+        native_checkpoint = os.path.join(self.model_path, "clip_cn_vit-b-16.pt")
+        hf_config = os.path.join(self.model_path, "config.json")
+        return os.path.isfile(native_checkpoint) or os.path.isfile(hf_config)
 
     @property
     def status(self) -> Dict[str, Any]:
@@ -56,6 +64,7 @@ class ClipSemanticEmbedder:
             "configured": self.configured,
             "loaded": ClipSemanticEmbedder._model is not None,
             "model_path": self.model_path or None,
+            "backend": ClipSemanticEmbedder._backend,
             "error": ClipSemanticEmbedder._load_error,
         }
 
@@ -71,14 +80,35 @@ class ClipSemanticEmbedder:
                 return
             try:
                 import torch
-                from transformers import AutoModel, AutoProcessor
-
-                model = AutoModel.from_pretrained(self.model_path, local_files_only=True)
-                processor = AutoProcessor.from_pretrained(self.model_path, local_files_only=True)
                 device = self.device if self.device == "cpu" or torch.cuda.is_available() else "cpu"
+
+                native_checkpoint = os.path.join(self.model_path, "clip_cn_vit-b-16.pt")
+                if os.path.isfile(native_checkpoint):
+                    # The official Chinese-CLIP distribution ships a native
+                    # checkpoint rather than a Transformers state dict.  Its
+                    # loader is still fully local when the checkpoint exists.
+                    from cn_clip.clip import load_from_name, tokenize
+
+                    model, processor = load_from_name(
+                        "ViT-B-16",
+                        device=device,
+                        download_root=self.model_path,
+                        use_modelscope=False,
+                    )
+                    tokenizer = tokenize
+                    backend = "native_cn_clip"
+                else:
+                    from transformers import AutoModel, AutoProcessor
+
+                    model = AutoModel.from_pretrained(self.model_path, local_files_only=True)
+                    processor = AutoProcessor.from_pretrained(self.model_path, local_files_only=True)
+                    tokenizer = None
+                    backend = "transformers"
                 model.eval().to(device)
                 ClipSemanticEmbedder._model = model
                 ClipSemanticEmbedder._processor = processor
+                ClipSemanticEmbedder._tokenizer = tokenizer
+                ClipSemanticEmbedder._backend = backend
                 ClipSemanticEmbedder._loaded_path = self.model_path
                 ClipSemanticEmbedder._load_error = None
                 self.device = device
@@ -90,6 +120,25 @@ class ClipSemanticEmbedder:
     def _features(self, *, image: Optional[np.ndarray] = None, text: Optional[str] = None) -> np.ndarray:
         self._ensure_loaded()
         import torch
+
+        model = ClipSemanticEmbedder._model
+        if ClipSemanticEmbedder._backend == "native_cn_clip":
+            from PIL import Image
+
+            if image is not None:
+                if image.size == 0:
+                    raise ValueError("cannot embed an empty image")
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                inputs = ClipSemanticEmbedder._processor(Image.fromarray(rgb)).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    features = model.encode_image(inputs)
+            else:
+                if not text or not text.strip():
+                    raise ValueError("cannot embed an empty text query")
+                inputs = ClipSemanticEmbedder._tokenizer([text.strip()]).to(self.device)
+                with torch.no_grad():
+                    features = model.encode_text(inputs)
+            return _normalise(features.detach().cpu().numpy()[0])
 
         if image is not None:
             if image.size == 0:
@@ -103,7 +152,6 @@ class ClipSemanticEmbedder:
             inputs = ClipSemanticEmbedder._processor(text=[text.strip()], padding=True, return_tensors="pt")
             feature_method = "get_text_features"
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
-        model = ClipSemanticEmbedder._model
         if not hasattr(model, feature_method):
             raise VisionModelUnavailable("configured model does not provide CLIP image/text feature methods")
         with torch.no_grad():
