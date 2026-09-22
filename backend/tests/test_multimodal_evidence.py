@@ -11,7 +11,7 @@ import numpy as np
 
 from app.mva_v2 import database
 from app.mva_v2.agents import ReActTools
-from app.mva_v2.pipeline import BoundingBox, JITVideoPipeline, TrackedObject
+from app.mva_v2.pipeline import BoundingBox, ByteTracker, JITVideoPipeline, TrackedObject
 from app.mva_v2.vision_models import OnnxTextRecognizer, VisionModelUnavailable
 
 
@@ -106,6 +106,43 @@ class MultimodalEvidenceTest(unittest.TestCase):
         self.assertEqual("红色轿车", embedder.last_text)
         self.assertEqual("scene_100", semantic["matches"][0]["track_id"])
         self.assertEqual("东门出口 A12345", ocr["matches"][0]["text"])
+
+    def test_fallback_tracker_keeps_a_fast_moving_target(self):
+        tracker = ByteTracker()
+        frames = [
+            BoundingBox(520, 324, 579, 432, 0.9, 0, "person"),
+            BoundingBox(543, 252, 595, 355, 0.9, 0, "person"),
+            BoundingBox(586, 200, 640, 297, 0.9, 0, "person"),
+        ]
+        ids = [
+            tracker.update([box], np.zeros((500, 800, 3), dtype=np.uint8))[0].track_id
+            for box in frames
+        ]
+        self.assertEqual(["track_fallback_1"] * 3, ids)
+
+    def test_identity_search_can_cross_selected_videos_only(self):
+        self.db.insert([
+            {"video_id": "camera-a.mp4", "workspace_id": 1, "timestamp": 1.0,
+             "frame_idx": 1, "track_id": "person-a", "class_name": "person",
+             "bbox": [0, 0, 20, 40], "clip_vector": [], "reid_vector": [1.0, 0.0],
+             "modality": "object"},
+            {"video_id": "camera-b.mp4", "workspace_id": 1, "timestamp": 2.0,
+             "frame_idx": 2, "track_id": "person-b", "class_name": "person",
+             "bbox": [0, 0, 20, 40], "clip_vector": [], "reid_vector": [1.0, 0.0],
+             "modality": "object"},
+        ])
+        tools = ReActTools(self.db)
+        result = tools.spatiotemporal_search(
+            "identity", "person-a", "camera-a.mp4",
+            video_ids=["camera-a.mp4", "camera-b.mp4"],
+        )
+        self.assertIn("person-b", result["summary"]["unique_track_ids_list"])
+
+    def test_unknown_object_query_does_not_return_ocr_rows(self):
+        result = ReActTools(self.db).spatiotemporal_search(
+            "semantic", "unclassified scene", "camera-a.mp4"
+        )
+        self.assertEqual(0, result["summary"]["total_matching_records"])
 
     def test_pipeline_persists_object_scene_and_ocr_records(self):
         video_path = os.path.join(self.temp_dir.name, "sample.avi")

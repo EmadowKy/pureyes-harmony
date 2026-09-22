@@ -182,7 +182,7 @@ class ReActTools:
                     matched_candidates.append(r)
                 elif target_class == "vehicle" and c_name in ["car", "truck", "bus", "motorcycle", "bicycle"]:
                     matched_candidates.append(r)
-                elif not target_class:
+                elif not target_class and r.get("modality") == "object":
                     matched_candidates.append(r)
             
             total_matching_records = len(matched_candidates)
