@@ -100,15 +100,17 @@ class ReActTools:
             } for record in sampled],
         }
 
-    def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str) -> Dict[str, Any]:
+    def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str, video_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         检索特征库并返回统计元数据与采样结果。
         query_type: 'semantic' (场景/动作) 或 'identity' (同一个人/物体)
         """
         logger.info(f"[TOOL - spatiotemporal_search] Running search: type={query_type}, query={query_text} on video={video_id}")
         
-        # 从数据库特征池中，筛选过滤出当前片段的特征
-        clip_records = [r for r in self.db.snapshot() if r['video_id'] == video_id]
+        # 从数据库特征池中筛选当前调查范围。身份检索可以跨本次调查
+        # 选择的多个视频，但不会越过用户授权的视频范围。
+        scope_ids = list(dict.fromkeys(video_ids or [video_id]))
+        clip_records = [r for r in self.db.snapshot() if r.get('video_id') in scope_ids]
         if not clip_records:
             return {
                 "summary": {
@@ -126,7 +128,8 @@ class ReActTools:
         if query_type == "identity":
             # 真实 ReID 检索：若 query_text 是 track_id，则提取其 ReID 特征向量进行全局余弦相似度比对
             track_id = query_text.strip()
-            target_records = [r for r in clip_records if r.get("track_id") == track_id]
+            target_records = [r for r in clip_records
+                              if r.get("track_id") == track_id and r.get("video_id") == video_id]
             if target_records:
                 query_vector = target_records[0].get("reid_vector")
                 if query_vector:
@@ -134,9 +137,9 @@ class ReActTools:
                     results = self.db.search_identity(
                         query_reid_vector=query_vector,
                         top_k=99999,
-                        video_id=video_id,
+                        video_id=None,
                     )
-                    matched_candidates = [r for r in results if r.get("video_id") == video_id]
+                    matched_candidates = [r for r in results if r.get("video_id") in scope_ids]
                     
                     total_matching_records = len(matched_candidates)
                     unique_track_ids = list(set(r.get("track_id") for r in matched_candidates if r.get("track_id")))
@@ -156,17 +159,18 @@ class ReActTools:
                 retrieved = matched_candidates
         else:
             # 真实语义路由检索：使用中文关键词检索匹配的大类，并在当前视频的所有帧中进行全局统计
-            person_keys = ["人", "男", "女", "谁", "衣", "步", "跑", "走", "影", "涉案", "嫌疑", "嫌疑人"]
-            car_keys = ["车", "轿车", "卡车", "面包车", "小车", "大车", "货车", "公路", "道路", "公交", "巴士", "自行车", "摩托", "行车", "交通"]
+            lowered_query = (query_text or "").casefold()
+            person_keys = ["人", "男", "女", "谁", "衣", "步", "跑", "走", "影", "涉案", "嫌疑", "嫌疑人", "person", "people", "pedestrian", "man", "woman"]
+            car_keys = ["车", "轿车", "卡车", "面包车", "小车", "大车", "货车", "公路", "道路", "公交", "巴士", "自行车", "摩托", "行车", "交通", "car", "vehicle", "bus", "truck", "motorcycle", "bicycle"]
             
             target_class = None
             for k in person_keys:
-                if k in query_text:
+                if k.casefold() in lowered_query:
                     target_class = "person"
                     break
             if not target_class:
                 for k in car_keys:
-                    if k in query_text:
+                    if k.casefold() in lowered_query:
                         target_class = "vehicle"
                         break
             

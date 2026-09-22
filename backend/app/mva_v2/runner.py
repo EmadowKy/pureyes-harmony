@@ -136,7 +136,7 @@ class MVA2Runner:
                 vlm_response = Qwen_VL(messages)
             except Exception as e:
                 logger.error(f"VLM call failed: {e}")
-                raise RuntimeError("多模态推理服务调用失败") from e
+                raise RuntimeError(f"多模态推理服务调用失败：{e}") from e
 
             thought, tool_name, tool_params, final_answer = ReActParser.parse_response(vlm_response)
 
@@ -197,6 +197,7 @@ class MVA2Runner:
                                 q_type,
                                 q_text,
                                 selected_video["video_id"],
+                                video_ids=[item["video_id"] for item in video_items],
                             )
                             observation = f"系统观察反馈 (特征库检索结果):\n{json.dumps(res, ensure_ascii=False)}"
                         
@@ -410,7 +411,7 @@ class MVA2Runner:
         except Exception as e:
             logger.error(f"Error processing multi-videos: {e}")
             return {
-                "error": "多视频分析失败，请稍后重试。",
+                "error": f"多视频分析失败：{e}",
                 "success": False,
             }
         
