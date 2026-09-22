@@ -110,6 +110,12 @@ class MVA2Runner:
         
         temp_files_to_clean = []
         final_answer_result = None
+        used_tools = []
+        identity_terms = ("同一", "是不是同", "是否为同", "同一个", "reid", "跨镜", "跨摄像头")
+        requires_cross_video_identity = (
+            len(video_items) > 1
+            and any(term in user_query.casefold() for term in identity_terms)
+        )
         for iteration in range(self.max_feedback_loops):
             loop_idx = iteration + 1
             logger.info(f"--- ReAct Iteration {loop_idx} / {self.max_feedback_loops} ---")
@@ -146,6 +152,17 @@ class MVA2Runner:
             })
 
             if final_answer:
+                if requires_cross_video_identity and "track_target" not in used_tools and loop_idx < self.max_feedback_loops:
+                    logger.warning("Rejecting unsupported cross-video identity conclusion: track_target was not used")
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "当前问题要求判断跨视频同一目标，但你尚未调用 track_target。"
+                            "请从 search_objects 已返回的候选中选择一个可靠 track_id，立即调用 "
+                            "track_target 做跨视频 ReID/外观候选检索，再结合原帧给出结论。"
+                        ),
+                    })
+                    continue
                 logger.info(f"ReAct Loop converged! Final Answer: {final_answer}")
                 if progress_callback:
                     progress_callback({
@@ -163,6 +180,7 @@ class MVA2Runner:
                 
             if tool_name:
                 tool_params = tool_params or {}
+                used_tools.append(tool_name)
                 logger.info(f"Agent decided to call Tool: {tool_name} with params: {tool_params}")
                 
                 # 实时向前端通知 Agent 当前的思考和做出的行动
@@ -197,6 +215,7 @@ class MVA2Runner:
                                 q_type,
                                 q_text,
                                 selected_video["video_id"],
+                                video_ids=[item["video_id"] for item in video_items] if q_type == "identity" else None,
                             )
                             observation = f"系统观察反馈 (特征库检索结果):\n{json.dumps(res, ensure_ascii=False)}"
                         

@@ -40,11 +40,16 @@ class ReActParser:
             return thought, tool_name, tool_params, final_answer
         except Exception as e:
             logger.warning(f"Failed to parse ReAct JSON: {e}. Raw text was: {text}")
-            # 如果解析失败，尝试退化提取
-            if "final_answer" in text:
-                match_ans = re.search(r'"final_answer"\s*:\s*"([^"]+)"', text)
+            # Qwen 等模型偶尔会在 final_answer 中直接写入时间标签的双引号，
+            # 形成 technically-invalid JSON（例如 [video:"1", time:"00:02"]）。
+            # 退化提取时取 final_answer 到对象末尾的全部内容，避免把答案截断在
+            # 第一个标签引号处。
+            if "final_answer" in cleaned:
+                match_ans = re.search(r'"final_answer"\s*:\s*"(.*)"\s*}\s*$', cleaned, re.DOTALL)
                 if match_ans:
-                    return "Fallback parse", None, None, match_ans.group(1)
+                    answer = match_ans.group(1)
+                    answer = answer.replace("\\n", "\n").replace('\\"', '"')
+                    return "Fallback parse", None, None, answer
             return None, None, None, None
 
 class ReActTools:
@@ -100,15 +105,17 @@ class ReActTools:
             } for record in sampled],
         }
 
-    def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str) -> Dict[str, Any]:
+    def spatiotemporal_search(self, query_type: str, query_text: str, video_id: str, video_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         检索特征库并返回统计元数据与采样结果。
         query_type: 'semantic' (场景/动作) 或 'identity' (同一个人/物体)
         """
         logger.info(f"[TOOL - spatiotemporal_search] Running search: type={query_type}, query={query_text} on video={video_id}")
         
-        # 从数据库特征池中，筛选过滤出当前片段的特征
-        clip_records = [r for r in self.db.snapshot() if r['video_id'] == video_id]
+        # 从数据库特征池中筛选当前调查范围。身份检索可以跨本次调查
+        # 选择的多个视频，但不会越过用户授权的视频范围。
+        scope_ids = list(dict.fromkeys(video_ids or [video_id]))
+        clip_records = [r for r in self.db.snapshot() if r.get('video_id') in scope_ids]
         if not clip_records:
             return {
                 "summary": {
@@ -126,17 +133,19 @@ class ReActTools:
         if query_type == "identity":
             # 真实 ReID 检索：若 query_text 是 track_id，则提取其 ReID 特征向量进行全局余弦相似度比对
             track_id = query_text.strip()
-            target_records = [r for r in clip_records if r.get("track_id") == track_id]
+            target_records = [r for r in clip_records
+                              if r.get("track_id") == track_id and r.get("video_id") == video_id]
             if target_records:
-                query_vector = target_records[0].get("reid_vector")
+                query_record = next((r for r in target_records if r.get("reid_vector")), target_records[0])
+                query_vector = query_record.get("reid_vector")
                 if query_vector:
                     # 获取较大数量的相似候选以进行全局统计
                     results = self.db.search_identity(
                         query_reid_vector=query_vector,
                         top_k=99999,
-                        video_id=video_id,
+                        video_id=None,
                     )
-                    matched_candidates = [r for r in results if r.get("video_id") == video_id]
+                    matched_candidates = [r for r in results if r.get("video_id") in scope_ids]
                     
                     total_matching_records = len(matched_candidates)
                     unique_track_ids = list(set(r.get("track_id") for r in matched_candidates if r.get("track_id")))
@@ -147,6 +156,27 @@ class ReActTools:
                     else:
                         step = len(matched_candidates) / 15
                         retrieved = [matched_candidates[int(i * step)] for i in range(15)]
+                else:
+                    # OSNet only supports people. For vehicles and other
+                    # objects, use their real CLIP crop embedding to propose
+                    # cross-video appearance candidates, then require the
+                    # Agent to verify candidates against original frames.
+                    query_record = next((r for r in target_records if r.get("clip_vector")), None)
+                    if query_record:
+                        results = self.db.search_clip_vectors(
+                            query_record["clip_vector"], video_id=None, top_k=200
+                        )
+                        matched_candidates = [
+                            r for r in results
+                            if r.get("video_id") in scope_ids
+                            and r.get("modality") == "object"
+                            and r.get("class_name") == query_record.get("class_name")
+                        ]
+                        total_matching_records = len(matched_candidates)
+                        unique_track_ids = list(dict.fromkeys(
+                            r.get("track_id") for r in matched_candidates if r.get("track_id")
+                        ))
+                        retrieved = matched_candidates[:15]
             
             # 兜底：如果检索不到相似记录或没提取到特征，直接返回该 track_id 的物理轨迹
             if not retrieved:
@@ -156,19 +186,19 @@ class ReActTools:
                 retrieved = matched_candidates
         else:
             # 真实语义路由检索：使用中文关键词检索匹配的大类，并在当前视频的所有帧中进行全局统计
-            person_keys = ["人", "男", "女", "谁", "衣", "步", "跑", "走", "影", "涉案", "嫌疑", "嫌疑人"]
-            car_keys = ["车", "轿车", "卡车", "面包车", "小车", "大车", "货车", "公路", "道路", "公交", "巴士", "自行车", "摩托", "行车", "交通"]
+            lowered_query = (query_text or "").casefold()
+            person_keys = ["人", "男", "女", "谁", "衣", "步", "跑", "走", "影", "涉案", "嫌疑", "嫌疑人", "person", "people", "pedestrian", "man", "woman"]
+            car_keys = ["车", "轿车", "卡车", "面包车", "小车", "大车", "货车", "公路", "道路", "公交", "巴士", "自行车", "摩托", "行车", "交通", "car", "vehicle", "bus", "truck", "motorcycle", "bicycle"]
             
+            matches_person = any(k.casefold() in lowered_query for k in person_keys)
+            matches_vehicle = any(k.casefold() in lowered_query for k in car_keys)
+            # A mixed query such as “行人、自行车和汽车” means all relevant
+            # object classes, not just the first keyword family encountered.
             target_class = None
-            for k in person_keys:
-                if k in query_text:
-                    target_class = "person"
-                    break
-            if not target_class:
-                for k in car_keys:
-                    if k in query_text:
-                        target_class = "vehicle"
-                        break
+            if matches_person and not matches_vehicle:
+                target_class = "person"
+            elif matches_vehicle and not matches_person:
+                target_class = "vehicle"
             
             # 统计当前视频片段中所有匹配大类的数据库记录
             matched_candidates = []
@@ -178,7 +208,7 @@ class ReActTools:
                     matched_candidates.append(r)
                 elif target_class == "vehicle" and c_name in ["car", "truck", "bus", "motorcycle", "bicycle"]:
                     matched_candidates.append(r)
-                elif not target_class:
+                elif not target_class and r.get("modality") == "object":
                     matched_candidates.append(r)
             
             total_matching_records = len(matched_candidates)
@@ -195,13 +225,16 @@ class ReActTools:
         # 格式化精简输出，节省大模型 Token
         formatted_results = []
         for r in retrieved:
-            formatted_results.append({
+            item = {
                 "timestamp_sec": round(r["timestamp"], 2),
                 "frame_idx": r["frame_idx"],
                 "track_id": r["track_id"],
                 "class_name": r["class_name"],
                 "bbox": r["bbox"]
-            })
+            }
+            if r.get("semantic_similarity") is not None:
+                item["appearance_similarity"] = r["semantic_similarity"]
+            formatted_results.append(item)
             
         return {
             "summary": {
@@ -352,6 +385,8 @@ class ReActSystemPrompt:
    参数：
    - "track_id": 字符串，由 search_objects 的结果提供
    - "video_id": 字符串，当前视频的文件名
+   当本次调查选择了多个视频时，该工具会在全部已选视频中进行 ReID 相似检索；
+   先用 search_objects 在一个视频中取得可靠 track_id，再调用本工具寻找跨视频候选。
 
 5. "search_face_tracks"：查询预处理得到的人脸出现轨迹。只能把它作为视觉线索，不得将其表述为司法级身份确认。
    参数：
@@ -367,6 +402,12 @@ class ReActSystemPrompt:
    参数：
    - "video_id": 字符串，必须是当前用户已选择的视频文件名
    返回：{"duration_seconds": 秒数, "fps": 帧率, "frame_count": 总帧数}
+
+### 工具规划约束
+1. 对“有哪些、全部、按顺序、出现过什么”等覆盖性问题，优先调用 search_objects 获取整段索引，不能只靠少数截图推断完整视频。
+2. 对跨视频“是不是同一目标”的问题，必须先在一个视频中取得 track_id，再调用 track_target 做跨视频 ReID；最后分别读取候选时间点的原帧核验。仅凭颜色相同不得确认同一目标。
+3. read_frame_image 用于核验，不用于低效地逐秒穷举。同一 10 秒区间原则上最多读取 2 帧，并为视频后半段或其他视频预留调用轮次。
+4. 最多只有 10 轮工具机会。开始时先形成覆盖全时段/全部视频的计划；如果证据不足，应明确降低置信度，不得在狭窄时间段反复取帧直到耗尽轮次。
 
 ---
 

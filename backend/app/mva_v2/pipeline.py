@@ -8,7 +8,6 @@ import cv2
 import numpy as np
 from typing import List, Dict, Optional, Any, Callable
 from dataclasses import dataclass
-import uuid
 import time
 import logging
 import math
@@ -106,13 +105,67 @@ class YoloDetector:
 
 class ByteTracker:
     def __init__(self):
-        pass
+        self._next_id = 1
+        self._active = {}
+        self._matched_this_update = set()
+
+    @staticmethod
+    def _iou(left, right):
+        ax1, ay1, ax2, ay2 = left
+        bx1, by1, bx2, by2 = right
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        intersection = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if intersection <= 0:
+            return 0.0
+        area_a = max(1, ax2 - ax1) * max(1, ay2 - ay1)
+        area_b = max(1, bx2 - bx1) * max(1, by2 - by1)
+        return intersection / float(area_a + area_b - intersection)
+
+    def reset(self):
+        """Reset fallback IDs between independent video clips."""
+        self._active.clear()
+
+    def _fallback_id(self, box):
+        # YOLO's native ID is normally authoritative.  When it is absent (for
+        # example after a low-FPS seek), match the detection to the previous
+        # frame so a track does not become a new random ID on every sample.
+        coords = (box.x1, box.y1, box.x2, box.y2)
+        best_id, best_score = None, float("-inf")
+        width = max(1, box.x2 - box.x1)
+        height = max(1, box.y2 - box.y1)
+        center_x = (box.x1 + box.x2) / 2.0
+        center_y = (box.y1 + box.y2) / 2.0
+        for track_id, previous in self._active.items():
+            if track_id in self._matched_this_update or previous["class_id"] != box.class_id:
+                continue
+            score = self._iou(coords, previous["bbox"])
+            prev_box = previous["bbox"]
+            prev_x = (prev_box[0] + prev_box[2]) / 2.0
+            prev_y = (prev_box[1] + prev_box[3]) / 2.0
+            distance = ((center_x - prev_x) ** 2 + (center_y - prev_y) ** 2) ** 0.5
+            max_distance = max(100.0, 1.5 * max(width, height))
+            if score < 0.05 and distance > max_distance:
+                continue
+            candidate_score = score + max(0.0, 1.0 - distance / max_distance) * 0.35
+            if candidate_score > best_score:
+                best_id, best_score = track_id, candidate_score
+        if best_id is None:
+            best_id = f"track_fallback_{self._next_id}"
+            self._next_id += 1
+        self._active[best_id] = {"class_id": box.class_id, "bbox": coords}
+        self._matched_this_update.add(best_id)
+        return best_id
         
     def update(self, bboxes: List[BoundingBox], image: np.ndarray) -> List[TrackedObject]:
+        self._matched_this_update = set()
+        for previous in self._active.values():
+            previous["missed"] = previous.get("missed", 0) + 1
         tracked = []
         for box in bboxes:
-            # 优先映射 YOLO 原生追踪分配的 track_id
-            track_id = f"track_{box.track_id}" if box.track_id != -1 else f"track_temp_{uuid.uuid4().hex[:4]}"
+            # 优先映射 YOLO 原生追踪分配的 track_id；原生追踪暂时没有
+            # ID 时使用 IoU 兜底，保证低帧率采样也能形成稳定轨迹。
+            track_id = f"track_{box.track_id}" if box.track_id != -1 else self._fallback_id(box)
             try:
                 crop = image[box.y1:box.y2, box.x1:box.x2]
                 if crop.size == 0:
@@ -120,6 +173,12 @@ class ByteTracker:
             except Exception:
                 crop = np.zeros((64, 64, 3), dtype=np.uint8)
             tracked.append(TrackedObject(track_id, box, 0, crop))
+            if track_id in self._active:
+                self._active[track_id]["missed"] = 0
+        self._active = {
+            track_id: state for track_id, state in self._active.items()
+            if state.get("missed", 0) <= 5
+        }
         return tracked
 
 class FeatureExtractor:
@@ -235,6 +294,10 @@ class JITVideoPipeline:
         self.text_recognizer = OnnxTextRecognizer()
         self._unavailable_modalities = set()
         self.frame_queue = asyncio.Queue(maxsize=50)
+        # Detection/ReID/OCR still inspect every configured sample. CLIP is
+        # substantially heavier, so keep reusable semantic keyframes instead
+        # of recomputing nearly identical embeddings every second.
+        self.clip_interval_seconds = max(1.0, float(os.environ.get("CLIP_SAMPLE_INTERVAL_SECONDS", "5")))
 
     def _warn_unavailable_once(self, modality: str, exc: Exception) -> None:
         if modality not in self._unavailable_modalities:
@@ -288,6 +351,10 @@ class JITVideoPipeline:
         if not math.isfinite(start_sec) or not math.isfinite(end_sec) or start_sec < 0 or end_sec <= start_sec:
             raise ValueError("invalid clip time range")
 
+        reset_tracker = getattr(self.tracker, "reset", None)
+        if callable(reset_tracker):
+            reset_tracker()
+
         logger.info(f"[JIT] Fast-processing clip {video_id} from {start_sec}s to {end_sec}s with sample_fps={sample_fps}, resolution={resolution}...")
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -311,6 +378,12 @@ class JITVideoPipeline:
         last_callback_time = 0.0
         all_records = []
         processed_sample_count = 0
+        last_scene_clip_at = float("-inf")
+        last_object_clip_at: Dict[Any, float] = {}
+        clip_interval_seconds = max(1.0, float(getattr(self, "clip_interval_seconds", 5.0)))
+        begin_semantic_job = getattr(self.semantic_embedder, "begin_job", None)
+        if callable(begin_semantic_job):
+            begin_semantic_job()
 
         try:
             while cap.isOpened() and frame_idx <= end_frame_idx:
@@ -338,7 +411,10 @@ class JITVideoPipeline:
                     # 每一张用户选择的采样帧都进入检测；不能以运动检测作为
                     # “是否有信息”的代理，否则静止的人、车辆、招牌都会被漏掉。
                     timestamp = frame_idx / fps
-                    frame_clip_vector = self._embed_image(frame)
+                    should_embed_scene = timestamp - last_scene_clip_at >= clip_interval_seconds
+                    frame_clip_vector = self._embed_image(frame) if should_embed_scene else []
+                    if frame_clip_vector:
+                        last_scene_clip_at = timestamp
                     bboxes = self.detector.detect(frame)
                     if bboxes:
                         tracked_objs = self.tracker.update(bboxes, frame)
@@ -350,7 +426,11 @@ class JITVideoPipeline:
                                     reid_vector = self.extractor.extract_reid(track.image_crop).tolist()
                                 except Exception as reid_err:
                                     logger.warning(f"Skipping invalid person ReID crop: {reid_err}")
-                            object_clip_vector = self._embed_image(track.image_crop)
+                            last_object_time = last_object_clip_at.get(track.track_id, float("-inf"))
+                            should_embed_object = timestamp - last_object_time >= clip_interval_seconds
+                            object_clip_vector = self._embed_image(track.image_crop) if should_embed_object else []
+                            if object_clip_vector:
+                                last_object_clip_at[track.track_id] = timestamp
                             all_records.append({
                                 "video_id": video_id,
                                 "workspace_id": workspace_id,
@@ -417,3 +497,6 @@ class JITVideoPipeline:
                 progress_callback(100)
         finally:
             cap.release()
+            end_semantic_job = getattr(self.semantic_embedder, "end_job", None)
+            if callable(end_semantic_job):
+                end_semantic_job()
