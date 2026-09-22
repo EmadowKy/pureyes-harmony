@@ -977,10 +977,16 @@ export struct MonitorTab {
               .fontColor($r('app.color.app_text_secondary'))
               .margin({ right: 2 })
             ForEach(GRANULARITIES, (item: GranularityOption): void => {
-              this.MonitorFilterButton(item.label, this.granularity === item.key, (): void => {
-                this.switchGranularity(item.key);
-              })
-            }, (item: GranularityOption, idx: number): string => idx.toString())
+              if (this.granularity === item.key) {
+                this.MonitorFilterButton(item.label, true, (): void => {
+                  this.switchGranularity(item.key);
+                })
+              } else {
+                this.MonitorFilterButton(item.label, false, (): void => {
+                  this.switchGranularity(item.key);
+                })
+              }
+            }, (item: GranularityOption): string => item.key)
           }
           .width('100%')
           Row({ space: 6 }) {

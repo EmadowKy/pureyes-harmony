@@ -30,6 +30,7 @@ COVER_ACTIVE_FILE_GRACE_SECONDS = int(os.environ.get("MONITOR_COVER_ACTIVE_FILE_
 RECORDING_SEGMENT_SECONDS = int(os.environ.get("MONITOR_RECORDING_SEGMENT_SECONDS", "60"))
 RECORDING_MIN_FILE_BYTES = int(os.environ.get("MONITOR_MIN_RECORDING_BYTES", str(64 * 1024)))
 RECORDING_FINALIZE_GRACE_SECONDS = int(os.environ.get("MONITOR_RECORDING_FINALIZE_GRACE_SECONDS", "15"))
+RECORDING_ACTIVE_WRITE_GRACE_SECONDS = int(os.environ.get("MONITOR_RECORDING_ACTIVE_WRITE_GRACE_SECONDS", "10"))
 RECORDING_RETENTION_HOURS = int(os.environ.get("MONITOR_RECORDING_RETENTION_HOURS", "24"))
 cover_refresh_started = False
 cover_refresh_lock = threading.Lock()
@@ -103,16 +104,17 @@ def _latest_recording_file(monitor_id: int):
 
 
 def _recording_catalog(monitor_id: int):
-    """Return finalized, plausible recording files for internal playback use.
+    """Return plausible finalized files and the fragmented MP4 being written.
 
-    The catalog deliberately excludes the FFmpeg file currently being written
-    and tiny/incomplete MP4s. Its file names never leave the monitor API.
+    Tiny or stale incomplete files remain excluded. The newest file is exposed
+    only while its modification time proves FFmpeg is still appending data.
+    File names never leave the monitor API.
     """
     output_dir = _monitor_recordings_dir(monitor_id)
     if not os.path.isdir(output_dir):
         return []
     now = datetime.now()
-    entries = []
+    candidates = []
     for filename in os.listdir(output_dir):
         if not filename.endswith(".mp4"):
             continue
@@ -127,13 +129,53 @@ def _recording_catalog(monitor_id: int):
             continue
         if size < RECORDING_MIN_FILE_BYTES:
             continue
-        end_time = start_time + timedelta(seconds=RECORDING_SEGMENT_SECONDS)
-        if now < end_time + timedelta(seconds=RECORDING_FINALIZE_GRACE_SECONDS):
-            continue
-        if now - modified_at < timedelta(seconds=RECORDING_FINALIZE_GRACE_SECONDS):
-            continue
-        entries.append({"path": path, "filename": filename, "start": start_time, "end": end_time})
-    return sorted(entries, key=lambda item: item["start"])
+        candidates.append({
+            "path": path,
+            "filename": filename,
+            "start": start_time,
+            "modified_at": modified_at,
+        })
+
+    candidates.sort(key=lambda item: item["start"])
+    entries = []
+    for index, candidate in enumerate(candidates):
+        start_time = candidate["start"]
+        next_start = candidates[index + 1]["start"] if index + 1 < len(candidates) else None
+        recently_written = now - candidate["modified_at"] < timedelta(
+            seconds=RECORDING_ACTIVE_WRITE_GRACE_SECONDS
+        )
+        active_age_limit = timedelta(seconds=max(RECORDING_SEGMENT_SECONDS * 3, 180))
+        is_active = (
+            next_start is None
+            and start_time <= now
+            and now - start_time <= active_age_limit
+            and recently_written
+        )
+        if is_active:
+            # Keep a one-second safety margin so the player never seeks beyond
+            # bytes that FFmpeg may still be flushing to the fragmented MP4.
+            end_time = now - timedelta(seconds=1)
+            if end_time <= start_time:
+                continue
+        elif next_start is not None:
+            # A following segment proves this file has been closed. Its start
+            # time is also the most accurate end time when keyframes cause a
+            # segment to run slightly longer than the configured duration.
+            end_time = next_start
+        else:
+            end_time = start_time + timedelta(seconds=RECORDING_SEGMENT_SECONDS)
+            if now < end_time + timedelta(seconds=RECORDING_FINALIZE_GRACE_SECONDS):
+                continue
+            if now - candidate["modified_at"] < timedelta(seconds=RECORDING_FINALIZE_GRACE_SECONDS):
+                continue
+        entries.append({
+            "path": candidate["path"],
+            "filename": candidate["filename"],
+            "start": start_time,
+            "end": end_time,
+            "active": is_active,
+        })
+    return entries
 
 
 def _coverage_ranges(entries):

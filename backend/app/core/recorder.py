@@ -67,6 +67,7 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
             "-segment_time", str(SEGMENT_SECONDS),
             "-reset_timestamps", "1",
             "-segment_format", "mp4",
+            "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
             "-strftime", "1",
             os.path.join(output_dir, "%Y%m%d_%H%M%S.mp4")
         ])

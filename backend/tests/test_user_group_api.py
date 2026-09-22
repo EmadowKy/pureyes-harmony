@@ -4,6 +4,7 @@ import json
 import tempfile
 import types
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -821,6 +822,42 @@ class UserGroupApiTest(unittest.TestCase):
         self.assertTrue(compatible)
         self.assertFalse(needs_transcode)
         self.assertIn("unavailable", reason)
+
+    def test_active_fragmented_recording_is_available_before_segment_closes(self):
+        from app.monitors import routes as monitor_routes
+
+        monitor_id = 98765
+        recordings_dir = self.recordings_base / str(monitor_id)
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+        started_at = datetime.now() - timedelta(seconds=30)
+        active_path = recordings_dir / f"{started_at.strftime('%Y%m%d_%H%M%S')}.mp4"
+        active_path.write_bytes(b"0" * (70 * 1024))
+        os.utime(active_path, None)
+
+        entries = monitor_routes._recording_catalog(monitor_id)
+
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0]["active"])
+        self.assertEqual(entries[0]["start"], started_at.replace(microsecond=0))
+        self.assertGreater(entries[0]["end"], entries[0]["start"])
+        self.assertLessEqual(entries[0]["end"], datetime.now())
+
+    def test_recorder_writes_fragmented_mp4_segments(self):
+        from app.core import recorder
+
+        fake_process = types.SimpleNamespace(poll=lambda: None)
+        with patch.object(recorder, "VIDEO_STORAGE_BASE", str(Path(_tmpdir.name) / "recorder")), \
+                patch.object(recorder, "get_ffmpeg_path", return_value="ffmpeg"), \
+                patch.object(recorder.subprocess, "Popen", return_value=fake_process) as popen:
+            self.assertTrue(recorder.start_recording(98766, "https://example.test/live.m3u8"))
+
+        command = popen.call_args.args[0]
+        option_index = command.index("-segment_format_options")
+        self.assertEqual(
+            command[option_index + 1],
+            "movflags=+frag_keyframe+empty_moov+default_base_moof",
+        )
+        recorder.recording_processes.pop(98766, None)
 
 
 if __name__ == "__main__":
