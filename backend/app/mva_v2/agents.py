@@ -40,11 +40,16 @@ class ReActParser:
             return thought, tool_name, tool_params, final_answer
         except Exception as e:
             logger.warning(f"Failed to parse ReAct JSON: {e}. Raw text was: {text}")
-            # 如果解析失败，尝试退化提取
-            if "final_answer" in text:
-                match_ans = re.search(r'"final_answer"\s*:\s*"([^"]+)"', text)
+            # Qwen 等模型偶尔会在 final_answer 中直接写入时间标签的双引号，
+            # 形成 technically-invalid JSON（例如 [video:"1", time:"00:02"]）。
+            # 退化提取时取 final_answer 到对象末尾的全部内容，避免把答案截断在
+            # 第一个标签引号处。
+            if "final_answer" in cleaned:
+                match_ans = re.search(r'"final_answer"\s*:\s*"(.*)"\s*}\s*$', cleaned, re.DOTALL)
                 if match_ans:
-                    return "Fallback parse", None, None, match_ans.group(1)
+                    answer = match_ans.group(1)
+                    answer = answer.replace("\\n", "\n").replace('\\"', '"')
+                    return "Fallback parse", None, None, answer
             return None, None, None, None
 
 class ReActTools:

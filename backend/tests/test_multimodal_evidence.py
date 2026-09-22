@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from app.mva_v2 import database
-from app.mva_v2.agents import ReActTools
+from app.mva_v2.agents import ReActParser, ReActTools
 from app.mva_v2.pipeline import BoundingBox, ByteTracker, JITVideoPipeline, TrackedObject
 from app.mva_v2.vision_models import OnnxTextRecognizer, VisionModelUnavailable
 
@@ -143,6 +143,12 @@ class MultimodalEvidenceTest(unittest.TestCase):
             "semantic", "unclassified scene", "camera-a.mp4"
         )
         self.assertEqual(0, result["summary"]["total_matching_records"])
+
+    def test_parser_preserves_unescaped_timestamp_quotes_in_final_answer(self):
+        raw = '{"thought":"done","final_answer":"[video:\\"1\\", time:\\"00:02\\"]\\nverified"}'
+        _, tool_name, _, final_answer = ReActParser.parse_response(raw)
+        self.assertIsNone(tool_name)
+        self.assertEqual('[video:"1", time:"00:02"]\nverified', final_answer)
 
     def test_pipeline_persists_object_scene_and_ocr_records(self):
         video_path = os.path.join(self.temp_dir.name, "sample.avi")

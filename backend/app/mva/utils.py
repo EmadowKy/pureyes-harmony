@@ -137,7 +137,14 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                             break
                         try:
                             chunk_json = json.loads(data_str)
-                            delta = chunk_json['choices'][0]['delta']
+                            # Some Bailian streaming events carry usage or
+                            # bookkeeping metadata without a choices array.
+                            # They are valid SSE events, but do not contribute
+                            # text and must not abort the whole response.
+                            choices = chunk_json.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = (choices[0] or {}).get("delta") or {}
                             chunk_text = delta.get('content')
                             if chunk_text is None:
                                 chunk_text = ''
