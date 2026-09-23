@@ -26,19 +26,21 @@ FRAME = {"type": "object", "properties": {"video_id": VIDEO, "timestamp_sec": TI
          "required": ["video_id", "timestamp_sec"], "additionalProperties": False}
 
 TOOLS = [
-    _tool("search_objects", "查询完整视频的目标与轨迹索引；覆盖性问题应先用此工具", {"query_text": QUERY, "video_id": VIDEO}, ["query_text", "video_id"]),
-    _tool("search_visual_semantics", "CLIP 画面语义候选检索，结论须看原帧", {"query_text": QUERY, "video_id": VIDEO}, ["query_text", "video_id"]),
-    _tool("search_visual_semantics_batch", "一次检索同一视频的多个画面语义条件，减少模型往返；最多四项", {"queries": {"type": "array", "items": QUERY, "minItems": 1, "maxItems": 4}, "video_id": VIDEO}, ["queries", "video_id"]),
-    _tool("search_video_text", "OCR 文字索引检索", {"query_text": QUERY, "video_id": VIDEO}, ["query_text", "video_id"]),
-    _tool("track_target", "用 track_id 追踪并在已选视频中寻找跨镜 ReID 候选", {"track_id": {"type": "string"}, "video_id": VIDEO}, ["track_id", "video_id"]),
-    _tool("search_face_tracks", "查询人脸轨迹候选，不等于身份确认", {"query_text": QUERY}, ["query_text"]),
+    _tool("search_objects", "返回目标类别、检测框、时间点和跟踪ID，适合查找目标与粗略轨迹；不负责识别行为意图或动作", {"query_text": QUERY, "video_id": VIDEO}, ["query_text", "video_id"]),
+    _tool("search_visual_semantics", "CLIP按文本找相似画面候选，适合场景、物品、颜色等外观线索；不是动作识别器，结果需查看原帧", {"query_text": QUERY, "video_id": VIDEO}, ["query_text", "video_id"]),
+    _tool("search_visual_semantics_batch", "一次检索同一视频的多个外观/场景候选条件；结果不代表动作已发生，最多四项", {"queries": {"type": "array", "items": QUERY, "minItems": 1, "maxItems": 4}, "video_id": VIDEO}, ["queries", "video_id"]),
+    _tool("search_video_text", "查询OCR识别出的文字候选；可能漏字或误读，不能用于判断人物动作", {"query_text": QUERY, "video_id": VIDEO}, ["query_text", "video_id"]),
+    _tool("track_target", "沿跟踪ID查找同一段轨迹及跨镜外观相似候选；ReID相似不等于身份确认", {"track_id": {"type": "string"}, "video_id": VIDEO}, ["track_id", "video_id"]),
+    _tool("search_face_tracks", "查询已检测到的人脸轨迹分组；检测分组不等于身份识别", {"query_text": QUERY}, ["query_text"]),
     _tool("read_frame_image", "读取一张原始视频帧以核验候选", {"video_id": VIDEO, "timestamp_sec": TIME}, ["video_id", "timestamp_sec"]),
-    _tool("read_frames", "一次读取多个原始视频帧；优先选择不同时间段的代表帧，最多四张", {"frames": {"type": "array", "items": FRAME, "minItems": 1, "maxItems": 4}}, ["frames"]),
+    _tool("read_frames", "一次读取最多四张原始帧供你直接视觉判断；判断动作时选动作前、过程、之后的相邻时刻并比较变化", {"frames": {"type": "array", "items": FRAME, "minItems": 1, "maxItems": 4}}, ["frames"]),
 ]
 
 SYSTEM_PROMPT = """你是安防视频调查 Agent。视频的时长、帧率、总帧数已在用户消息给出，不要再查询。
-使用原生工具调用，不要输出 JSON 工具指令。目标索引已随问题附上；先利用它规划全片，再根据候选查看原帧。独立条件优先用批量检索，多个时间点优先用 read_frames。单视频最多读取四张原帧，多视频最多八张；多条件题须给每个条件至少留一张。挑选分散且最有判别力的时间点，不要逐秒穷举或重复读取相近画面。判断打斗、倒地、跑动等短时动作时，优先查看人物交互或状态变化的局部时段，并用相邻画面核实动作过程。工具阶段结束后及时作答。
-CLIP、OCR、ReID 和人脸搜索只提供候选，关键结论需原帧核验。跨视频同一目标须先获取 track_id，再调用 track_target，并读取两边原帧；无法确认时说明不确定。
+预处理能力边界：目标检测/跟踪擅长回答画面里检测到哪些类别、目标何时出现、位置如何变化，并给出候选track_id；CLIP擅长按外观、场景或物品描述找相似帧；OCR擅长找画面文字；ReID擅长提出跨镜外观相似目标；人脸模块擅长提供人脸出现区间或分组。这些都是索引线索，各自可能漏检或误检。
+预处理不擅长可靠判断短暂动作、动作先后与因果、人物意图或复杂行为语义，例如打斗、推搡、跑动、跌倒、浏览、徘徊、交接物品。CLIP相似度不是动作分类结果，轨迹稳定也不能证明人物在观看或等待。索引没有命中绝不等于事件没有发生；不得只凭索引回答这些问题。
+使用原生工具调用，不要输出 JSON 工具指令。先用索引定位候选和时间范围，再亲自查看原始帧。遇到动作/行为问题，必须用 read_frames 检查多张帧：选择候选时刻前、过程中、之后的相邻帧，比较人物姿态、位置和相互作用；若第一组仍不能区分动作与相似姿态，继续用另一组相邻帧探索，再作判断。单视频通常最多8张，多视频通常最多12张；多条件题每个条件都要有视觉证据。挑选有判别力的帧，避免无目的逐秒穷举。
+对于外观、物品或场景问题，可先用CLIP缩小范围，再核对原帧；文字问题用OCR找候选后核验；跨镜身份问题先取得track_id，再用ReID提出候选，并查看两边原帧。不能确认时说明不确定。
 回答用户的选项题时，第一行只写选项字母。所有具体时间必须写成 [video:"1", time:"MM:SS"] 形式，序号对应用户提供的视频列表。证据不足时如实说明。避免冗长的过程叙述。"""
 
 
@@ -107,8 +109,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
     messages[0]["content"] = SYSTEM_PROMPT
     temp_files, used_tools = [], []
     seen_frames = set()
-    frame_budget = 4 if len(video_items) == 1 else 8
-    max_rounds = min(runner.max_feedback_loops, 4 if len(video_items) == 1 else 5)
     visual_evidence_count = 0
     available_tools = []
     question_lower = user_query.casefold()
@@ -120,6 +120,8 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
         and any(term in question_lower for term in ("倒", "跌", "摔", "跑", "停", "走", "浏览", "观看", "打斗", "打架", "冲突", "搏斗", "拳打脚踢", "fight", "fall", "run", "walk", "stop"))
         and not any(term in question_lower for term in ("颜色", "衣服", "车牌", "物品", "相似", "color", "clothing"))
     )
+    frame_budget = 8 if short_action_question else (4 if len(video_items) == 1 else 12)
+    max_rounds = min(runner.max_feedback_loops, 5 if short_action_question else 6)
     for tool in TOOLS:
         name = tool["function"]["name"]
         if name == "search_objects" or (name == "track_target" and len(video_items) == 1):
@@ -142,7 +144,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
     if indexes:
         messages.append({"role": "user", "content": "【已自动检索完整视频目标索引，勿重复检索】\n" + json.dumps(indexes, ensure_ascii=False, default=str)})
     if short_action_question:
-        messages.append({"role": "user", "content": "这是不超过一分钟的动作判断题。目标索引已覆盖全片；请直接选取分散且能分别验证各条件的关键原帧，不必启动耗时的 CLIP 文本模型。"})
+        messages.append({"role": "user", "content": "这是不超过一分钟的动作判断题。目标索引只用于提供候选目标和时间线，不作为动作结论。请使用视觉能力检查动作前、中、后的相邻原帧；若第一组画面仍有歧义，可以再读取一组用于确认，不要因为索引没写该动作就回答没有。"})
     final_answer = ""
     identity_terms = ("同一", "是不是同", "是否为同", "同一个", "reid", "跨镜", "跨摄像头")
     requires_identity = len(video_items) > 1 and any(term in user_query.casefold() for term in identity_terms)
@@ -152,7 +154,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             if progress_callback:
                 progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调查证据（第 {loop_idx} 轮）",
                                    "data": {"iteration": loop_idx, "phase": "thinking"}})
-            force_answer = loop_idx == max_rounds or (loop_idx >= 2 and visual_evidence_count >= 2)
+            force_answer = loop_idx == max_rounds or (loop_idx >= 2 and visual_evidence_count >= frame_budget)
             if force_answer:
                 messages.append({"role": "user", "content": "现在停止工具调查。请根据现有证据给出最终答案；不确定处直说，不要再调用工具。选项题第一行只写选项字母。"})
             setattr(api_config, "loop_idx", loop_idx)
@@ -203,7 +205,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                                 fresh.append(frame)
                                 seen_frames.add(key)
                         if not fresh:
-                            result, new_images = {"notice": "这些时间点已经看过，或已达到 8 帧预算。请根据现有画面作答。"}, []
+                            result, new_images = {"notice": f"这些时间点已经看过，或已达到 {frame_budget} 帧预算。请根据现有画面作答。"}, []
                         else:
                             result, new_images = _dispatch(runner, video_items, "read_frames", {"frames": fresh[:4]}, temp_files)
                     else:
