@@ -37,7 +37,7 @@ TOOLS = [
 ]
 
 SYSTEM_PROMPT = """你是安防视频调查 Agent。视频的时长、帧率、总帧数已在用户消息给出，不要再查询。
-使用原生工具调用，不要输出 JSON 工具指令。目标索引已随问题附上；先利用它规划全片，再根据候选查看原帧。独立条件优先用批量检索，多个时间点优先用 read_frames。单视频最多读取四张原帧，多视频最多八张；多条件题须给每个条件至少留一张。挑选分散且最有判别力的时间点，不要逐秒穷举或重复读取相近画面。工具阶段结束后及时作答。
+使用原生工具调用，不要输出 JSON 工具指令。目标索引已随问题附上；先利用它规划全片，再根据候选查看原帧。独立条件优先用批量检索，多个时间点优先用 read_frames。单视频最多读取四张原帧，多视频最多八张；多条件题须给每个条件至少留一张。挑选分散且最有判别力的时间点，不要逐秒穷举或重复读取相近画面。判断打斗、倒地、跑动等短时动作时，优先查看人物交互或状态变化的局部时段，并用相邻画面核实动作过程。工具阶段结束后及时作答。
 CLIP、OCR、ReID 和人脸搜索只提供候选，关键结论需原帧核验。跨视频同一目标须先获取 track_id，再调用 track_target，并读取两边原帧；无法确认时说明不确定。
 回答用户的选项题时，第一行只写选项字母。所有具体时间必须写成 [video:"1", time:"MM:SS"] 形式，序号对应用户提供的视频列表。证据不足时如实说明。避免冗长的过程叙述。"""
 
@@ -117,7 +117,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
     short_action_question = (
         len(video_items) == 1
         and float(video_items[0].get("duration") or 0) <= 60
-        and any(term in question_lower for term in ("倒", "跌", "摔", "跑", "停", "走", "浏览", "观看", "fall", "run", "walk", "stop"))
+        and any(term in question_lower for term in ("倒", "跌", "摔", "跑", "停", "走", "浏览", "观看", "打斗", "打架", "冲突", "搏斗", "拳打脚踢", "fight", "fall", "run", "walk", "stop"))
         and not any(term in question_lower for term in ("颜色", "衣服", "车牌", "物品", "相似", "color", "clothing"))
     )
     for tool in TOOLS:
