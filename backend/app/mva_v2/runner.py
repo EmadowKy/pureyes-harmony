@@ -68,8 +68,20 @@ class MVA2Runner:
         # 阶段一：组装全多视频元数据 Prompt
         videos_meta_text = []
         for idx, item in enumerate(video_items, 1):
+            if item.get("fps") is None or item.get("frame_count") is None:
+                # Older single-video callers do not supply these fields. Read them
+                # locally before the first model request instead of spending a turn.
+                measured = self.tools.get_video_metadata(item["video_path"])
+                item.setdefault("fps", measured.get("fps"))
+                item.setdefault("frame_count", measured.get("frame_count"))
+            fps = item.get("fps")
+            frame_count = item.get("frame_count")
+            fps_text = f"{fps:.2f}" if isinstance(fps, (int, float)) and fps > 0 else "未知"
+            frame_count_text = str(frame_count) if isinstance(frame_count, int) and frame_count > 0 else "未知"
             videos_meta_text.append(
-                f"  - 视频 {idx} (序号: \"{idx}\", 视频名称/备注: \"{item['remark']}\", 文件名: \"{item['video_id']}\", 时长: {item['duration']:.1f}秒)"
+                f"  - 视频 {idx} (序号: \"{idx}\", 视频名称/备注: \"{item['remark']}\", "
+                f"文件名: \"{item['video_id']}\", 时长: {item['duration']:.1f}秒, "
+                f"帧率: {fps_text} FPS, 总帧数: {frame_count_text})"
             )
         videos_summary_str = "\n".join(videos_meta_text)
 
@@ -297,17 +309,6 @@ class MVA2Runner:
                                 "content": observation
                             })
                             
-                    elif tool_name == "get_video_metadata":
-                        selected_video = resolve_selected_video(video_items, tool_params)
-                        if not selected_video:
-                            observation = "错误: 请求的视频不属于本次用户选择的视频列表。"
-                        else:
-                            res = self.tools.get_video_metadata(selected_video["video_path"])
-                            observation = f"系统观察反馈 (视频元数据):\n{json.dumps(res, ensure_ascii=False)}"
-                        messages.append({
-                            "role": "user",
-                            "content": observation
-                        })
                     else:
                         observation = f"错误: 未知的工具名称 '{tool_name}'。"
                         messages.append({
@@ -415,6 +416,8 @@ class MVA2Runner:
                 "video_id": video_id,
                 "remark": remark,
                 "duration": duration,
+                "fps": fps,
+                "frame_count": frame_count,
                 "start_sec": 0.0,
                 "end_sec": duration,
                 "meta": meta
