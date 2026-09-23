@@ -118,6 +118,12 @@ class MVA2Runner:
             }
         ]
 
+        # Use the provider's native function-calling protocol. The legacy
+        # JSON/ReAct loop below remains available for rollback.
+        if os.environ.get("PUREYES_NATIVE_TOOLS", "1") != "0":
+            from .native_agent import execute_native
+            return execute_native(self, video_items, messages, user_query, progress_callback)
+
         from app.mva.utils import Qwen_VL, api_config
         
         temp_files_to_clean = []
