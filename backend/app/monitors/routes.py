@@ -12,13 +12,13 @@ from app.core.config import get_ffmpeg_path
 from app.core.db import db
 from app.models.monitor import Monitor
 from app.models.qa_record import QAVideoSelection
-from app.models.group import GroupMember
+from app.models.group import Group, GroupMember
 from app.user_center.permissions import current_user, is_admin, require_group_creator
 from app.core.response import success, fail
 from app.core.media_auth import build_media_url, media_access_identity, monitor_scope, path_scope
 from . import monitors_bp
 from .slicer import slice_video
-from app.core.recorder import start_recording, stop_recording
+from app.core.recorder import recording_state, start_recording, stop_recording
 
 
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -27,6 +27,11 @@ COVERS_BASE = os.path.join(BACKEND_ROOT, "storage", "monitor_covers")
 SEGMENT_NAME_RE = re.compile(r"^(?P<stamp>\d{8}_\d{6})\.mp4$")
 COVER_REFRESH_INTERVAL_SECONDS = int(os.environ.get("MONITOR_COVER_INTERVAL_SECONDS", "60"))
 COVER_ACTIVE_FILE_GRACE_SECONDS = int(os.environ.get("MONITOR_COVER_ACTIVE_FILE_GRACE_SECONDS", "15"))
+RECORDING_SEGMENT_SECONDS = int(os.environ.get("MONITOR_RECORDING_SEGMENT_SECONDS", "60"))
+RECORDING_MIN_FILE_BYTES = int(os.environ.get("MONITOR_MIN_RECORDING_BYTES", str(64 * 1024)))
+RECORDING_FINALIZE_GRACE_SECONDS = int(os.environ.get("MONITOR_RECORDING_FINALIZE_GRACE_SECONDS", "15"))
+RECORDING_ACTIVE_WRITE_GRACE_SECONDS = int(os.environ.get("MONITOR_RECORDING_ACTIVE_WRITE_GRACE_SECONDS", "10"))
+RECORDING_RETENTION_HOURS = int(os.environ.get("MONITOR_RECORDING_RETENTION_HOURS", "24"))
 cover_refresh_started = False
 cover_refresh_lock = threading.Lock()
 
@@ -96,6 +101,92 @@ def _latest_recording_file(monitor_id: int):
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
+
+
+def _recording_catalog(monitor_id: int):
+    """Return plausible finalized files and the fragmented MP4 being written.
+
+    Tiny or stale incomplete files remain excluded. The newest file is exposed
+    only while its modification time proves FFmpeg is still appending data.
+    File names never leave the monitor API.
+    """
+    output_dir = _monitor_recordings_dir(monitor_id)
+    if not os.path.isdir(output_dir):
+        return []
+    now = datetime.now()
+    candidates = []
+    for filename in os.listdir(output_dir):
+        if not filename.endswith(".mp4"):
+            continue
+        start_time = _parse_segment_time(filename)
+        if not start_time:
+            continue
+        path = os.path.join(output_dir, filename)
+        try:
+            size = os.path.getsize(path)
+            modified_at = datetime.fromtimestamp(os.path.getmtime(path))
+        except OSError:
+            continue
+        if size < RECORDING_MIN_FILE_BYTES:
+            continue
+        candidates.append({
+            "path": path,
+            "filename": filename,
+            "start": start_time,
+            "modified_at": modified_at,
+        })
+
+    candidates.sort(key=lambda item: item["start"])
+    entries = []
+    for index, candidate in enumerate(candidates):
+        start_time = candidate["start"]
+        next_start = candidates[index + 1]["start"] if index + 1 < len(candidates) else None
+        recently_written = now - candidate["modified_at"] < timedelta(
+            seconds=RECORDING_ACTIVE_WRITE_GRACE_SECONDS
+        )
+        active_age_limit = timedelta(seconds=max(RECORDING_SEGMENT_SECONDS * 3, 180))
+        is_active = (
+            next_start is None
+            and start_time <= now
+            and now - start_time <= active_age_limit
+            and recently_written
+        )
+        if is_active:
+            # Keep a one-second safety margin so the player never seeks beyond
+            # bytes that FFmpeg may still be flushing to the fragmented MP4.
+            end_time = now - timedelta(seconds=1)
+            if end_time <= start_time:
+                continue
+        elif next_start is not None:
+            # A following segment proves this file has been closed. Its start
+            # time is also the most accurate end time when keyframes cause a
+            # segment to run slightly longer than the configured duration.
+            end_time = next_start
+        else:
+            end_time = start_time + timedelta(seconds=RECORDING_SEGMENT_SECONDS)
+            if now < end_time + timedelta(seconds=RECORDING_FINALIZE_GRACE_SECONDS):
+                continue
+            if now - candidate["modified_at"] < timedelta(seconds=RECORDING_FINALIZE_GRACE_SECONDS):
+                continue
+        entries.append({
+            "path": candidate["path"],
+            "filename": candidate["filename"],
+            "start": start_time,
+            "end": end_time,
+            "active": is_active,
+        })
+    return entries
+
+
+def _coverage_ranges(entries):
+    """Merge adjacent internal files into user-facing continuous time ranges."""
+    ranges = []
+    for entry in entries:
+        if not ranges or entry["start"] > ranges[-1]["end"] + timedelta(seconds=2):
+            ranges.append({"start": entry["start"], "end": entry["end"]})
+        elif entry["end"] > ranges[-1]["end"]:
+            ranges[-1]["end"] = entry["end"]
+    return ranges
 
 
 def _refresh_monitor_cover(monitor: Monitor) -> bool:
@@ -272,12 +363,19 @@ def get_monitors(group_id):
         return fail(message="not a group member", code=4001, http_status=403)
 
     monitors = Monitor.query.filter_by(group_id=group_id).all()
+    group = db.session.get(Group, group_id)
+    can_manage = bool(is_admin(current_user()) or (group and group.creator_id == emp_id))
     changed = False
     for monitor in monitors:
         changed = _refresh_monitor_cover(monitor) or changed
     if changed:
         db.session.commit()
-    return success(data=[m.to_dict() for m in monitors])
+    payload = []
+    for monitor in monitors:
+        item = monitor.to_dict(include_stream_url=can_manage, can_manage=can_manage)
+        item["recording_state"] = recording_state(monitor.id)
+        payload.append(item)
+    return success(data=payload)
 
 
 @monitors_bp.put("/<int:monitor_id>")
@@ -306,7 +404,7 @@ def update_monitor(monitor_id):
     if url_changed and monitor.stream_url:
         start_recording(monitor.id, monitor.stream_url)
 
-    return success(message="monitor updated", data=monitor.to_dict())
+    return success(message="monitor updated", data=monitor.to_dict(include_stream_url=True, can_manage=True))
 
 
 @monitors_bp.delete("/<int:monitor_id>")
@@ -415,8 +513,11 @@ def get_monitor_history(monitor_id):
     else:
         selected_time = datetime.now()
 
-    items, chosen_item = _build_recording_items(monitor_id, selected_time, window_count, step_seconds)
-    window_seconds = max(step_seconds * window_count, 60)
+    entries = _recording_catalog(monitor_id)
+    ranges = _coverage_ranges(entries)
+    # The slider precision determines the movement step, not storage layout.
+    # Coverage always describes continuous user-visible recording intervals.
+    window_seconds = max(step_seconds * window_count, RECORDING_SEGMENT_SECONDS)
     return success(data={
         "monitor": monitor.to_dict(),
         "selected_time": selected_time.isoformat(),
@@ -425,8 +526,13 @@ def get_monitor_history(monitor_id):
         "granularity": granularity,
         "window": window_count,
         "step_seconds": step_seconds,
-        "records": items,
-        "selected_record": chosen_item,
+        "coverage_start": ranges[0]["start"].isoformat() if ranges else None,
+        "coverage_end": ranges[-1]["end"].isoformat() if ranges else None,
+        "available_ranges": [
+            {"start_time": item["start"].isoformat(), "end_time": item["end"].isoformat()}
+            for item in ranges
+        ],
+        "retention_hours": RECORDING_RETENTION_HOURS,
     })
 
 
@@ -450,15 +556,22 @@ def get_monitor_playback(monitor_id):
     if not target_time:
         return fail(message="invalid time", code=4005, http_status=400)
 
-    items, chosen_item = _build_recording_items(monitor_id, target_time, window_count=3, step_seconds=60)
+    chosen_item = next(
+        (item for item in _recording_catalog(monitor_id) if item["start"] <= target_time < item["end"]),
+        None,
+    )
     if not chosen_item:
         return fail(message="recording not found for selected time", code=4044, http_status=404)
 
     return success(data={
         "monitor": monitor.to_dict(),
-        "target_time": target_time.isoformat(),
-        "record": chosen_item,
-        "records": items,
+        "requested_time": target_time.isoformat(),
+        "playback_url": build_media_url(
+            f"/api/video/storage/streams/{monitor_id}/{chosen_item['filename']}",
+            path_scope(f"storage/streams/{monitor_id}/{chosen_item['filename']}"),
+        ),
+        "seek_offset_seconds": max(0, int((target_time - chosen_item["start"]).total_seconds())),
+        "segment_end_time": chosen_item["end"].isoformat(),
     })
 
 

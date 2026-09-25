@@ -8,6 +8,7 @@ import uuid
 import time
 import threading
 import hashlib
+import shutil
 from urllib.parse import quote
 from flask import Blueprint, send_file, abort, Response, request, send_from_directory
 from werkzeug.exceptions import HTTPException
@@ -171,8 +172,13 @@ def _check_video_compatible(video_path: str) -> tuple:
     返回 (is_compatible, codec_info, needs_transcode)
     """
     try:
+        ffprobe_path = get_ffmpeg_path('ffprobe')
+        if not os.path.isfile(ffprobe_path) and not shutil.which(ffprobe_path):
+            # A missing probe must not turn every recorded H.264 MP4 into a
+            # costly, failure-prone transcode. Serve it directly instead.
+            return True, "ffprobe unavailable; serving source", False
         cmd = [
-            get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
+            ffprobe_path, '-v', 'quiet', '-print_format', 'json',
             '-show_streams', '-show_format', video_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -245,6 +251,11 @@ def _transcode_video(video_path: str, output_path: str) -> bool:
             return True
 
         logger.error("Video transcoding failed: %s", result.stderr[-500:])
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except OSError:
+            pass
         return False
 
     except subprocess.TimeoutExpired:

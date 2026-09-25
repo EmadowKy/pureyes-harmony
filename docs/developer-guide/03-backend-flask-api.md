@@ -95,8 +95,8 @@
 | `GET` | `/api/monitors/:group_id` | 获取指定小组下的所有摄像头列表 |
 | `POST` | `/api/monitors/:group_id` | 组长添加摄像头 (指定名称与 RTSP/HTTP 流地址) |
 | `GET` | `/api/monitors/:id/cover` | 获取摄像头最新自动抓拍封面快照图片 |
-| `GET` | `/api/monitors/:id/history` | 查询监控历史录像时间轴（支持 `granularity: day/hour/minute/second` 分级） |
-| `GET` | `/api/monitors/:id/playback` | 监控历史视频定位与回放播放链接 |
+| `GET` | `/api/monitors/:id/history` | 查询连续录像的可回放范围（含正在写入的 fragmented MP4；支持 `granularity: day/hour/minute/second` 进度条精度） |
+| `GET` | `/api/monitors/:id/playback` | 按绝对时间定位已完成或正在写入的录像，返回签名播放地址与片内偏移；不暴露存储文件名 |
 | `GET` | `/api/monitors/:id/slice` | 监控指定时间段 (`start` / `end`) 历史视频切片导出 |
 
 ---

@@ -37,7 +37,7 @@ ultralytics>=8.2.0
 supervision>=0.21.0
 
 # ONNX 推理引擎 (用于加载 OSNet 行人重识别权重)
-onnxruntime>=1.17.0
+onnxruntime>=1.17.0,<1.19.0
 
 # 嵌入式时空特征向量数据库
 lancedb>=0.6.0
@@ -50,3 +50,5 @@ transformers>=4.40.0
 
 # 视频画面文字识别（按需加载；模型文件由 OCR_MODEL_ROOT 指定）
 rapidocr-onnxruntime>=1.4.4,<2.0
+# RapidOCR 的几何依赖；避免服务器将其升级为仅支持 NumPy 2 的构建。
+shapely>=2.0.0,<2.1.0
