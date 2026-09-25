@@ -130,6 +130,9 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
     
     print(f"[MVA Cloud API] Sending request to {url} with model {req_model}")
     try:
+        should_cancel = getattr(api_config, 'should_cancel', None)
+        if callable(should_cancel) and should_cancel():
+            raise RuntimeError("调查已停止")
         session = requests.Session()
         session.trust_env = False
         response = session.post(
@@ -149,6 +152,9 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
             task_id = getattr(api_config, 'task_id', None)
             
             for line in response.iter_lines():
+                if callable(should_cancel) and should_cancel():
+                    response.close()
+                    raise RuntimeError("调查已停止")
                 if line:
                     decoded_line = line.decode('utf-8')
                     if decoded_line.startswith("data:"):
@@ -192,14 +198,14 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                             if tools is not None:
                                 if task_id and partial_text:
                                     from app.workspaces.routes import running_tasks
-                                    if task_id in running_tasks:
+                                    if task_id in running_tasks and not (callable(should_cancel) and should_cancel()):
                                         running_tasks[task_id]['answer'] = partial_text
                                 continue
                             
                             # Update running tasks dict dynamically for streaming/typewriter feedback
                             if task_id:
                                 from app.workspaces.routes import running_tasks
-                                if task_id in running_tasks:
+                                if task_id in running_tasks and not (callable(should_cancel) and should_cancel()):
                                     import re
                                     # 1. 最终回答流：若包含 final_answer，将其提取并更新至主答案字段
                                     match_ans = re.search(r'"final_answer"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', partial_text)

@@ -259,6 +259,14 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                     progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调用 {name}",
                                        "data": {"iteration": loop_idx, "phase": "action", "tool_name": name, "tool_params": args,
                                                 "model_seconds": model_seconds, "tool_seconds": round(time.monotonic() - tool_started, 2)}})
+                    progress_callback({"stage": "reasoning", "status": "completed",
+                                       "message": f"已完成 {name} 核验",
+                                       "data": {"iteration": loop_idx, "phase": "observation", "tool_name": name,
+                                                "summary": runner._public_tool_summary(result, f"已完成 {name} 核验"),
+                                                "times": runner._public_tool_times(result),
+                                                "evidence": runner._public_tool_evidence(result),
+                                                "details": runner._public_tool_details(result),
+                                                "result_status": "failed" if isinstance(result, dict) and result.get("error") else "completed"}})
                     if cards:
                         progress_callback({"stage": "evidence_memory", "status": "completed",
                                            "message": "已记录可追溯的索引候选",

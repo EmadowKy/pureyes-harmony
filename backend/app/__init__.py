@@ -67,12 +67,44 @@ def _ensure_agent_conversation_schema():
             additions.append("ALTER TABLE qa_records ADD COLUMN conversation_id VARCHAR(64)")
         if "turn_index" not in columns:
             additions.append("ALTER TABLE qa_records ADD COLUMN turn_index INTEGER NOT NULL DEFAULT 1")
+        if "heartbeat_at" not in columns:
+            additions.append("ALTER TABLE qa_records ADD COLUMN heartbeat_at DATETIME")
         if additions:
             with db.engine.begin() as conn:
                 for statement in additions:
                     conn.execute(text(statement))
     except Exception as exc:
         print(f"[DB] Agent conversation schema check skipped: {exc}")
+    from app.models.qa_record import QARecord
+    duplicates = (db.session.query(QARecord.conversation_id)
+                  .filter(QARecord.conversation_id.isnot(None), QARecord.status == "processing")
+                  .group_by(QARecord.conversation_id).having(db.func.count(QARecord.id) > 1).all())
+    for (conversation_id,) in duplicates:
+        active = (QARecord.query.filter_by(conversation_id=conversation_id, status="processing")
+                  .order_by(QARecord.created_at.desc(), QARecord.id.desc()).all())
+        for stale in active[1:]:
+            stale.status = "failed"
+            stale.answer = "同一调查线存在并发任务，本轮已中断，请继续追问。"
+    if duplicates:
+        db.session.commit()
+    next(index for index in QARecord.__table__.indexes
+         if index.name == "uq_qa_active_conversation").create(bind=db.engine, checkfirst=True)
+
+
+def _ensure_face_schema():
+    """Preserve existing face records while adding embedding-based classification."""
+    try:
+        from sqlalchemy import inspect, text
+
+        columns = {column["name"] for column in inspect(db.engine).get_columns("workspace_face_records")}
+        with db.engine.begin() as conn:
+            if "embedding_json" not in columns:
+                conn.execute(text("ALTER TABLE workspace_face_records ADD COLUMN embedding_json TEXT"))
+            if "classification_backend" not in columns:
+                conn.execute(text("ALTER TABLE workspace_face_records ADD COLUMN classification_backend VARCHAR(24) NOT NULL DEFAULT 'legacy'"))
+                conn.execute(text("UPDATE workspace_face_records SET classification_backend = 'server' WHERE embedding_json IS NOT NULL"))
+    except Exception as exc:
+        print(f"[DB] face schema check skipped: {exc}")
 
 
 def _encrypt_legacy_api_keys():
@@ -150,6 +182,7 @@ def create_app():
         _ensure_user_schema()
         _ensure_qa_selection_schema()
         _ensure_agent_conversation_schema()
+        _ensure_face_schema()
         _encrypt_legacy_api_keys()
         from app.models.blacklist import TokenBlacklist
         TokenBlacklist.cleanup_expired(max_age_hours=25)

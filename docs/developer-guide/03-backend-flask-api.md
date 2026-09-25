@@ -1,6 +1,6 @@
 # 03-后端 RESTful API 接口规范详解
 
-本文档为 API 开发者提供 Pureyes 后端 RESTful API 的完整参考。所有 API 接口请求与响应统一使用 JSON 编码，根路径为 `/api`。
+本文档为 API 开发者提供 Pureyes 后端主要 REST API 参考。除视频上传使用 `multipart/form-data`、任务进度流使用 SSE 外，请求与响应以 JSON 为主，根路径为 `/api`。
 
 ---
 
@@ -107,35 +107,56 @@
 | :--- | :--- | :--- |
 | `GET` | `/api/workspaces/:group_id` | 获取小组下的工作区列表 |
 | `POST` | `/api/workspaces/:group_id` | 新建工作区 |
+| `GET` | `/api/workspaces/:id/video-sources` | 列出同组监控历史、工作区上传文件及可用示例视频 |
 | `POST` | `/api/workspaces/:id/upload-video` | 上传工作区私有视频源 |
 | `POST` | `/api/workspaces/:id/segments` | 从视频源或监控历史创建切片 |
 | `GET` | `/api/workspaces/:id/segments` | 查询工作区切片（含 `status`、`progress` 与签名媒体地址） |
+| `PUT` | `/api/workspaces/segments/:segment_id` | 编辑片段备注 |
+| `DELETE` | `/api/workspaces/segments/:segment_id` | 删除未被调查记录引用的片段及其特征和视频文件 |
 | `POST` | `/api/workspaces/segments/:segment_id/preprocess` | 启动目标与人脸特征预处理 |
 | `DELETE` | `/api/workspaces/segments/:segment_id/features` | 清理该切片的预处理特征 |
+| `GET` | `/api/workspaces/:id/faces` | 列出工作区人脸分组，可用 `segment_id` 筛选；旧版分组返回 `is_legacy` |
+| `GET` | `/api/workspaces/:id/faces/:group_id/records` | 获取某个人脸分组的出现记录，可用 `segment_id` 筛选 |
+| `POST` | `/api/workspaces/:id/faces/merge` | `source_group_id`、`target_group_id`：合并分组 |
+| `POST` | `/api/workspaces/:id/faces/records/:record_id/move` | `target_group_id`：移动单条记录；省略则单独成组 |
+| `GET` | `/api/workspaces/face-backend` | 只读查询后端配置的人脸归类模式；无修改接口 |
+| `GET` | `/api/workspaces/:id/faces/harmony/queue` | 获取最多 30 条待手机归类记录、剩余数及已归类分组代表抓拍 |
+| `POST` | `/api/workspaces/:id/faces/harmony/classify` | 提交 `assignments: [{"record_id":1,"target_group_id":2}]`；每条新分组可指向自己的分组 ID |
+
+上传使用 `file` 表单字段，支持 `.mp4`、`.avi`、`.mov`、`.mkv`、`.webm`。创建片段时：监控源传 `source_type: "monitor"`、`monitor_id`、`start_time`、`end_time`；上传／示例源传 `video_name` 或 `filepath`，以及以秒为单位的 `start_offset`、`end_offset`（最长两小时）。可选字段包括 `remark`、`enable_preprocess`（默认 `true`）、`sample_fps`（默认 `1.0`）与 `resolution`（默认 `1080P`）。客户端预设 0.5／1／2 FPS 和 480P／720P／1080P／4K；服务端允许大于 0 且不超过 30 FPS 的有限数值，并校验画质枚举。关闭预处理的片段状态为 `none`，开启后依次进入 `pending`／`processing`，最终为 `completed` 或 `failed`。
+
+片段为 `pending`／`processing`、被运行中的问答使用，或仍被调查历史引用时，删除返回 HTTP 409。运行中的问答还会阻止清除或重建该片段特征，以免破坏当前任务的证据。
+
+人脸分组修改要求当前用户仍为工作区小组成员，且工作区没有等待或正在预处理的片段，否则返回 HTTP 409。重新预处理片段会重新生成该片段的人脸记录。
+手机归类必须由小组成员提交；目标分组须属于相同工作区，且先前已有归类记录或在本批次中先完成归类。待归类记录不会进入 Agent 的人脸线索工具结果。归类模式只能由运维在后端设置 `FACE_RECOGNITION_BACKEND=server|harmony` 并重启服务；接口和应用均不能修改。
 
 ---
 
 ## 7. AI 多模态视觉问答 API
 
-### 提交自然语言视觉提问
-- **请求方法**：`POST`
-- **路径**：`/api/workspaces/:workspace_id/qa`
-- **请求体**：
-  ```json
-  {
-    "segment_ids": [10, 11],
-    "question": "视频中穿红衣服拿黑包的人在什么时间点出现？"
-  }
-  ```
-- **响应示例**：
-  ```json
-  {
-    "code": 0,
-    "message": "ok",
-    "data": {
-      "task_id": "6f8f..."
-    }
-  }
-  ```
+### 7.1 创建调查与提交追问
 
-任务提交后使用 `GET /api/workspaces/qa/:task_id/status` 查询状态，或使用带 JWT 的 `GET /api/workspaces/qa/:task_id/stream` 获取 SSE 进度。所有工作区、问答、视频、人脸和媒体接口都会再次校验当前用户是否仍为所属小组成员；媒体文件只能通过服务端返回的限时签名地址访问。
+`POST /api/workspaces/:workspace_id/qa` 创建一轮任务：
+
+```json
+{
+  "segment_ids": [10, 11],
+  "question": "视频中穿红衣服拿黑包的人何时出现？"
+}
+```
+
+响应 `data` 包含 `task_id`、`conversation_id`、`turn_index`。继续同一调查时，传 `{"conversation_id":"已有会话 ID","question":"后来去了哪里？"}`；服务端始终沿用首轮选定的片段范围，忽略追问中额外的片段选择。问题不能为空、最长 4000 字；首轮需选择 1–20 个当前工作区片段。片段正在预处理时返回冲突；同一调查只能同时运行一轮，重复提交返回 HTTP 409。不同组员可在上一轮结束后追问，每轮使用提交者自己的大模型配置。
+
+### 7.2 查询与控制调查
+
+| 方法 | 路径 | 用途 |
+| :--- | :--- | :--- |
+| `GET` | `/api/workspaces/:id/agent/conversations` | 工作区调查列表，含最近一轮状态及轮数 |
+| `GET` | `/api/workspaces/agent/conversations/:conversation_id/messages` | 按轮次返回问题、状态、答案及整理后的 `tool_calls` |
+| `GET` | `/api/workspaces/qa/:task_id/status` | 当前状态、公开进度、答案／错误和会话定位 |
+| `GET` | `/api/workspaces/qa/:task_id/stream` | 带 JWT 的 SSE 进度与终态事件 |
+| `POST` | `/api/workspaces/qa/:task_id/stop` | 组员停止正在运行的 Agent 轮次 |
+| `GET` | `/api/workspaces/:id/qa` | 历史问答记录（兼容旧记录） |
+| `DELETE` | `/api/workspaces/qa/:task_id` | 删除已结束的问答轮次；运行中返回 409 |
+
+状态为 `processing`、`completed`、`failed` 或 `stopped`。`status` 和 SSE 的公开进度仅提供阶段、脱敏后的工具参数与观察结果，不返回模型内部思考；`messages` 的 `tool_calls` 提供可展开的调用记录。客户端按任务及会话状态轮询，也可消费 SSE。服务端以数据库记录状态和心跳恢复卡住的任务，并以 `AGENT_TASK_TIMEOUT_SECONDS` 控制单轮时限（默认 1200 秒）。所有工作区、问答、视频、人脸和媒体接口都会再次校验当前用户是否仍为所属小组成员；媒体文件通过限时签名地址访问。

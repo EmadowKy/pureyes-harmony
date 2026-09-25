@@ -1,6 +1,9 @@
 import { HttpUtil, BASE_HOST } from '../utils/http'
 import { QARecordInfo } from './tabs/WorkspaceTab'
 import { AgentConversationPanel } from './components/AgentConversationPanel'
+import { MarkdownAnswer } from './components/MarkdownAnswer'
+import { timeToSeconds } from '../utils/answerFormatting'
+import { FaceQueueRecord, FaceAssignment, classifyOnHarmonyPhone } from '../utils/harmonyFaces'
 
 interface ToastOptions {
   message: string;
@@ -28,188 +31,6 @@ export class WorkspaceVideoSegment {
   orig_resolution: string = '1080P';
 }
 
-export class TextChunk {
-  content: string = '';
-  isBold: boolean = false;
-  isTimestamp: boolean = false;
-  videoNum: number = 0;
-  timeStr: string = '';
-}
-
-export function timeToSeconds(timeStr: string): number {
-  if (!timeStr) {
-    return 0;
-  }
-  const parts = timeStr.split(':').map(x => parseInt(x) || 0);
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
-  } else if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
-  return 0;
-}
-
-export function parseAnswerToChunks(answerText: string): Array<Array<TextChunk>> {
-  if (!answerText) {
-    return [];
-  }
-  const paragraphs = answerText.split('\n');
-  const result: Array<Array<TextChunk>> = [];
-  const tsRegex = /\[video:\s*["']?([^"',\]]+)["']?\s*,\s*time:\s*["']?([^"',\s\]\*]+)["']?\]?/g;
-  const boldRegex = /\*\*([^*]+)\*\*/g;
-
-  for (let i = 0; i < paragraphs.length; i++) {
-    let paraText = paragraphs[i];
-    if (!paraText) {
-      const emptyChunk = new TextChunk();
-      emptyChunk.content = '';
-      result.push([emptyChunk]);
-      continue;
-    }
-
-    let isBullet = false;
-    const bulletMatch = paraText.match(/^(\s*[*•-]\s+)/);
-    if (bulletMatch) {
-      isBullet = true;
-      paraText = paraText.substring(bulletMatch[0].length);
-    }
-
-    const paraChunks: Array<TextChunk> = [];
-    
-    // Phase 1: Parse bold first
-    const boldChunks: Array<Record<string, Object>> = [];
-    let lastIdx = 0;
-    let boldMatch: RegExpExecArray | null = null;
-    boldRegex.lastIndex = 0;
-
-    while ((boldMatch = boldRegex.exec(paraText)) !== null) {
-      if (boldMatch.index > lastIdx) {
-        boldChunks.push({
-          "content": paraText.substring(lastIdx, boldMatch.index),
-          "isBold": false
-        });
-      }
-      boldChunks.push({
-        "content": boldMatch[1],
-        "isBold": true
-      });
-      lastIdx = boldRegex.lastIndex;
-    }
-
-    if (lastIdx < paraText.length) {
-      boldChunks.push({
-        "content": paraText.substring(lastIdx),
-        "isBold": false
-      });
-    }
-
-    if (boldChunks.length === 0) {
-      boldChunks.push({ "content": paraText, "isBold": false });
-    }
-
-    // Phase 2: For each bold chunk, parse timestamps
-    let isFirst = true;
-    for (let j = 0; j < boldChunks.length; j++) {
-      const bc = boldChunks[j];
-      const isBold = bc["isBold"] as boolean;
-      const textToParse = bc["content"] as string;
-
-      tsRegex.lastIndex = 0;
-      let tsLastIdx = 0;
-      let tsMatch: RegExpExecArray | null = null;
-
-      while ((tsMatch = tsRegex.exec(textToParse)) !== null) {
-        if (tsMatch.index > tsLastIdx) {
-          let contentStr = textToParse.substring(tsLastIdx, tsMatch.index);
-          if (isFirst && isBullet) {
-            contentStr = "•  " + contentStr;
-            isFirst = false;
-          }
-          const chunk = new TextChunk();
-          chunk.content = contentStr;
-          chunk.isBold = isBold;
-          paraChunks.push(chunk);
-        }
-
-        const vNumStr = tsMatch[1].trim();
-        const tStr = tsMatch[2].trim();
-        
-        let videoNum = parseInt(vNumStr);
-        if (isNaN(videoNum)) {
-          const code = vNumStr.toUpperCase().charCodeAt(0);
-          if (code >= 65 && code <= 90) {
-            videoNum = code - 65 + 1;
-          } else {
-            videoNum = 1;
-          }
-        }
-
-        let contentStr = `视频${videoNum}(${tStr})`;
-        if (isFirst && isBullet) {
-          contentStr = "•  " + contentStr;
-          isFirst = false;
-        }
-
-        const chunk = new TextChunk();
-        chunk.content = contentStr;
-        chunk.isBold = isBold;
-        chunk.isTimestamp = true;
-        chunk.videoNum = videoNum;
-        chunk.timeStr = tStr;
-        paraChunks.push(chunk);
-
-        tsLastIdx = tsRegex.lastIndex;
-      }
-
-      if (tsLastIdx < textToParse.length) {
-        let contentStr = textToParse.substring(tsLastIdx);
-        if (isFirst && isBullet) {
-          contentStr = "•  " + contentStr;
-          isFirst = false;
-        }
-        const chunk = new TextChunk();
-        chunk.content = contentStr;
-        chunk.isBold = isBold;
-        paraChunks.push(chunk);
-      }
-    }
-
-    result.push(paraChunks);
-  }
-
-  return result;
-}
-
-export function formatAnswerToPlainText(answerText: string): string {
-  if (!answerText) {
-    return '';
-  }
-  const tsRegex = /\[video:\s*["']?([^"',\]]+)["']?\s*,\s*time:\s*["']?([^"',\s\]\*]+)["']?\]?/g;
-  let formatted = answerText.replace(tsRegex, (match: string, vNumStr: string, tStr: string): string => {
-    let videoNum = parseInt(vNumStr.trim());
-    if (isNaN(videoNum)) {
-      const code = vNumStr.trim().toUpperCase().charCodeAt(0);
-      if (code >= 65 && code <= 90) {
-        videoNum = code - 65 + 1;
-      } else {
-        videoNum = 1;
-      }
-    }
-    return `视频${videoNum}(${tStr.trim()})`;
-  });
-  
-  const lines = formatted.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const bulletMatch = lines[i].match(/^(\s*[*•-]\s+)/);
-    if (bulletMatch) {
-      lines[i] = "•  " + lines[i].substring(bulletMatch[0].length);
-    }
-  }
-  formatted = lines.join('\n');
-  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '$1');
-  return formatted;
-}
-
 export class ExampleVideoInfo {
   id: string = '';
   name: string = '';
@@ -235,6 +56,8 @@ export class WorkspaceFaceGroupInfo {
   avatar_path: string = '';
   avatar_url: string = '';
   record_count: number = 0;
+  is_legacy: boolean = false;
+  needs_classification: boolean = false;
 }
 
 export class WorkspaceFaceRecordInfo {
@@ -580,9 +403,32 @@ struct FaceImagePreviewDialog {
 struct FaceDetailDialog {
   controller: CustomDialogController
   group: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
+  groups: Array<WorkspaceFaceGroupInfo> = [];
   records: Array<WorkspaceFaceRecordInfo> = [];
   onRecordClick: (record: WorkspaceFaceRecordInfo) => void = (_r): void => {};
   onPreviewImage: (imageUrl: string) => void = (_url): void => {};
+  onMerge: (targetId: number) => void = (_id): void => {};
+  onMove: (recordId: number, targetId: number) => void = (_id, _target): void => {};
+  @State showMergeChoices: boolean = false;
+  @State correctionRecordId: number = 0;
+  @State startFilter: string = '';
+  @State endFilter: string = '';
+
+  private parseSeconds(value: string): number {
+    const parts = value.trim().split(':');
+    if (parts.length !== 2) return -1;
+    const minutes = Number(parts[0]);
+    const seconds = Number(parts[1]);
+    return Number.isInteger(minutes) && Number.isInteger(seconds) && minutes >= 0 && seconds >= 0 && seconds < 60 ?
+      minutes * 60 + seconds : -1;
+  }
+
+  private visibleRecords(): Array<WorkspaceFaceRecordInfo> {
+    const start = this.parseSeconds(this.startFilter);
+    const end = this.parseSeconds(this.endFilter);
+    return this.records.filter((record: WorkspaceFaceRecordInfo): boolean =>
+      (start < 0 || record.end_time_offset >= start) && (end < 0 || record.start_time_offset <= end));
+  }
 
   build() {
     Column({ space: 12 }) {
@@ -623,10 +469,49 @@ struct FaceDetailDialog {
 
       Divider().color($r('app.color.app_border'))
 
+      Row({ space: 8 }) {
+        TextInput({ text: this.startFilter, placeholder: '开始 mm:ss' })
+          .layoutWeight(1)
+          .height(36)
+          .fontSize(12)
+          .onChange((value: string): void => { this.startFilter = value; })
+        TextInput({ text: this.endFilter, placeholder: '结束 mm:ss' })
+          .layoutWeight(1)
+          .height(36)
+          .fontSize(12)
+          .onChange((value: string): void => { this.endFilter = value; })
+      }
+      .width('100%')
+
+      if (this.groups.length > 1) {
+        Button(this.showMergeChoices ? '收起合并选项' : '合并到其他人脸分组')
+          .fontSize(12)
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .onClick((): void => { this.showMergeChoices = !this.showMergeChoices; })
+      }
+      if (this.showMergeChoices) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.groups.filter((item: WorkspaceFaceGroupInfo): boolean => item.id !== this.group.id),
+            (item: WorkspaceFaceGroupInfo): void => {
+              Button(`合并到 ${item.name}`)
+                .fontSize(11)
+                .backgroundColor($r('app.color.app_primary_soft'))
+                .fontColor($r('app.color.app_text_primary'))
+                .margin({ right: 6, bottom: 6 })
+                .onClick((): void => {
+                  this.onMerge(item.id);
+                  this.controller.close();
+                })
+            })
+        }
+      }
+
       if (this.records.length > 0) {
         Scroll() {
           Column({ space: 10 }) {
-            ForEach(this.records, (rec: WorkspaceFaceRecordInfo): void => {
+            ForEach(this.visibleRecords(), (rec: WorkspaceFaceRecordInfo): void => {
+              Column({ space: 8 }) {
               Row({ space: 12 }) {
                 // 左边：这个人脸在这一段的图片，点击可以查看大图
                 Image(rec.crop_url ? (BASE_HOST + rec.crop_url) : $r('app.media.business_face_library'))
@@ -676,6 +561,41 @@ struct FaceDetailDialog {
               .backgroundColor($r('app.color.app_card_subtle_bg'))
               .borderRadius(8)
               .border({ width: 1, color: $r('app.color.app_border') })
+              Row({ space: 8 }) {
+                Button('单独成组')
+                  .fontSize(11)
+                  .backgroundColor($r('app.color.app_primary_soft'))
+                  .fontColor($r('app.color.app_text_primary'))
+                  .onClick((): void => {
+                    this.onMove(rec.id, 0);
+                    this.controller.close();
+                  })
+                if (this.groups.length > 1) {
+                  Button(this.correctionRecordId === rec.id ? '收起重分类' : '移到其他分组')
+                    .fontSize(11)
+                    .backgroundColor(Color.Transparent)
+                    .fontColor($r('app.color.app_text_secondary'))
+                    .onClick((): void => {
+                      this.correctionRecordId = this.correctionRecordId === rec.id ? 0 : rec.id;
+                    })
+                }
+              }
+              if (this.correctionRecordId === rec.id) {
+                Flex({ wrap: FlexWrap.Wrap }) {
+                  ForEach(this.groups.filter((item: WorkspaceFaceGroupInfo): boolean => item.id !== this.group.id),
+                    (item: WorkspaceFaceGroupInfo): void => {
+                      Button(item.name)
+                        .fontSize(11)
+                        .margin({ right: 6, bottom: 6 })
+                        .onClick((): void => {
+                          this.onMove(rec.id, item.id);
+                          this.controller.close();
+                        })
+                    })
+                }
+              }
+              }
+              .width('100%')
             })
           }
         }
@@ -691,6 +611,19 @@ struct FaceDetailDialog {
     .backgroundColor($r('app.color.app_card_bg'))
     .borderRadius(12)
   }
+}
+
+class FaceClassifyPayload {
+  assignments: Array<FaceAssignment> = [];
+}
+
+class FaceMergePayload {
+  source_group_id: number = 0;
+  target_group_id: number = 0;
+}
+
+class FaceMovePayload {
+  target_group_id?: number;
 }
 
 @CustomDialog
@@ -1430,6 +1363,11 @@ struct WorkspaceDetail {
   @State activeIndex: number = 0;
 
   @State faceGroups: Array<WorkspaceFaceGroupInfo> = [];
+  @State faceFilterSegmentId: number = 0;
+  @State faceBackendMode: string = 'server';
+  @State isClassifyingOnPhone: boolean = false;
+  @State phoneFaceProgress: string = '';
+  @State pendingPhoneFaces: number = 0;
   @State selectedFaceGroup: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
   @State activeFaceGroupRecords: Array<WorkspaceFaceRecordInfo> = [];
   @State previewImageUrl: string = '';
@@ -1493,6 +1431,7 @@ struct WorkspaceDetail {
   faceDetailDialogController: CustomDialogController = new CustomDialogController({
     builder: FaceDetailDialog({
       group: this.selectedFaceGroup,
+      groups: this.faceGroups,
       records: this.activeFaceGroupRecords,
       onRecordClick: (rec: WorkspaceFaceRecordInfo): void => {
         this.jumpToFaceRecordVideo(rec);
@@ -1500,6 +1439,12 @@ struct WorkspaceDetail {
       onPreviewImage: (url: string): void => {
         this.previewImageUrl = url;
         this.faceImagePreviewDialogController.open();
+      },
+      onMerge: (targetId: number): void => {
+        this.mergeFaceGroups(this.selectedFaceGroup.id, targetId);
+      },
+      onMove: (recordId: number, targetId: number): void => {
+        this.moveFaceRecord(recordId, targetId);
       }
     }),
     autoCancel: true
@@ -1559,11 +1504,69 @@ struct WorkspaceDetail {
     }
     this.loadSegments();
     this.loadFaceGroups();
+    this.loadFaceBackend();
+    this.loadHarmonyQueueCount();
     this.loadQARecords();
   }
 
+  async loadFaceBackend(): Promise<void> {
+    const res = await HttpUtil.get('/workspaces/face-backend');
+    if (res.code === 0 && res.data) {
+      const setting = JSON.parse(res.data) as Record<string, Object>;
+      this.faceBackendMode = (setting['mode'] as string) || 'server';
+    }
+  }
+
+  private parseFaceQueueRecord(item: Record<string, Object>): FaceQueueRecord {
+    const record = new FaceQueueRecord();
+    record.id = item['id'] as number;
+    record.group_id = item['group_id'] as number;
+    record.crop_url = (item['crop_url'] as string) || '';
+    return record;
+  }
+
+  async loadHarmonyQueueCount(): Promise<void> {
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces/harmony/queue`);
+    if (res.code === 0 && res.data) {
+      const queue = JSON.parse(res.data) as Record<string, Object>;
+      this.pendingPhoneFaces = (queue['remaining'] as number) || 0;
+    }
+  }
+
+  async classifyPendingFacesOnPhone(): Promise<void> {
+    if (this.isClassifyingOnPhone) return;
+    this.isClassifyingOnPhone = true;
+    try {
+      while (true) {
+        const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces/harmony/queue`);
+        if (res.code !== 0 || !res.data) throw new Error(res.message || '获取待归类人脸失败');
+        const queue = JSON.parse(res.data) as Record<string, Object>;
+        const pendingItems = queue['pending'] as Array<Record<string, Object>>;
+        if (!pendingItems || pendingItems.length === 0) break;
+        const galleryItems = queue['gallery'] as Array<Record<string, Object>>;
+        const pending = pendingItems.map((item: Record<string, Object>): FaceQueueRecord => this.parseFaceQueueRecord(item));
+        const gallery = galleryItems.map((item: Record<string, Object>): FaceQueueRecord => this.parseFaceQueueRecord(item));
+        this.phoneFaceProgress = `本机正在比对 ${pending.length} 张人脸，剩余 ${queue['remaining']} 张`;
+        const assignments: Array<FaceAssignment> = await classifyOnHarmonyPhone(pending, gallery);
+        const payload = new FaceClassifyPayload();
+        payload.assignments = assignments;
+        const submitted = await HttpUtil.post(`/workspaces/${this.workspaceId}/faces/harmony/classify`, payload);
+        if (submitted.code !== 0) throw new Error(submitted.message || '保存鸿蒙归类结果失败');
+      }
+      this.showToast({ message: '鸿蒙端人脸归类完成', duration: 2000 });
+    } catch (error) {
+      this.showToast({ message: `归类中断：${String(error)}`, duration: 3000 });
+    } finally {
+      this.isClassifyingOnPhone = false;
+      this.phoneFaceProgress = '';
+      this.loadHarmonyQueueCount();
+      this.loadFaceGroups();
+    }
+  }
+
   async loadFaceGroups(): Promise<void> {
-    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces`);
+    const filter = this.faceFilterSegmentId > 0 ? `?segment_id=${this.faceFilterSegmentId}` : '';
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces${filter}`);
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const mapped: Array<WorkspaceFaceGroupInfo> = [];
@@ -1576,6 +1579,8 @@ struct WorkspaceDetail {
         g.avatar_path = (item['avatar_path'] as string) || '';
         g.avatar_url = (item['avatar_url'] as string) || '';
         g.record_count = (item['record_count'] as number) || 0;
+        g.is_legacy = (item['is_legacy'] as boolean) || false;
+        g.needs_classification = (item['needs_classification'] as boolean) || false;
         mapped.push(g);
       }
       this.faceGroups = mapped;
@@ -1586,7 +1591,8 @@ struct WorkspaceDetail {
 
   async openFaceGroupDetail(group: WorkspaceFaceGroupInfo): Promise<void> {
     this.selectedFaceGroup = group;
-    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces/${group.id}/records`);
+    const filter = this.faceFilterSegmentId > 0 ? `?segment_id=${this.faceFilterSegmentId}` : '';
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/faces/${group.id}/records${filter}`);
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const mapped: Array<WorkspaceFaceRecordInfo> = [];
@@ -1612,6 +1618,23 @@ struct WorkspaceDetail {
     } else {
       this.showToast({ message: '获取人脸识别轨迹失败', duration: 1500 });
     }
+  }
+
+  async mergeFaceGroups(sourceId: number, targetId: number): Promise<void> {
+    const payload = new FaceMergePayload();
+    payload.source_group_id = sourceId;
+    payload.target_group_id = targetId;
+    const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/faces/merge`, payload);
+    this.showToast({ message: res.code === 0 ? '已合并人脸线索' : (res.message || '合并失败'), duration: 2000 });
+    if (res.code === 0) this.loadFaceGroups();
+  }
+
+  async moveFaceRecord(recordId: number, targetId: number): Promise<void> {
+    const payload = new FaceMovePayload();
+    if (targetId > 0) payload.target_group_id = targetId;
+    const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/faces/records/${recordId}/move`, payload);
+    this.showToast({ message: res.code === 0 ? '已调整人脸线索' : (res.message || '调整失败'), duration: 2000 });
+    if (res.code === 0) this.loadFaceGroups();
   }
 
   jumpToFaceRecordVideo(rec: WorkspaceFaceRecordInfo): void {
@@ -1854,6 +1877,17 @@ struct WorkspaceDetail {
     
     this.timestampPreviewDialogController.open();
     this.showToast({ message: `已跳转到视频 ${videoNumber} 的 ${timeStr}`, duration: 1500 });
+  }
+
+  handleAgentTimestampClick(segmentId: number, timeStr: string): void {
+    const segment = this.segments.find((item: WorkspaceVideoSegment): boolean => item.id === segmentId);
+    if (!segment || !segment.media_url) {
+      this.showToast({ message: '该视频片段已删除或暂时无法播放', duration: 1500 });
+      return;
+    }
+    this.selectedSegment = segment;
+    this.jumpSeconds = timeToSeconds(timeStr);
+    this.timestampPreviewDialogController.open();
   }
 
   async submitUpdateSegment(segmentId: number, remark: string): Promise<void> {
@@ -2653,29 +2687,14 @@ struct WorkspaceDetail {
                     .alignSelf(ItemAlign.Start)
 
                   if (this.activeTaskAnswer) {
-                    Column({ space: 6 }) {
-                      ForEach(parseAnswerToChunks(this.activeTaskAnswer), (paraChunks: Array<TextChunk>): void => {
-                        Text() {
-                          ForEach(paraChunks, (chunk: TextChunk): void => {
-                            Span(chunk.content)
-                              .fontWeight(chunk.isBold ? FontWeight.Bold : FontWeight.Normal)
-                              .fontColor(chunk.isTimestamp ? $r('app.color.app_selection') : (this.activeTaskStatus === 'failed' ? $r('app.color.app_danger') : $r('app.color.app_text_primary')))
-                              .decoration(chunk.isTimestamp ? { type: TextDecorationType.Underline, color: $r('app.color.app_selection') } : { type: TextDecorationType.None })
-                              .onClick((): void => {
-                                if (chunk.isTimestamp) {
-                                  this.handleTimestampClick(chunk.videoNum, chunk.timeStr);
-                                }
-                              })
-                          }, (chunk: TextChunk, idx: number): string => idx.toString())
-                        }
-                        .width('100%')
-                        .fontSize(14)
-                        .lineHeight(20)
-                        .padding({ left: (paraChunks.length > 0 && paraChunks[0].content.startsWith('•  ')) ? 16 : 0 })
-                      }, (paraChunks: Array<TextChunk>, idx: number): string => idx.toString())
-                    }
+                    MarkdownAnswer({
+                      markdown: this.activeTaskAnswer,
+                      failed: this.activeTaskStatus === 'failed',
+                      onTimestampClick: (video: number, time: string): void => {
+                        this.handleTimestampClick(video, time);
+                      }
+                    })
                     .width('100%')
-                    .alignItems(HorizontalAlign.Start)
                   } else {
                     Text('思考中...')
                       .fontSize(14)
@@ -2921,10 +2940,69 @@ struct WorkspaceDetail {
                   .borderRadius(7)
                   .onClick((): void => {
                     this.loadFaceGroups();
+                    this.loadHarmonyQueueCount();
+                    this.loadFaceBackend();
                   })
               }
               .width('90%')
               .padding({ top: 10, bottom: 4 })
+
+              Row({ space: 8 }) {
+                Text(`归类方式：${this.faceBackendMode === 'harmony' ? '鸿蒙手机端' : '服务端人脸模型'}`)
+                  .fontSize(12)
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .layoutWeight(1)
+              }
+              .width('90%')
+
+              if (this.pendingPhoneFaces > 0 || this.isClassifyingOnPhone) {
+                Column({ space: 6 }) {
+                  Text(this.isClassifyingOnPhone ? this.phoneFaceProgress :
+                    `${this.pendingPhoneFaces} 条人脸线索等待鸿蒙手机归类`)
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_text_primary'))
+                  Button(this.isClassifyingOnPhone ? '本机比对中…' : '使用本机鸿蒙人脸能力归类')
+                    .height(36)
+                    .fontSize(12)
+                    .enabled(!this.isClassifyingOnPhone)
+                    .onClick((): void => { this.classifyPendingFacesOnPhone(); })
+                }
+                .padding(12)
+                .width('90%')
+                .backgroundColor($r('app.color.app_primary_soft'))
+                .borderRadius(10)
+              }
+
+              Scroll() {
+                Row({ space: 7 }) {
+                  Button('全部片段')
+                    .fontSize(11)
+                    .backgroundColor(this.faceFilterSegmentId === 0 ? $r('app.color.app_surface_inverted') :
+                      $r('app.color.app_card_subtle_bg'))
+                    .fontColor(this.faceFilterSegmentId === 0 ? $r('app.color.app_text_on_inverted') :
+                      $r('app.color.app_text_secondary'))
+                    .onClick((): void => {
+                      this.faceFilterSegmentId = 0;
+                      this.loadFaceGroups();
+                    })
+                  ForEach(this.segments, (segment: WorkspaceVideoSegment): void => {
+                    Button(segment.remark || segment.video_name)
+                      .fontSize(11)
+                      .backgroundColor(this.faceFilterSegmentId === segment.id ? $r('app.color.app_surface_inverted') :
+                        $r('app.color.app_card_subtle_bg'))
+                      .fontColor(this.faceFilterSegmentId === segment.id ? $r('app.color.app_text_on_inverted') :
+                        $r('app.color.app_text_secondary'))
+                      .onClick((): void => {
+                        this.faceFilterSegmentId = segment.id;
+                        this.loadFaceGroups();
+                      })
+                  })
+                }
+              }
+              .scrollable(ScrollDirection.Horizontal)
+              .scrollBar(BarState.Off)
+              .height(40)
+              .width('90%')
 
               if (this.faceGroups.length > 0) {
                 Grid() {
@@ -2955,7 +3033,7 @@ struct WorkspaceDetail {
                     .fontSize(15)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.app_text_secondary'))
-                  Text('截取视频片段时开启“AI 特征提取与识别预处理”，系统将自动识别画面人脸，并将同一人脸在不同时间段的轨迹自动归类聚合。')
+                  Text('此范围暂无人脸线索。可检查片段预处理状态和所选归类方式；识别结果仅供人工核对。')
                     .fontSize(12)
                     .fontColor($r('app.color.app_text_muted'))
                     .textAlign(TextAlign.Center)
@@ -2973,7 +3051,12 @@ struct WorkspaceDetail {
           } else {
             // ================== "问答" Tab Content ==================
             if (this.currentSubTab === 2) {
-              AgentConversationPanel({ workspaceId: this.workspaceId })
+              AgentConversationPanel({
+                workspaceId: this.workspaceId,
+                onTimestampClick: (segmentId: number, timeStr: string): void => {
+                  this.handleAgentTimestampClick(segmentId, timeStr);
+                }
+              })
             } else if (this.showCreateQA) {
               // Create Q&A Form choosing segments
               Column({ space: 10 }) {

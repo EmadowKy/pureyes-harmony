@@ -11,12 +11,16 @@ frontend/
 ├── AppScope/                      # 应用全局配置 (app.json5, 图标资源)
 ├── entry/src/main/
 │   ├── module.json5               # 模块配置 (权限: INTERNET, 页面路由配置)
+│   ├── resources/rawfile/answer_markdown.html # Markdown 排版与链接处理
 │   └── ets/
 │       ├── entryability/          # UIAbility 生命周期入口
 │       ├── pages/                 # 主页面集合
 │       │   ├── Index.ets          # 主框架页 (Tabs 容器与底部导航栏)
 │       │   ├── Login.ets          # 登录页 (凭据记忆、Token 校验)
-│       │   ├── WorkspaceDetail.ets# 工作区详情页 (切片设置、MVA 问答面板)
+│       │   ├── WorkspaceDetail.ets# 工作区详情页（片段、人脸、问答）
+│       │   ├── components/        # 工作区详情的复用组件
+│       │   │   ├── AgentConversationPanel.ets # 调查线、追问、进度与工具执行记录
+│       │   │   └── MarkdownAnswer.ets  # ArkWeb 中的回答渲染与视频时间跳转
 │       │   └── tabs/              # 四大底部 Tab 视图组件
 │       │       ├── MonitorTab.ets # 监控设备卡片网格
 │       │       ├── WorkspaceTab.ets# 工作区管理列表
@@ -60,6 +64,8 @@ struct Index {
 ---
 
 ## 3. HTTP 请求封装与 Token 拦截器 (http.ets)
+
+工作区详情使用【片段 | 人脸 | 问答】三个子页。【问答】挂载 `AgentConversationPanel`：先加载持久化调查线与可选片段，再按会话读取各轮消息；运行期间轮询状态和会话记录并显示阶段、耗时及工具调用。提交控件在任何组员的会话运行中隐藏，仅提供【停止本轮】；结束后显示追问输入。失败的最新轮可重新提交同一问题。`MarkdownAnswer` 使用打包的 `answer_markdown.html` 渲染 Markdown，并将视频时间标记交回工作区播放器定位。跨用户状态以服务端会话为准，切换页面或重新进入后重新同步。
 
 前端基于 `@ohos.net.http` 实现了统一的异步 HTTP 封装：
 

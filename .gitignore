@@ -57,6 +57,7 @@ backend/uploads/
 backend/backend_stdout.log
 backend/backend_stderr.log
 backend/logs/
+models/*.onnx
 backend/storage/monitor_covers/
 
 # Temporary Debug Logs & Cache

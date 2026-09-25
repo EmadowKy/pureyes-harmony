@@ -18,7 +18,7 @@ def ask_model(question: str, video_paths: List[str], config_path: str,
               enable_memory_optimization: bool = True, 
               progress_callback=None,
               segment_metas: List[Dict[str, Any]] = None,
-              conversation_context: str = "") -> Dict[str, Any]:
+              conversation_context: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     使用 MVA V2 按需即时处理引擎分析多个视频片段。
     
@@ -43,7 +43,7 @@ def ask_model(question: str, video_paths: List[str], config_path: str,
         "question": question,
         "video_paths": video_paths,
         "segment_metas": segment_metas or [],
-        "conversation_context": conversation_context or "",
+        "conversation_context": conversation_context or {},
     }
 
     try:

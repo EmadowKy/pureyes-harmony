@@ -258,7 +258,7 @@ class ReActTools:
                     continue
                 records_query = WorkspaceFaceRecord.query.filter_by(
                     workspace_id=workspace_id, group_id=group.id
-                )
+                ).filter(WorkspaceFaceRecord.classification_backend != "harmony_pending")
                 if segment_ids:
                     records_query = records_query.filter(WorkspaceFaceRecord.segment_id.in_(segment_ids))
                 records = records_query.order_by(WorkspaceFaceRecord.start_time_offset).limit(30).all()
@@ -269,6 +269,7 @@ class ReActTools:
                         "occurrences": [{
                             "segment_id": record.segment_id,
                             "video_name": record.video_name,
+                            "timestamp_sec": record.start_time_offset,
                             "start_time": record.start_time_str,
                             "end_time": record.end_time_str,
                         } for record in records],
