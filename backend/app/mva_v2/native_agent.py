@@ -9,7 +9,7 @@ import time
 
 from app.core.tool_security import resolve_selected_video
 from app.mva.utils import Qwen_VL, api_config
-from .evidence_memory import cards_from_result, format_memory, frame_cards_from_text
+from .evidence_memory import cards_from_result, frame_cards_from_text
 from .video_priority import VideoPriorities
 from .frame_batch import validate_frame_batch
 
@@ -118,7 +118,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
     temp_files, used_tools = [], []
     seen_frames = set()
     visual_evidence_count = 0
-    current_cards = []
     pending_frames = []
     priorities = VideoPriorities(video_items)
     available_tools = []
@@ -180,7 +179,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             content = response.get("content") or ""
             frame_cards, content = frame_cards_from_text(content, video_items, pending_frames)
             if frame_cards:
-                current_cards.extend(frame_cards)
                 observed_frames = {(card["video_id"], card["timestamp_sec"]) for card in frame_cards}
                 pending_frames = [frame for frame in pending_frames
                                   if (frame.get("video_id"), round(float(frame.get("timestamp_sec", -1)), 2))
@@ -247,7 +245,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                     cards = cards_from_result(name, result, video_items,
                                               resolve_selected_video(video_items, args),
                                               str(args.get("query_text") or ""))
-                    current_cards.extend(cards)
                     if name in ("read_frames", "read_frame_image") and isinstance(result, dict):
                         frame_results = result.get("frames") or [result]
                         pending_frames.extend(frame for frame in frame_results
@@ -268,9 +265,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                                            "data": {"evidence_cards": cards}})
                 messages.append({"role": "tool", "tool_call_id": call.get("id"),
                                  "content": json.dumps(result, ensure_ascii=False, default=str)})
-            memory = format_memory(current_cards[-18:], max_chars=2600)
-            if memory:
-                messages.append({"role": "user", "content": memory})
             if priorities.guidance():
                 messages.append({"role": "user", "content": priorities.guidance()})
             if images:

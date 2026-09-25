@@ -47,6 +47,8 @@ pydantic>=2.0.0
 
 # 多模态视觉模型 Tokenizer / 特征提取
 transformers>=4.40.0
+# 官方中文 CLIP checkpoint 的加载器。
+cn_clip==1.6.0
 
 # 视频画面文字识别（按需加载；模型文件由 OCR_MODEL_ROOT 指定）
 rapidocr-onnxruntime>=1.4.4,<2.0

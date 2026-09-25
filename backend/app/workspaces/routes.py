@@ -89,7 +89,7 @@ def _require_workspace_member(workspace_id, emp_id=None):
     return workspace, None
 
 
-def _conversation_context(conversation_id, before_turn):
+def _conversation_context(conversation_id, before_turn, question=""):
     """Build bounded answer and source-linked evidence memory for a follow-up."""
     if not conversation_id:
         return ""
@@ -119,7 +119,7 @@ def _conversation_context(conversation_id, before_turn):
                     evidence_cards.append({**card, "turn_index": record.turn_index,
                                            "question": record.question})
     from app.mva_v2.evidence_memory import select_memory, format_memory
-    evidence = format_memory(select_memory(evidence_cards, " ".join(r.question or "" for r in records)))
+    evidence = format_memory(select_memory(evidence_cards, question))
     evidence = evidence[:MAX_AGENT_HISTORY_CHARS // 2]
     history = "\n\n".join(parts)
     history = history[-max(0, MAX_AGENT_HISTORY_CHARS - len(evidence)):]
@@ -813,7 +813,7 @@ def submit_qa(workspace_id):
         db.session.add(qvs)
             
     db.session.commit()
-    conversation_context = _conversation_context(conversation.id, turn_index)
+    conversation_context = _conversation_context(conversation.id, turn_index, question)
     
     # Initialize in-memory task tracker
     _prune_running_tasks()
