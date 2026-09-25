@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional, Callable
 from .database import SpatiotemporalDB
 from .agents import ReActParser, ReActTools, ReActSystemPrompt
 from .pipeline import JITVideoPipeline
+from .video_context import format_video_context
 from app.core.tool_security import resolve_selected_video
 
 logging.basicConfig(level=logging.INFO)
@@ -74,15 +75,7 @@ class MVA2Runner:
                 measured = self.tools.get_video_metadata(item["video_path"])
                 item.setdefault("fps", measured.get("fps"))
                 item.setdefault("frame_count", measured.get("frame_count"))
-            fps = item.get("fps")
-            frame_count = item.get("frame_count")
-            fps_text = f"{fps:.2f}" if isinstance(fps, (int, float)) and fps > 0 else "未知"
-            frame_count_text = str(frame_count) if isinstance(frame_count, int) and frame_count > 0 else "未知"
-            videos_meta_text.append(
-                f"  - 视频 {idx} (序号: \"{idx}\", 视频名称/备注: \"{item['remark']}\", "
-                f"文件名: \"{item['video_id']}\", 时长: {item['duration']:.1f}秒, "
-                f"帧率: {fps_text} FPS, 总帧数: {frame_count_text})"
-            )
+            videos_meta_text.append(format_video_context(idx, item))
         videos_summary_str = "\n".join(videos_meta_text)
 
         meta_prompt = (

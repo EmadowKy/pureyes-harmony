@@ -9,11 +9,21 @@ import time
 
 from app.core.tool_security import resolve_selected_video
 from app.mva.utils import Qwen_VL, api_config
+from .evidence_memory import cards_from_result, format_memory
+from .video_priority import VideoPriorities
+from .frame_batch import validate_frame_batch
 
 logger = logging.getLogger(__name__)
 
 
 def _tool(name, description, properties, required):
+    properties = dict(properties)
+    properties["video_scores"] = {"type": "array", "description": "逐视频探索规划评分（非证据）",
+        "items": {"type": "object", "properties": {
+            "video_index": {"type": "integer", "minimum": 1},
+            "relevance": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence": {"type": "number", "minimum": 0, "maximum": 1}},
+            "required": ["video_index", "relevance", "evidence"], "additionalProperties": False}}
     return {"type": "function", "function": {"name": name, "description": description,
             "parameters": {"type": "object", "properties": properties,
                            "required": required, "additionalProperties": False}}}
@@ -39,7 +49,7 @@ TOOLS = [
 SYSTEM_PROMPT = """你是安防视频调查 Agent。视频的时长、帧率、总帧数已在用户消息给出，不要再查询。
 预处理能力边界：目标检测/跟踪擅长回答画面里检测到哪些类别、目标何时出现、位置如何变化，并给出候选track_id；CLIP擅长按外观、场景或物品描述找相似帧；OCR擅长找画面文字；ReID擅长提出跨镜外观相似目标；人脸模块擅长提供人脸出现区间或分组。这些都是索引线索，各自可能漏检或误检。
 预处理不擅长可靠判断短暂动作、动作先后与因果、人物意图或复杂行为语义，例如打斗、推搡、跑动、跌倒、浏览、徘徊、交接物品。CLIP相似度不是动作分类结果，轨迹稳定也不能证明人物在观看或等待。索引没有命中绝不等于事件没有发生；不得只凭索引回答这些问题。
-使用原生工具调用，不要输出 JSON 工具指令。先用索引定位候选和时间范围，再亲自查看原始帧。遇到动作/行为问题，必须用 read_frames 检查多张帧：选择候选时刻前、过程中、之后的相邻帧，比较人物姿态、位置和相互作用；若第一组仍不能区分动作与相似姿态，继续用另一组相邻帧探索，再作判断。单视频通常最多8张，多视频通常最多12张；多条件题每个条件都要有视觉证据。挑选有判别力的帧，避免无目的逐秒穷举。
+使用原生工具调用，不要输出 JSON 工具指令。每次调用工具时，尽可能附带 video_scores，为每个已选视频填写 video_index、relevance、evidence（0 到 1）；这是探索规划建议，不是证据，尚未调用工具探索的视频 evidence 必须为 0。先用索引定位候选和时间范围，再亲自查看原始帧。遇到动作/行为问题，必须用 read_frames 检查多张帧：选择候选时刻前、过程中、之后的相邻帧，比较人物姿态、位置和相互作用；若第一组仍不能区分动作与相似姿态，继续用另一组相邻帧探索，再作判断。单视频通常最多8张，多视频通常最多12张；多条件题每个条件都要有视觉证据。挑选有判别力的帧，避免无目的逐秒穷举。
 对于外观、物品或场景问题，可先用CLIP缩小范围，再核对原帧；文字问题用OCR找候选后核验；跨镜身份问题先取得track_id，再用ReID提出候选，并查看两边原帧。不能确认时说明不确定。
 回答用户的选项题时，第一行只写选项字母。所有具体时间必须写成 [video:"1", time:"MM:SS"] 形式，序号对应用户提供的视频列表。证据不足时如实说明。避免冗长的过程叙述。"""
 
@@ -63,12 +73,10 @@ def _frame(runner, video_items, args, temp_files):
 
 def _dispatch(runner, video_items, name, args, temp_files):
     if name == "read_frames":
-        frames = args.get("frames")
-        if not isinstance(frames, list) or not 1 <= len(frames) <= 4:
-            return {"error": "frames 须含 1 到 4 项"}, []
+        frames = validate_frame_batch(video_items, args.get("frames"))
         results, images = [], []
-        for frame in frames:
-            result, image = _frame(runner, video_items, frame if isinstance(frame, dict) else {}, temp_files)
+        for _, item, timestamp in frames:
+            result, image = _frame(runner, video_items, {"video_id": item["video_id"], "timestamp_sec": timestamp}, temp_files)
             results.append(result)
             if image:
                 images.extend([{"type": "text", "text": json.dumps(result, ensure_ascii=False)}, image])
@@ -110,6 +118,8 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
     temp_files, used_tools = [], []
     seen_frames = set()
     visual_evidence_count = 0
+    current_cards = []
+    priorities = VideoPriorities(video_items)
     available_tools = []
     question_lower = user_query.casefold()
     text_question = any(term in question_lower for term in ("文字", "车牌", "招牌", "屏幕", "字幕", "ocr", "text"))
@@ -143,6 +153,8 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             logger.warning("Initial object-index lookup failed: %s", exc)
     if indexes:
         messages.append({"role": "user", "content": "【已自动检索完整视频目标索引，勿重复检索】\n" + json.dumps(indexes, ensure_ascii=False, default=str)})
+    if priorities.guidance():
+        messages.append({"role": "user", "content": priorities.guidance()})
     if short_action_question:
         messages.append({"role": "user", "content": "这是不超过一分钟的动作判断题。目标索引只用于提供候选目标和时间线，不作为动作结论。请使用视觉能力检查动作前、中、后的相邻原帧；若第一组画面仍有歧义，可以再读取一组用于确认，不要因为索引没写该动作就回答没有。"})
     final_answer = ""
@@ -165,6 +177,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             setattr(api_config, "force_answer", False)
             calls = response.get("tool_calls") or []
             content = response.get("content") or ""
+            # Native tool responses carry planning scores in tool arguments, not JSON prose.
             if not calls:
                 messages.append({"role": "assistant", "content": content})
                 if requires_identity and "track_target" not in used_tools and loop_idx < max_rounds:
@@ -180,10 +193,12 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             for call in calls:
                 name = (call.get("function") or {}).get("name", "")
                 tool_started = time.monotonic()
+                cards = []
                 try:
                     args = json.loads((call.get("function") or {}).get("arguments") or "{}")
                     if not isinstance(args, dict):
                         raise ValueError("工具参数必须为对象")
+                    priorities.update(args.pop("video_scores", None))
                     if not name:
                         if "frames" in args:
                             name = "read_frames"
@@ -210,6 +225,17 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                             result, new_images = _dispatch(runner, video_items, "read_frames", {"frames": fresh[:4]}, temp_files)
                     else:
                         result, new_images = _dispatch(runner, video_items, name, args, temp_files)
+                    if not (isinstance(result, dict) and result.get("error")):
+                        selected_for_memory = resolve_selected_video(video_items, args)
+                        if selected_for_memory:
+                            priorities.mark_explored(selected_for_memory["video_id"])
+                        elif name == "search_face_tracks":
+                            for item in video_items:
+                                priorities.mark_explored(item["video_id"])
+                    cards = cards_from_result(name, result, video_items,
+                                              resolve_selected_video(video_items, args),
+                                              str(args.get("query_text") or ""))
+                    current_cards.extend(cards)
                     images.extend(new_images)
                     visual_evidence_count += sum(1 for part in new_images if part.get("type") == "image")
                 except Exception as exc:
@@ -220,8 +246,17 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                     progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调用 {name}",
                                        "data": {"iteration": loop_idx, "phase": "action", "tool_name": name, "tool_params": args,
                                                 "model_seconds": model_seconds, "tool_seconds": round(time.monotonic() - tool_started, 2)}})
+                    if cards:
+                        progress_callback({"stage": "evidence_memory", "status": "completed",
+                                           "message": "已记录可追溯的索引候选",
+                                           "data": {"evidence_cards": cards}})
                 messages.append({"role": "tool", "tool_call_id": call.get("id"),
                                  "content": json.dumps(result, ensure_ascii=False, default=str)})
+            memory = format_memory(current_cards[-18:], max_chars=2600)
+            if memory:
+                messages.append({"role": "user", "content": memory})
+            if priorities.guidance():
+                messages.append({"role": "user", "content": priorities.guidance()})
             if images:
                 messages.append({"role": "user", "content": images + [{"type": "text", "text": "以上为工具返回的原始画面，请按对应时间核验。"}]})
         if progress_callback:

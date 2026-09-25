@@ -90,7 +90,7 @@ def _require_workspace_member(workspace_id, emp_id=None):
 
 
 def _conversation_context(conversation_id, before_turn):
-    """Build a bounded, answer-only memory window for a follow-up turn."""
+    """Build bounded answer and source-linked evidence memory for a follow-up."""
     if not conversation_id:
         return ""
     records = (QARecord.query.filter(
@@ -100,6 +100,7 @@ def _conversation_context(conversation_id, before_turn):
     ).order_by(QARecord.turn_index.desc()).limit(MAX_AGENT_HISTORY_TURNS).all())
     records.reverse()
     parts = []
+    evidence_cards = []
     for record in records:
         answer = (record.answer or "").strip()
         if not answer:
@@ -107,8 +108,22 @@ def _conversation_context(conversation_id, before_turn):
         if len(answer) > 1200:
             answer = answer[:1200] + "…"
         parts.append(f"第 {record.turn_index} 轮问题：{record.question}\n第 {record.turn_index} 轮结论：{answer}")
-    context = "\n\n".join(parts)
-    return context[-MAX_AGENT_HISTORY_CHARS:]
+        try:
+            progress = json.loads(record.progress_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            progress = []
+        for entry in progress if isinstance(progress, list) else []:
+            cards = (entry.get("data") or {}).get("evidence_cards") or []
+            for card in cards:
+                if isinstance(card, dict):
+                    evidence_cards.append({**card, "turn_index": record.turn_index,
+                                           "question": record.question})
+    from app.mva_v2.evidence_memory import select_memory, format_memory
+    evidence = format_memory(select_memory(evidence_cards, " ".join(r.question or "" for r in records)))
+    evidence = evidence[:MAX_AGENT_HISTORY_CHARS // 2]
+    history = "\n\n".join(parts)
+    history = history[-max(0, MAX_AGENT_HISTORY_CHARS - len(evidence)):]
+    return "\n\n".join(part for part in (history, evidence) if part)
 
 
 def _conversation_segments(conversation):
