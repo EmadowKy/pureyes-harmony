@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.mva_v2.evidence_memory import cards_from_result, format_memory, select_memory
+from app.mva_v2.evidence_memory import cards_from_result, format_memory, frame_cards_from_text, select_memory
 from app.mva_v2.frame_batch import validate_frame_batch
 from app.mva_v2.video_context import format_video_context
 from app.mva_v2.video_priority import VideoPriorities
@@ -32,6 +32,17 @@ class AgentMemoryFeatureTests(unittest.TestCase):
         }, self.videos, self.videos[0])
         retrieved = select_memory(cards, "person", limit=18)
         self.assertLessEqual(len(retrieved), 5)
+
+    def test_visual_observation_requires_an_actually_read_frame(self):
+        cards, answer = frame_cards_from_text(
+            "FRAME_OBSERVATION a.mp4 4.0: 人物从画面左侧走向出口\n答案：不确定",
+            self.videos, [{"video_id": "a.mp4", "timestamp_sec": 4, "status": "image_attached"}])
+        self.assertEqual("答案：不确定", answer)
+        self.assertEqual("frame_description", cards[0]["kind"])
+        rejected, untouched = frame_cards_from_text(
+            "FRAME_OBSERVATION a.mp4 4.0: 未读帧的猜测", self.videos, [])
+        self.assertEqual([], rejected)
+        self.assertTrue(untouched.startswith("FRAME_OBSERVATION"))
 
     def test_video_priority_does_not_treat_metadata_as_visual_evidence(self):
         board = VideoPriorities(self.videos)

@@ -77,6 +77,33 @@ def frame_card(video_items, video_id, timestamp_sec, description):
     return None
 
 
+def frame_cards_from_text(text, video_items, read_frames):
+    """Accept model observations only when tied to an actually-read video frame."""
+    allowed = {(item["video_id"], round(float(item["timestamp_sec"]), 2))
+               for item in read_frames if isinstance(item, dict)
+               and isinstance(item.get("video_id"), str)
+               and type(item.get("timestamp_sec")) in (int, float)}
+    cards, consumed = [], set()
+    pattern = re.compile(r"^\s*FRAME_OBSERVATION\s+(\S+)\s+([0-9]+(?:\.[0-9]+)?)\s*:\s*(.+?)\s*$")
+    lines = (text or "").splitlines()
+    cleaned = []
+    for line in lines:
+        match = pattern.match(line)
+        if not match:
+            cleaned.append(line)
+            continue
+        video_id, timestamp, description = match.groups()
+        key = (video_id, round(float(timestamp), 2))
+        if key not in allowed or key in consumed:
+            cleaned.append(line)
+            continue
+        card = frame_card(video_items, video_id, key[1], description)
+        if card:
+            cards.append(card)
+            consumed.add(key)
+    return cards, "\n".join(cleaned).strip()
+
+
 def _card(index, item, seconds, source, detail, kind="index_candidate"):
     return {"video_index": index, "video_id": item["video_id"],
             "segment_id": item.get("meta", {}).get("id"), "timestamp_sec": seconds,
