@@ -102,6 +102,9 @@ class AgentMessageDataSource implements IDataSource {
 export struct AgentConversationPanel {
   @Prop workspaceId: number = 0;
   @Prop initialConversationId: string = '';
+  @Prop @Watch('onReturnToList') returnToListSignal: number = 0;
+  @Prop parentBackButton: boolean = false;
+  onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
   onTimestampClick: (segmentId: number, timeStr: string) => void =
     (_segmentId: number, _timeStr: string): void => {};
 
@@ -146,8 +149,15 @@ export struct AgentConversationPanel {
   private messageSource: AgentMessageDataSource = new AgentMessageDataSource();
 
   aboutToAppear(): void {
-    if (this.initialConversationId) this.selectedConversationId = this.initialConversationId;
+    if (this.initialConversationId) {
+      this.selectedConversationId = this.initialConversationId;
+      this.onDetailChange(true);
+    }
     this.refreshAll();
+  }
+
+  onReturnToList(): void {
+    this.showConversationList();
   }
 
   aboutToDisappear(): void {
@@ -314,6 +324,7 @@ export struct AgentConversationPanel {
   async openConversation(conversationId: string, scrollToEnd: boolean = true): Promise<void> {
     this.stopPolling();
     const epoch = this.pollEpoch;
+    this.onDetailChange(true);
     this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = conversationId;
       this.conversationReady = false;
@@ -474,6 +485,7 @@ export struct AgentConversationPanel {
   startInvestigation(): void {
     this.stopPolling();
     this.stopSync();
+    this.onDetailChange(true);
     this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = '';
       this.conversationReady = false;
@@ -493,6 +505,7 @@ export struct AgentConversationPanel {
   showConversationList(): void {
     this.stopPolling();
     this.stopSync();
+    this.onDetailChange(false);
     this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = '';
       this.conversationReady = false;
@@ -1621,7 +1634,7 @@ export struct AgentConversationPanel {
   build() {
     Column() {
       Row() {
-        if (this.selectedConversationId || this.creatingInvestigation) {
+        if (!this.parentBackButton && (this.selectedConversationId || this.creatingInvestigation)) {
           Button('‹')
             .width(36)
             .height(36)

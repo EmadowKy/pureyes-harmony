@@ -29,6 +29,8 @@ export class WorkspaceVideoSegment {
   sample_fps: number = 1.0;
   resolution: string = '1080P';
   orig_resolution: string = '1080P';
+  progress_rate: number = 0;
+  progress_changed_at: number = 0;
 }
 
 export class ExampleVideoInfo {
@@ -1357,7 +1359,10 @@ struct WorkspaceDetail {
   initialConversationId: string = '';
 
   @State currentSubTab: number = 0; // 0: 片段, 1: 人脸, 2: 问答
+  @State agentDetailOpen: boolean = false;
+  @State agentReturnSignal: number = 0;
   @State segments: Array<WorkspaceVideoSegment> = [];
+  @State segmentLoadError: string = '';
   @State exampleVideos: Array<ExampleVideoInfo> = [];
   @State showSelectExampleVideo: boolean = false;
   @State activeVideo: ExampleVideoInfo = new ExampleVideoInfo();
@@ -1395,6 +1400,9 @@ struct WorkspaceDetail {
   @State activeTaskVideoPaths: Array<string> = [];
   @State isVideosCollapsed: boolean = false;
   @State @Watch('onJumpSecondsChange') jumpSeconds: number = 0;
+  private segmentPollTimer: number = 0;
+  private loadingSegments: boolean = false;
+  private workspaceVisible: boolean = false;
 
   showToast(options: ToastOptions): void {
     try {
@@ -1498,12 +1506,16 @@ struct WorkspaceDetail {
   })
 
   aboutToAppear(): void {
+    this.workspaceVisible = true;
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object>;
     if (params) {
       this.workspaceId = params['workspaceId'] as number;
       this.workspaceName = (params['workspaceName'] as string) || '工作区';
       this.initialConversationId = (params['conversationId'] as string) || '';
-      if (this.initialConversationId) this.currentSubTab = 2;
+      if (this.initialConversationId) {
+        this.currentSubTab = 2;
+        this.agentDetailOpen = true;
+      }
     }
     this.loadSegments();
     this.loadFaceGroups();
@@ -1661,17 +1673,56 @@ struct WorkspaceDetail {
   }
 
   aboutToDisappear(): void {
+    this.workspaceVisible = false;
+    if (this.segmentPollTimer) {
+      clearTimeout(this.segmentPollTimer);
+      this.segmentPollTimer = 0;
+    }
     if (this.pollIntervalId) {
       clearInterval(this.pollIntervalId);
     }
   }
 
+  private isNestedView(): boolean {
+    return this.activeTaskId !== '' || this.showSelectExampleVideo || this.showCreateQA ||
+      (this.currentSubTab === 2 && this.agentDetailOpen);
+  }
+
+  private returnToWorkspaceTab(): void {
+    if (this.activeTaskId) {
+      if (this.pollIntervalId) clearInterval(this.pollIntervalId);
+      this.pollIntervalId = 0;
+      this.activeTaskId = '';
+      this.aiProgressText = '';
+      this.questionText = '';
+      this.loadQARecords();
+    } else if (this.showSelectExampleVideo) {
+      this.showSelectExampleVideo = false;
+      this.loadSegments();
+    } else if (this.showCreateQA) {
+      this.showCreateQA = false;
+    } else if (this.agentDetailOpen) {
+      this.agentReturnSignal += 1;
+    }
+  }
+
   async loadSegments(): Promise<void> {
-    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/segments`);
-    if (res.code === 0 && res.data) {
+    if (this.loadingSegments || !this.workspaceVisible) return;
+    this.loadingSegments = true;
+    if (this.segmentPollTimer) {
+      clearTimeout(this.segmentPollTimer);
+      this.segmentPollTimer = 0;
+    }
+    let hasProcessing = this.segments.some((item: WorkspaceVideoSegment): boolean =>
+      item.status === 'pending' || item.status === 'processing');
+    try {
+      const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/segments`);
+      if (res.code !== 0 || !res.data) throw new Error(res.message || '无法获取片段状态');
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(listObj)) throw new Error('片段数据异常');
       const mapped: Array<WorkspaceVideoSegment> = [];
-      let hasProcessing = false;
+      hasProcessing = false;
+      const sampledAt = Date.now();
       
       const selectedIds = new Set<number>();
       for (let i = 0; i < this.segments.length; i++) {
@@ -1700,6 +1751,15 @@ struct WorkspaceDetail {
         s.sample_fps = (item['sample_fps'] as number) || 1.0;
         s.resolution = (item['resolution'] as string) || '1080P';
         s.orig_resolution = (item['orig_resolution'] as string) || '1080P';
+        const previous = this.segments.find((existing: WorkspaceVideoSegment): boolean => existing.id === s.id);
+        s.progress_changed_at = previous ? previous.progress_changed_at : sampledAt;
+        if (previous && s.status === 'processing' && s.progress > previous.progress) {
+          const elapsed = (sampledAt - previous.progress_changed_at) / 1000;
+          s.progress_rate = elapsed > 0.8 ? (s.progress - previous.progress) * 60 / elapsed : previous.progress_rate;
+          s.progress_changed_at = sampledAt;
+        } else if (previous && s.progress === previous.progress && sampledAt - previous.progress_changed_at < 10000) {
+          s.progress_rate = previous.progress_rate;
+        }
         
         if (selectedIds.has(s.id)) {
           s.isSelected = true;
@@ -1715,16 +1775,19 @@ struct WorkspaceDetail {
         mapped.push(s);
       }
       this.segments = mapped;
+      this.segmentLoadError = '';
       this.loadFaceGroups();
       this.loadHarmonyQueueCount();
-      
-      if (hasProcessing) {
-        setTimeout(() => {
+    } catch (error) {
+      this.segmentLoadError = error instanceof Error ? error.message : '无法获取片段状态';
+    } finally {
+      this.loadingSegments = false;
+      if (hasProcessing && this.workspaceVisible) {
+        this.segmentPollTimer = setTimeout((): void => {
+          this.segmentPollTimer = 0;
           this.loadSegments();
         }, 1500);
       }
-    } else {
-      this.segments = [];
     }
   }
 
@@ -2343,6 +2406,7 @@ struct WorkspaceDetail {
       this.currentSubTab = index;
       this.showCreateQA = false;
       this.showSelectExampleVideo = false;
+      this.agentDetailOpen = false;
       if (index === 0) {
         this.loadSegments();
       } else if (index === 1) {
@@ -2380,28 +2444,8 @@ struct WorkspaceDetail {
     Column() {
       // ===== Top Bar =====
       Row() {
-        if (this.activeTaskId !== '') {
-          Row({ space: 8 }) {
-            this.WorkspaceHeaderButton('back', (): void => {
-              if (this.pollIntervalId) {
-                clearInterval(this.pollIntervalId);
-                this.pollIntervalId = 0;
-              }
-              this.activeTaskId = '';
-              this.aiProgressText = '';
-              this.questionText = '';
-              this.loadQARecords();
-            })
-
-            this.WorkspaceHeaderButton('home', (): void => {
-              if (this.pollIntervalId) {
-                clearInterval(this.pollIntervalId);
-                this.pollIntervalId = 0;
-              }
-              this.getUIContext().getRouter().back();
-            })
-          }
-          .margin({ right: 12 })
+        if (this.isNestedView()) {
+          this.WorkspaceHeaderButton('back', (): void => { this.returnToWorkspaceTab(); })
         } else {
           this.WorkspaceHeaderButton('home', (): void => {
             if (this.pollIntervalId) {
@@ -2413,11 +2457,17 @@ struct WorkspaceDetail {
         }
 
         // Title: "问答详情" or workspaceName
-        Text(this.activeTaskId !== '' ? '问答详情' : this.workspaceName)
+        Text(this.activeTaskId !== '' ? '问答详情' :
+          (this.showSelectExampleVideo ? '截取新片段' :
+            (this.showCreateQA ? '新建问答' :
+              (this.currentSubTab === 2 && this.agentDetailOpen ? '调查详情' : this.workspaceName))))
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.app_text_primary'))
           .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ left: 12 })
 
         if (this.activeTaskId !== '') {
           Row({ space: 8 }) {
@@ -2750,16 +2800,6 @@ struct WorkspaceDetail {
                       this.loadExampleVideos();
                     })
                   
-                  Button('返回')
-                    .fontSize(12)
-                    .height(32)
-                    .backgroundColor(Color.Transparent)
-                    .fontColor($r('app.color.app_text_secondary'))
-                    .border({ width: 1, color: $r('app.color.app_border') })
-                    .borderRadius(7)
-                    .onClick((): void => {
-                      this.showSelectExampleVideo = false;
-                    })
                 }
                 .width('100%')
                 .padding({ bottom: 10 })
@@ -2816,9 +2856,22 @@ struct WorkspaceDetail {
             } else {
               // Saved Video Segments list
               Column() {
+                if (this.segmentLoadError) {
+                  Row({ space: 8 }) {
+                    Text(this.segmentLoadError)
+                      .fontSize(12)
+                      .fontColor($r('app.color.app_danger'))
+                      .layoutWeight(1)
+                    Button('重试')
+                      .fontSize(12)
+                      .onClick((): void => { this.loadSegments(); })
+                  }
+                  .width('90%')
+                  .padding(10)
+                }
                 if (this.segments.length === 0) {
                   Column() {
-                    Text('暂无视频片段，请点击下方加号添加')
+                    Text(this.segmentLoadError ? '暂时无法显示片段，连接恢复后可重试' : '暂无视频片段，请点击下方加号添加')
                       .fontSize(16)
                       .fontColor($r('app.color.app_text_muted'))
                       .margin({ top: 80 })
@@ -2831,12 +2884,20 @@ struct WorkspaceDetail {
                     ForEach(this.segments, (seg: WorkspaceVideoSegment): void => {
                       ListItem() {
                         Row() {
-                          Image(BASE_HOST + seg.thumbnail_url)
-                            .width(100)
-                            .height(60)
-                            .borderRadius(6)
-                            .objectFit(ImageFit.Cover)
-                            .margin({ right: 12 })
+                          if (seg.status === 'processing' || seg.status === 'pending') {
+                            Image($r('app.media.business_clip_trim'))
+                              .width(60)
+                              .height(60)
+                              .objectFit(ImageFit.Contain)
+                              .margin({ right: 12 })
+                          } else {
+                            Image(BASE_HOST + seg.thumbnail_url)
+                              .width(100)
+                              .height(60)
+                              .borderRadius(6)
+                              .objectFit(ImageFit.Cover)
+                              .margin({ right: 12 })
+                          }
 
                           Column({ space: 4 }) {
                             Text(seg.remark ? seg.remark : '未命名片段')
@@ -2859,12 +2920,16 @@ struct WorkspaceDetail {
                                   .height(6)
                                   .color($r('app.color.app_primary'))
                                   .margin({ right: 8 })
-                                Text(`预分析中 ${seg.progress}%`)
+                                Text(seg.status === 'pending' ? '排队中' : `${seg.progress}%`)
                                   .fontSize(10)
                                   .fontColor($r('app.color.app_primary'))
                               }
                               .width('100%')
                               .alignItems(VerticalAlign.Center)
+                              Text(seg.status === 'pending' ? '等待预处理' :
+                                (seg.progress_rate > 0 ? `预处理约 ${seg.progress_rate.toFixed(1)}%/分钟` : '正在预处理 · 等待进度更新'))
+                                .fontSize(10)
+                                .fontColor($r('app.color.app_text_muted'))
                             } else if (seg.status === 'failed') {
                               Text('预分析失败: ' + seg.error_msg)
                                 .fontSize(11)
@@ -2891,7 +2956,7 @@ struct WorkspaceDetail {
                           this.showSegmentDetail(seg);
                         })
                       }
-                    })
+                    }, (seg: WorkspaceVideoSegment): string => `${seg.id}-${seg.status}-${seg.progress}`)
                   }
                   .width('90%')
                   .layoutWeight(1)
@@ -3060,6 +3125,12 @@ struct WorkspaceDetail {
               AgentConversationPanel({
                 workspaceId: this.workspaceId,
                 initialConversationId: this.initialConversationId,
+                returnToListSignal: this.agentReturnSignal,
+                parentBackButton: true,
+                onDetailChange: (open: boolean): void => {
+                  this.agentDetailOpen = open;
+                  if (!open) this.initialConversationId = '';
+                },
                 onTimestampClick: (segmentId: number, timeStr: string): void => {
                   this.handleAgentTimestampClick(segmentId, timeStr);
                 }
@@ -3336,17 +3407,21 @@ struct WorkspaceDetail {
           }
 
           // ===== Workspace Bottom Navigation =====
-          Row() {
-            this.WorkspaceSubTabItem(0, '片段')
-            this.WorkspaceSubTabItem(1, '人脸')
-            this.WorkspaceSubTabItem(2, '问答')
+          if (!this.isNestedView()) {
+            Row() {
+              this.WorkspaceSubTabItem(0, '片段')
+              this.WorkspaceSubTabItem(1, '人脸')
+              this.WorkspaceSubTabItem(2, '问答')
+            }
+            .width('100%')
+            .height(60)
+            .padding({ top: 4, bottom: 4 })
+            .backgroundColor($r('app.color.app_nav_bar_bg'))
+            .border({ width: { top: 1 }, color: $r('app.color.app_border') })
           }
-          .width('100%')
-          .height(60)
-          .padding({ top: 4, bottom: 4 })
-          .backgroundColor($r('app.color.app_nav_bar_bg'))
-          .border({ width: { top: 1 }, color: $r('app.color.app_border') })
         }
+        .width('100%')
+        .layoutWeight(1)
       }
     }
     .width('100%')
