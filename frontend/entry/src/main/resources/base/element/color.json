@@ -2,23 +2,23 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#F1F3F2"
+      "value": "#F3F6FB"
     },
     {
       "name": "app_page_bg",
-      "value": "#F1F3F2"
+      "value": "#F3F6FB"
     },
     {
       "name": "app_top_bar_bg",
-      "value": "#F8FAF9"
+      "value": "#FAFBFE"
     },
     {
       "name": "app_nav_bar_bg",
-      "value": "#F8FAF9"
+      "value": "#FAFBFE"
     },
     {
       "name": "app_nav_item_bg",
-      "value": "#E3E9E7"
+      "value": "#E8EFF9"
     },
     {
       "name": "app_nav_icon",
@@ -26,7 +26,7 @@
     },
     {
       "name": "app_nav_icon_selected",
-      "value": "#0C2942"
+      "value": "#2459B8"
     },
     {
       "name": "app_nav_text",
@@ -34,7 +34,7 @@
     },
     {
       "name": "app_nav_text_selected",
-      "value": "#0C2942"
+      "value": "#2459B8"
     },
     {
       "name": "app_nav_shadow",
@@ -42,15 +42,15 @@
     },
     {
       "name": "app_card_bg",
-      "value": "#FCFDFC"
+      "value": "#FFFFFF"
     },
     {
       "name": "app_card_subtle_bg",
-      "value": "#E9EEEC"
+      "value": "#EDF2FA"
     },
     {
       "name": "app_input_bg",
-      "value": "#F4F6F5"
+      "value": "#F5F8FC"
     },
     {
       "name": "app_text_primary",
@@ -66,7 +66,7 @@
     },
     {
       "name": "app_border",
-      "value": "#D5DEDA"
+      "value": "#D9E3F0"
     },
     {
       "name": "app_shadow",
@@ -74,19 +74,19 @@
     },
     {
       "name": "app_primary",
-      "value": "#0F3554"
+      "value": "#2459B8"
     },
     {
       "name": "app_primary_soft",
-      "value": "#E3EBF0"
+      "value": "#E8F0FF"
     },
     {
       "name": "app_accent",
-      "value": "#F0A51B"
+      "value": "#2F6FCE"
     },
     {
       "name": "app_accent_soft",
-      "value": "#FFF0C9"
+      "value": "#E8F0FF"
     },
     {
       "name": "app_success",
@@ -95,6 +95,10 @@
     {
       "name": "app_danger",
       "value": "#B94949"
+    },
+    {
+      "name": "app_danger_soft",
+      "value": "#FBEDED"
     },
     {
       "name": "app_live",
@@ -114,7 +118,7 @@
     },
     {
       "name": "app_track",
-      "value": "#C7D1CD"
+      "value": "#CDD9EA"
     },
     {
       "name": "app_warning",

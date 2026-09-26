@@ -595,7 +595,7 @@ export struct GroupTab {
               Blank()
                 .width(3)
                 .height(48)
-                .backgroundColor(member.status === 'pending' ? $r('app.color.app_accent') : $r('app.color.app_selection'))
+                .backgroundColor(member.status === 'pending' ? $r('app.color.app_warning') : $r('app.color.app_selection'))
 
               Image(member.avatar ? member.avatar : $r('app.media.foreground'))
                 .width(50)

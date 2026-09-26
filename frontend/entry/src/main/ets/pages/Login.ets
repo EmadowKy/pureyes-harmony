@@ -306,7 +306,7 @@ struct Login {
             }
             .width('100%')
             .padding({ left: 11, right: 11, top: 9, bottom: 9 })
-            .backgroundColor($r('app.color.app_accent_soft'))
+            .backgroundColor($r('app.color.app_danger_soft'))
             .borderRadius(6)
           }
 

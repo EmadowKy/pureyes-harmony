@@ -3268,7 +3268,7 @@ struct WorkspaceDetail {
                         .borderRadius(10)
                         .border({
                           width: { left: 3, right: 1, top: 1, bottom: 1 },
-                          color: record.status === 'failed' ? $r('app.color.app_danger') : (record.status === 'completed' ? $r('app.color.app_success') : $r('app.color.app_accent'))
+                          color: record.status === 'failed' ? $r('app.color.app_danger') : (record.status === 'completed' ? $r('app.color.app_success') : $r('app.color.app_warning'))
                         })
                         .onClick((): void => {
                           this.activeTaskId = record.id;
