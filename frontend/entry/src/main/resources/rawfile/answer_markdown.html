@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
-    :root { color-scheme: light; }
+    :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: transparent; }
     body { color: #34465f; font: 15px/1.68 system-ui, sans-serif; overflow: hidden; overflow-wrap: anywhere; }
@@ -31,6 +31,20 @@
     img { max-width: 100%; height: auto; border-radius: 6px; }
     hr { border: 0; border-top: 1px solid #d9e3f0; }
     input[type=checkbox] { accent-color: #2f6fce; }
+    #answer.failed { color: #9c3d3d; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #aec0cb; }
+      h1, h2, h3, h4, h5, h6 { color: #f3f7f9; }
+      blockquote { border-left-color: #476b9b; color: #aec0cb; background: #1b2b45; }
+      code { background: #203b61; }
+      pre { background: #1b2b45; }
+      th, td { border-color: #344865; }
+      th { background: #203b61; }
+      a, .video-time { color: #83b4ff; }
+      hr { border-top-color: #344865; }
+      input[type=checkbox] { accent-color: #83b4ff; }
+      #answer.failed { color: #ff8d8d; }
+    }
   </style>
   <!-- Marked 17.0.5 (MIT); see marked.LICENSE.md. Inline to avoid ArkWeb rawfile cross-origin blocking. -->
   <script>
@@ -166,7 +180,7 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       }
     }
     window.renderAnswer = function (source, failed) {
-      document.body.style.color = failed ? '#9c3d3d' : '#34465f';
+      root.classList.toggle('failed', failed);
       root.innerHTML = marked.parse(source || '');
       root.querySelectorAll('table').forEach(table => {
         const wrap = document.createElement('div');

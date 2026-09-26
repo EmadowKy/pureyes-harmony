@@ -77,6 +77,10 @@
       "value": "#83B4FF"
     },
     {
+      "name": "app_action_bg",
+      "value": "#2459B8"
+    },
+    {
       "name": "app_primary_soft",
       "value": "#203B61"
     },
@@ -91,6 +95,10 @@
     {
       "name": "app_success",
       "value": "#5DC6A8"
+    },
+    {
+      "name": "app_success_soft",
+      "value": "#1C3C38"
     },
     {
       "name": "app_danger",
@@ -123,6 +131,10 @@
     {
       "name": "app_warning",
       "value": "#F2B13B"
+    },
+    {
+      "name": "app_warning_soft",
+      "value": "#43351F"
     }
   ]
 }

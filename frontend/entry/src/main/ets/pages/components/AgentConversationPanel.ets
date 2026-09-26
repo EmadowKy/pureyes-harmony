@@ -825,20 +825,12 @@ export struct AgentConversationPanel {
     return '工具调用';
   }
 
-  toolAccent(toolName: string): string {
-    if (toolName === 'search_video_text') return '#9A641F';
-    if (toolName === 'search_face_tracks') return '#745E9F';
-    if (toolName === 'read_frame_image' || toolName === 'read_frames') return '#2F6FCE';
-    if (toolName === 'get_video_metadata') return '#536B77';
-    return '#2459B8';
+  toolAccent(_toolName: string): ResourceColor {
+    return $r('app.color.app_primary');
   }
 
-  toolSoft(toolName: string): string {
-    if (toolName === 'search_video_text') return '#FFF1DC';
-    if (toolName === 'search_face_tracks') return '#F0ECF8';
-    if (toolName === 'read_frame_image' || toolName === 'read_frames') return '#E8F0FF';
-    if (toolName === 'get_video_metadata') return '#EAF0F3';
-    return '#E8F0FF';
+  toolSoft(_toolName: string): ResourceColor {
+    return $r('app.color.app_primary_soft');
   }
 
   toolKind(toolName: string): string {
@@ -899,19 +891,19 @@ export struct AgentConversationPanel {
         Text('工具调用链')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#0C2942')
+          .fontColor($r('app.color.app_text_primary'))
         Text(`${turn.toolCalls.length} 步 · 按执行顺序`)
           .fontSize(11)
-          .fontColor('#667B96')
+          .fontColor($r('app.color.app_text_muted'))
           .layoutWeight(1)
           .textAlign(TextAlign.End)
         Text(this.isTraceExpanded(turn.id) ? '收起' : '查看')
           .fontSize(11)
-          .fontColor('#2459B8')
+          .fontColor($r('app.color.app_primary'))
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .backgroundColor('#F5F8FC')
+      .backgroundColor($r('app.color.app_page_bg'))
       .borderRadius(9)
       .onClick((): void => { this.toggleTrace(turn.id); })
       if (this.isTraceExpanded(turn.id)) {
@@ -931,10 +923,10 @@ export struct AgentConversationPanel {
                 Text(this.toolNameLabel(call.name))
                   .fontSize(13)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#0C2942')
+                  .fontColor($r('app.color.app_text_primary'))
                 Text(`${this.toolKind(call.name)} · ${this.toolScopeLabel(turn, call)}`)
                   .fontSize(10)
-                  .fontColor('#8191A5')
+                  .fontColor($r('app.color.app_text_muted'))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
@@ -943,11 +935,11 @@ export struct AgentConversationPanel {
               Text(call.status === 'running' ? '进行中' : (call.status === 'failed' ? '未完成' : '已完成'))
                 .fontSize(10)
                 .fontWeight(FontWeight.Medium)
-                .fontColor(call.status === 'failed' ? '#A14D4D' :
-                  (call.status === 'running' ? '#A56822' : '#20765F'))
+                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') :
+                  (call.status === 'running' ? $r('app.color.app_warning') : $r('app.color.app_success')))
                 .padding({ left: 7, right: 7, top: 4, bottom: 4 })
-                .backgroundColor(call.status === 'failed' ? '#FCECEC' :
-                  (call.status === 'running' ? '#FFF2DC' : '#E8F5EF'))
+                .backgroundColor(call.status === 'failed' ? $r('app.color.app_danger_soft') :
+                  (call.status === 'running' ? $r('app.color.app_warning_soft') : $r('app.color.app_success_soft')))
                 .borderRadius(6)
             }
             .width('100%')
@@ -955,14 +947,14 @@ export struct AgentConversationPanel {
 
             Text(call.summary || (call.status === 'running' ? '正在等待工具返回…' : '工具已执行'))
                 .fontSize(12)
-                .fontColor(call.status === 'failed' ? '#A14D4D' : '#4C617A')
+                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') : $r('app.color.app_text_secondary'))
                 .maxLines(this.isCallExpanded(`${turn.id}-${index}`) ? 8 : 3)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
             if (call.query) {
               Text(`检索 · ${call.query}`)
                 .fontSize(10)
-                .fontColor('#657A92')
+                .fontColor($r('app.color.app_text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
@@ -973,15 +965,15 @@ export struct AgentConversationPanel {
                 `${call.evidence.length} 处可查看证据`)
                 .fontSize(10)
                 .fontWeight(FontWeight.Medium)
-                .fontColor('#2459B8')
+                .fontColor($r('app.color.app_primary'))
               Flex({ wrap: FlexWrap.Wrap }) {
                 ForEach(call.evidence.slice(0, this.isCallExpanded(`${turn.id}-${index}`) ?
                   call.evidence.length : 3), (evidence: AgentToolEvidence, evidenceIndex: number): void => {
                   Text(`${this.evidenceVideoLabel(turn, evidence.segmentId)} · ${this.formatTimestamp(evidence.timestampSec)} ↗`)
                     .fontSize(11)
-                    .fontColor('#2459B8')
+                    .fontColor($r('app.color.app_primary'))
                     .padding({ left: 8, right: 8, top: 6, bottom: 6 })
-                    .backgroundColor('#E8F0FF')
+                    .backgroundColor($r('app.color.app_primary_soft'))
                     .borderRadius(7)
                     .margin({ right: 6, bottom: 4 })
                     .onClick((): void => {
@@ -994,7 +986,7 @@ export struct AgentConversationPanel {
                 if (call.evidence.length > 3 && !this.isCallExpanded(`${turn.id}-${index}`)) {
                   Text(`还有 ${call.evidence.length - 3} 处 · 展开`)
                     .fontSize(11)
-                    .fontColor('#536982')
+                    .fontColor($r('app.color.app_text_secondary'))
                     .padding({ top: 6, bottom: 6 })
                     .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
                 }
@@ -1013,28 +1005,28 @@ export struct AgentConversationPanel {
                 Column({ space: 8 }) {
                   Text(`工具标识 · ${call.name}`)
                     .fontSize(10)
-                    .fontColor('#8191A5')
+                    .fontColor($r('app.color.app_text_muted'))
                   if (call.query || call.videoId || call.timestampSec >= 0 || call.queryType) {
                     Text('调用参数')
                       .fontSize(10)
                       .fontWeight(FontWeight.Bold)
-                      .fontColor('#718399')
+                      .fontColor($r('app.color.app_text_muted'))
                     if (call.query) {
-                      Text(call.query).fontSize(12).fontWeight(FontWeight.Medium).fontColor('#25456E')
+                      Text(call.query).fontSize(12).fontWeight(FontWeight.Medium).fontColor($r('app.color.app_text_primary'))
                     }
                     if (call.queryType) {
                       Text(`检索类型：${call.queryType === 'identity' ? '同一目标' : '语义分类'}`)
-                        .fontSize(11).fontColor('#657A92')
+                        .fontSize(11).fontColor($r('app.color.app_text_secondary'))
                     }
                     if (call.videoId) {
-                      Text(this.toolVideoLabel(turn, call.videoId)).fontSize(11).fontColor('#657A92')
+                      Text(this.toolVideoLabel(turn, call.videoId)).fontSize(11).fontColor($r('app.color.app_text_secondary'))
                     }
                     if (call.timestampSec >= 0 && this.toolSegmentId(turn, call.videoId) > 0) {
                       Text(`打开核验画面 · ${this.formatTimestamp(call.timestampSec)} ↗`)
                         .fontSize(11)
-                        .fontColor('#2F6FCE')
+                        .fontColor($r('app.color.app_selection'))
                         .padding({ left: 9, right: 9, top: 7, bottom: 7 })
-                        .backgroundColor('#E8F0FF')
+                        .backgroundColor($r('app.color.app_primary_soft'))
                         .borderRadius(6)
                         .onClick((): void => {
                           this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(call.timestampSec));
@@ -1042,16 +1034,16 @@ export struct AgentConversationPanel {
                     }
                   }
                   if (call.details.length > 0 || (call.evidence.length === 0 && call.times.length > 0)) {
-                    Divider().color('#DDE6F2')
+                    Divider().color($r('app.color.app_border'))
                     Text('观察结果')
                       .fontSize(10)
                       .fontWeight(FontWeight.Bold)
-                      .fontColor('#718399')
+                      .fontColor($r('app.color.app_text_muted'))
                   }
                   ForEach(call.details, (detail: string, detailIndex: number): void => {
                     Row({ space: 6 }) {
                       Text('•').fontSize(12).fontColor(this.toolAccent(call.name))
-                      Text(detail).fontSize(11).fontColor('#4C617A').layoutWeight(1)
+                      Text(detail).fontSize(11).fontColor($r('app.color.app_text_secondary')).layoutWeight(1)
                     }.width('100%')
                   }, (detail: string, detailIndex: number): string => `${turn.id}-${index}-detail-${detailIndex}`)
                   if (call.evidence.length === 0 && call.times.length > 0 &&
@@ -1074,15 +1066,15 @@ export struct AgentConversationPanel {
                 }
                 .width('100%')
                 .padding({ left: 10, right: 0, top: 7, bottom: 3 })
-                .border({ width: { left: 2 }, color: '#D9E3F0' })
+                .border({ width: { left: 2 }, color: $r('app.color.app_border') })
                 .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
             }
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')
           .padding({ left: 12, right: 8, top: 11, bottom: 11 })
-          .backgroundColor('#F8FAFE')
-          .border({ width: { left: 2, bottom: 1 }, color: '#D9E3F0' })
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .border({ width: { left: 2, bottom: 1 }, color: $r('app.color.app_border') })
           .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
       }
@@ -1100,38 +1092,38 @@ export struct AgentConversationPanel {
             Row({ space: 12 }) {
               Text('✦')
                 .fontSize(16)
-                .fontColor(item.latestStatus === 'processing' ? '#A56822' : '#2459B8')
+                .fontColor(item.latestStatus === 'processing' ? $r('app.color.app_warning') : $r('app.color.app_primary'))
                 .textAlign(TextAlign.Center)
                 .width(34)
                 .height(34)
-                .backgroundColor(item.latestStatus === 'processing' ? '#FFF4E6' : '#E8F0FF')
+                .backgroundColor(item.latestStatus === 'processing' ? $r('app.color.app_warning_soft') : $r('app.color.app_primary_soft'))
                 .borderRadius(10)
               Column({ space: 5 }) {
                 Row({ space: 8 }) {
                   Text(item.title)
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#0C2942')
+                    .fontColor($r('app.color.app_text_primary'))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .layoutWeight(1)
                   Text(`${item.turnCount} 轮`)
                     .fontSize(11)
-                    .fontColor('#8191A5')
+                    .fontColor($r('app.color.app_text_muted'))
                 }
                 Text(item.latestQuestion || '打开调查记录')
                   .fontSize(12)
-                  .fontColor('#718399')
+                  .fontColor($r('app.color.app_text_muted'))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                 if (item.latestStatus === 'processing') {
                   Text('● 正在运行')
                     .fontSize(11)
-                    .fontColor('#A56822')
+                    .fontColor($r('app.color.app_warning'))
                 } else if (item.latestStatus === 'stopped') {
                   Text('已停止 · 可以追问')
                     .fontSize(11)
-                    .fontColor('#718399')
+                    .fontColor($r('app.color.app_text_muted'))
                 }
               }
               .layoutWeight(1)
@@ -1143,14 +1135,14 @@ export struct AgentConversationPanel {
             .onClick((): void => { this.openConversation(item.id); })
           }
           .width('100%')
-          .border({ width: { bottom: 1 }, color: '#E6ECF4' })
+          .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
         }
       }, (item: AgentConversationItem): string => item.id)
     }
     .layoutWeight(1)
     .width('100%')
     .padding({ left: 18, right: 18 })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.app_card_bg'))
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
@@ -1162,57 +1154,57 @@ export struct AgentConversationPanel {
             Row({ space: 8 }) {
               Text(`第 ${turn.turnIndex} 轮`)
                 .fontSize(11)
-                .fontColor('#8D9BAE')
+                .fontColor($r('app.color.app_text_muted'))
                 .layoutWeight(1)
               Text(turn.status === 'processing' ? '运行中' :
                 (turn.status === 'stopped' ? '已停止' : (turn.status === 'failed' ? '未完成' : '已完成')))
                 .fontSize(11)
-                .fontColor(turn.status === 'failed' || turn.status === 'stopped' ? '#A14D4D' :
-                  (turn.status === 'processing' ? '#C77818' : '#20765F'))
+                .fontColor(turn.status === 'failed' || turn.status === 'stopped' ? $r('app.color.app_danger') :
+                  (turn.status === 'processing' ? $r('app.color.app_warning') : $r('app.color.app_success')))
             }
             Column({ space: 6 }) {
               Text(turn.creatorId ? `${turn.creatorId} · 提问` : '组员提问')
                 .fontSize(11)
-                .fontColor('#75869B')
+                .fontColor($r('app.color.app_text_muted'))
               if (turn.modelConfigLabel) {
                 Text(turn.modelConfigLabel)
                   .fontSize(10)
-                  .fontColor('#567392')
+                  .fontColor($r('app.color.app_text_secondary'))
               }
               Text(turn.question)
                 .fontSize(15)
-                .fontColor('#0C2942')
+                .fontColor($r('app.color.app_text_primary'))
                 .lineHeight(23)
             }
             .width('88%')
             .alignSelf(ItemAlign.End)
             .alignItems(HorizontalAlign.Start)
             .padding({ left: 14, right: 14, top: 11, bottom: 11 })
-            .backgroundColor('#EAF1FB')
+            .backgroundColor($r('app.color.app_primary_soft'))
             .borderRadius(16)
             Row({ space: 7 }) {
-              Text('✦').fontSize(16).fontColor('#2F6FCE')
+              Text('✦').fontSize(16).fontColor($r('app.color.app_selection'))
               Text('调查 Agent')
                 .fontSize(12)
                 .fontWeight(FontWeight.Bold)
-                .fontColor('#4C617A')
+                .fontColor($r('app.color.app_text_secondary'))
             }
             if (turn.status === 'processing') {
               Column({ space: 7 }) {
                 Row({ space: 8 }) {
-                  LoadingProgress().width(16).height(16).color('#2F6FCE')
+                  LoadingProgress().width(16).height(16).color($r('app.color.app_selection'))
                   Text(turn.id === this.currentTaskId ?
                     `${this.liveStage} · 已运行 ${this.formatDuration(this.elapsedSeconds)}` : '调查任务仍在运行…')
                     .fontSize(12)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#2459B8')
+                    .fontColor($r('app.color.app_primary'))
                 }
                 Text(turn.id === this.currentTaskId ?
                   (this.liveProgress || 'Agent 正在调取视频证据与轨迹索引…') : '正在等待最新进度…')
-                  .fontSize(13).fontColor('#657A92').maxLines(2)
+                  .fontSize(13).fontColor($r('app.color.app_text_secondary')).maxLines(2)
                 if (turn.id === this.currentTaskId && this.quietSeconds >= 90) {
                   Text(`已有 ${this.formatDuration(this.quietSeconds)} 没有新步骤，可能仍在等待模型或工具。可停止本轮后重试。`)
-                    .fontSize(11).fontColor('#A56822')
+                    .fontSize(11).fontColor($r('app.color.app_warning'))
                 }
               }
               .padding({ left: 0, right: 0, top: 4, bottom: 4 })
@@ -1235,8 +1227,8 @@ export struct AgentConversationPanel {
                 if (turn.status === 'failed' && turn.id === this.messages[this.messages.length - 1].id) {
                   Button('重新尝试这一问  ↗')
                     .fontSize(12)
-                    .backgroundColor('#E8F0FF')
-                    .fontColor('#2459B8')
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .fontColor($r('app.color.app_primary'))
                     .borderRadius(8)
                     .enabled(!this.isSending && this.canContinue())
                     .onClick((): void => { this.retryTurn(turn); })
@@ -1249,8 +1241,8 @@ export struct AgentConversationPanel {
           .width('100%')
           .alignItems(HorizontalAlign.Start)
           .padding({ left: 18, right: 18, top: 20, bottom: 23 })
-          .backgroundColor('#FFFFFF')
-          .border({ width: { bottom: 1 }, color: '#E6ECF4' })
+          .backgroundColor($r('app.color.app_card_bg'))
+          .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
           .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }
       }, (turn: AgentTurnItem): string => turn.id)
@@ -1258,7 +1250,7 @@ export struct AgentConversationPanel {
     .width('100%')
     .layoutWeight(1)
     .cachedCount(1)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.app_card_bg'))
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
@@ -1266,17 +1258,17 @@ export struct AgentConversationPanel {
     Column({ space: 6 }) {
       if (this.currentTaskId.length > 0) {
         Row({ space: 10 }) {
-          LoadingProgress().width(16).height(16).color('#2F6FCE')
+          LoadingProgress().width(16).height(16).color($r('app.color.app_selection'))
           Text('正在调查 · 组员可查看进度')
             .fontSize(12)
-            .fontColor('#536982')
+            .fontColor($r('app.color.app_text_secondary'))
             .maxLines(1)
             .layoutWeight(1)
           Button(this.isStopping ? '停止中…' : '停止本轮')
             .enabled(!this.isStopping)
             .fontSize(12)
-            .backgroundColor('#F8ECE8')
-            .fontColor('#A24B32')
+            .backgroundColor($r('app.color.app_danger_soft'))
+            .fontColor($r('app.color.app_danger'))
             .borderRadius(8)
             .onClick((): void => { this.stopTask(); })
         }
@@ -1284,26 +1276,29 @@ export struct AgentConversationPanel {
         .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       } else if (this.isSending) {
         Row({ space: 8 }) {
-          LoadingProgress().width(17).height(17).color('#2F6FCE')
-          Text('正在提交调查…').fontSize(13).fontColor('#718399')
+          LoadingProgress().width(17).height(17).color($r('app.color.app_selection'))
+          Text('正在提交调查…').fontSize(13).fontColor($r('app.color.app_text_muted'))
         }
         .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       } else {
         if (this.liveProgress.length > 0) {
           Text(this.liveProgress)
             .fontSize(12)
-            .fontColor('#A24B32')
+            .fontColor($r('app.color.app_danger'))
         }
         TextArea({ placeholder: '追问当前调查…', text: this.composerText })
           .height(52)
           .fontSize(14)
-          .fontColor('#0C2942')
-          .backgroundColor('#F5F8FC')
-          .border({ width: 1, color: this.composerFocused ? '#2F6FCE' : '#D9E3F0' })
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_page_bg'))
+          .border({ width: 1, color: this.composerFocused ? $r('app.color.app_selection') : $r('app.color.app_border') })
           .borderRadius(16)
           .padding(10)
           .animation({ duration: 160, curve: Curve.EaseOut })
-          .onFocus((): void => { this.composerFocused = true; })
+          .onFocus((): void => {
+            this.composerFocused = true;
+            setTimeout((): void => this.messageScroller.scrollEdge(Edge.Bottom), 250);
+          })
           .onBlur((): void => { this.composerFocused = false; })
           .onChange((value: string): void => { this.composerText = value; })
         Row({ space: 8 }) {
@@ -1313,7 +1308,7 @@ export struct AgentConversationPanel {
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .height(36)
-            .backgroundColor('#2459B8')
+            .backgroundColor($r('app.color.app_action_bg'))
             .fontColor(Color.White)
             .borderRadius(9)
             .onClick((): void => { this.submitTurn(); })
@@ -1324,14 +1319,14 @@ export struct AgentConversationPanel {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor('#FFFFFF')
-    .border({ width: { top: 1 }, color: '#D9E3F0' })
+    .backgroundColor($r('app.color.app_card_bg'))
+    .border({ width: { top: 1 }, color: $r('app.color.app_border') })
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   @Builder ModelSelector() {
     Row({ space: 4 }) {
-      Text('模型').fontSize(11).fontColor('#718399')
+      Text('模型').fontSize(11).fontColor($r('app.color.app_text_muted'))
       Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
         const option = new ConfigSelectItem();
         option.value = `${item.scope === 'group' ? '小组' : '个人'} · ${item.name} (${item.model})`;
@@ -1342,12 +1337,12 @@ export struct AgentConversationPanel {
         .value(this.modelConfigs.find((item: ModelConfigOption): boolean =>
           item.id === this.selectedModelConfigId)?.name || '选择配置')
         .font({ size: 11 })
-        .backgroundColor('#E8F0FF')
+        .backgroundColor($r('app.color.app_primary_soft'))
         .onSelect((index: number): void => {
           if (this.modelConfigs[index]) this.selectedModelConfigId = this.modelConfigs[index].id;
         })
-        .width(190)
-      Button('刷新').fontSize(11).backgroundColor(Color.Transparent).fontColor('#2F6FCE')
+        .layoutWeight(1)
+      Button('刷新').fontSize(11).backgroundColor(Color.Transparent).fontColor($r('app.color.app_selection'))
         .onClick((): void => { this.loadModelConfigs(); })
     }
     .width('100%')
@@ -1356,7 +1351,7 @@ export struct AgentConversationPanel {
 
   @Builder CompactModelSelector() {
     Row({ space: 4 }) {
-      Text('模型').fontSize(11).fontColor('#718399')
+      Text('模型').fontSize(11).fontColor($r('app.color.app_text_muted'))
       Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
         const option = new ConfigSelectItem();
         option.value = `${item.scope === 'group' ? '小组' : '个人'} · ${item.name} (${item.model})`;
@@ -1367,11 +1362,11 @@ export struct AgentConversationPanel {
         .value(this.modelConfigs.find((item: ModelConfigOption): boolean =>
           item.id === this.selectedModelConfigId)?.name || '选择配置')
         .font({ size: 11 })
-        .backgroundColor('#E8F0FF')
+        .backgroundColor($r('app.color.app_primary_soft'))
         .onSelect((index: number): void => {
           if (this.modelConfigs[index]) this.selectedModelConfigId = this.modelConfigs[index].id;
         })
-        .width(142)
+        .layoutWeight(1)
     }
     .layoutWeight(1)
     .justifyContent(FlexAlign.Start)
@@ -1382,25 +1377,25 @@ export struct AgentConversationPanel {
       Text('建立一条调查线')
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#0C2942')
+        .fontColor($r('app.color.app_text_primary'))
       Text('先圈定证据范围。后续追问会沿用这些录像，并将确认过的结论带入下一轮核验。')
         .fontSize(13)
-        .fontColor('#657A92')
+        .fontColor($r('app.color.app_text_secondary'))
         .lineHeight(20)
       Row() {
         Text('选择相关片段')
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#4C617A')
+          .fontColor($r('app.color.app_text_secondary'))
           .layoutWeight(1)
         Text(`已选 ${this.selectedSegmentIds.length}/20`)
           .fontSize(11)
-          .fontColor('#718399')
+          .fontColor($r('app.color.app_text_muted'))
       }.width('100%')
       if (this.segmentLoadError) {
         Row({ space: 8 }) {
-          Text(this.segmentLoadError).fontSize(12).fontColor('#A24B32').layoutWeight(1)
-          Button('重试').fontSize(12).backgroundColor('#F8ECE8').fontColor('#A24B32')
+          Text(this.segmentLoadError).fontSize(12).fontColor($r('app.color.app_danger')).layoutWeight(1)
+          Button('重试').fontSize(12).backgroundColor($r('app.color.app_danger_soft')).fontColor($r('app.color.app_danger'))
             .onClick((): void => { this.loadSegments(); })
         }.width('100%')
       }
@@ -1410,11 +1405,11 @@ export struct AgentConversationPanel {
             Row({ space: 10 }) {
               Text(this.isSelected(segment.id) ? '✓' : '')
                 .fontSize(16)
-                .fontColor('#FFFFFF')
+                .fontColor($r('app.color.app_text_on_inverted'))
                 .textAlign(TextAlign.Center)
                 .width(22)
                 .height(22)
-                .backgroundColor(this.isSelected(segment.id) ? '#2F6FCE' : '#C4D7F1')
+                .backgroundColor(this.isSelected(segment.id) ? $r('app.color.app_selection') : $r('app.color.app_primary_soft'))
                 .borderRadius(11)
               if (segment.thumbnailUrl) {
                 Image(BASE_HOST + segment.thumbnailUrl)
@@ -1426,31 +1421,32 @@ export struct AgentConversationPanel {
               Column({ space: 3 }) {
                 Text(segment.videoName)
                   .fontSize(10)
-                  .fontColor('#718399')
+                  .fontColor($r('app.color.app_text_muted'))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                 Text(segment.title)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#0C2942')
+                  .fontColor($r('app.color.app_text_primary'))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                 Text(segment.durationText)
                   .fontSize(11)
-                  .fontColor('#718399')
+                  .fontColor($r('app.color.app_text_muted'))
               }
               .layoutWeight(1)
               Text(segment.status === 'pending' || segment.status === 'processing' ? '处理中' :
                 (segment.status === 'completed' ? '已索引' : '按需索引'))
                 .fontSize(11)
-                .fontColor(segment.status === 'pending' || segment.status === 'processing' ? '#A56822' :
-                  (segment.status === 'completed' ? '#20765F' : '#2459B8'))
+                .fontColor(segment.status === 'pending' || segment.status === 'processing' ? $r('app.color.app_warning') :
+                  (segment.status === 'completed' ? $r('app.color.app_success') : $r('app.color.app_primary')))
             }
             .width('100%')
             .padding(12)
-            .backgroundColor(this.isSelected(segment.id) ? '#E8F0FF' :
-              (segment.status === 'pending' || segment.status === 'processing' ? '#F6F7F6' : '#FFFFFF'))
-            .border({ width: 1, color: this.isSelected(segment.id) ? '#ADC8F1' : '#DDE6F2' })
+            .backgroundColor(this.isSelected(segment.id) ? $r('app.color.app_primary_soft') :
+              (segment.status === 'pending' || segment.status === 'processing' ? $r('app.color.app_input_bg') :
+                $r('app.color.app_card_bg')))
+            .border({ width: 1, color: this.isSelected(segment.id) ? $r('app.color.app_selection') : $r('app.color.app_border') })
             .borderRadius(10)
             .animation({ duration: 160, curve: Curve.EaseOut })
             .onClick((): void => { this.toggleSegment(segment.id); })
@@ -1459,7 +1455,7 @@ export struct AgentConversationPanel {
         if (this.segments.length === 0 && !this.segmentLoadError) {
           ListItem() {
             Text('暂无视频片段，请先在「片段」页面添加。')
-              .fontSize(12).fontColor('#718399').padding(16)
+              .fontSize(12).fontColor($r('app.color.app_text_muted')).padding(16)
           }
         }
       }
@@ -1468,32 +1464,32 @@ export struct AgentConversationPanel {
       TextArea({ placeholder: '例如：这个穿深色上衣的人先后出现在哪里？', text: this.composerText })
         .height(88)
         .fontSize(14)
-        .backgroundColor('#FAFBFE')
-        .border({ width: 1, color: '#D9E3F0' })
+        .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(12)
         .padding(10)
         .onChange((value: string): void => { this.composerText = value; })
       this.ModelSelector()
       if (this.modelLoadError) {
-        Text(this.modelLoadError).fontSize(11).fontColor('#A24B32')
+        Text(this.modelLoadError).fontSize(11).fontColor($r('app.color.app_danger'))
       }
       if (this.liveProgress) {
-        Text(this.liveProgress).fontSize(11).fontColor('#A24B32')
+        Text(this.liveProgress).fontSize(11).fontColor($r('app.color.app_danger'))
       }
       Row({ space: 10 }) {
         Button('返回')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#4C617A')
-          .border({ width: 1, color: '#D9E3F0' })
+          .backgroundColor($r('app.color.app_card_bg'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
           .borderRadius(9)
           .onClick((): void => { this.showConversationList(); })
         Button('开始调查')
           .layoutWeight(1)
           .height(42)
           .enabled(!this.isSending && this.composerText.trim().length > 0 && this.selectedSegmentIds.length > 0)
-          .backgroundColor('#2459B8')
+          .backgroundColor($r('app.color.app_action_bg'))
           .fontColor(Color.White)
           .borderRadius(9)
           .onClick((): void => { this.submitTurn(); })
@@ -1508,17 +1504,17 @@ export struct AgentConversationPanel {
 
   @Builder ConversationSkeletonRow() {
     Row({ space: 12 }) {
-      Blank().width(34).height(34).backgroundColor('#E8F0FF').borderRadius(10)
+      Blank().width(34).height(34).backgroundColor($r('app.color.app_primary_soft')).borderRadius(10)
       Column({ space: 8 }) {
-        Blank().width('65%').height(12).backgroundColor('#E6ECF4').borderRadius(6)
-        Blank().width('85%').height(10).backgroundColor('#F0F4FA').borderRadius(5)
+        Blank().width('65%').height(12).backgroundColor($r('app.color.app_border')).borderRadius(6)
+        Blank().width('85%').height(10).backgroundColor($r('app.color.app_card_subtle_bg')).borderRadius(5)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .padding({ top: 15, bottom: 15 })
-    .border({ width: { bottom: 1 }, color: '#E6ECF4' })
+    .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
   }
 
   build() {
@@ -1530,7 +1526,7 @@ export struct AgentConversationPanel {
             .height(36)
             .fontSize(23)
             .backgroundColor(Color.Transparent)
-            .fontColor('#0C2942')
+            .fontColor($r('app.color.app_text_primary'))
             .margin({ right: 8 })
             .onClick((): void => { this.showConversationList(); })
         }
@@ -1538,12 +1534,12 @@ export struct AgentConversationPanel {
           Text(this.selectedConversationId ? this.activeConversationTitle() : '调查 Agent')
             .fontSize(17)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#0C2942')
+            .fontColor($r('app.color.app_text_primary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(this.selectedConversationId ? this.evidenceScopeLabel() : '视频调查与组员协作')
             .fontSize(11)
-            .fontColor('#718399')
+            .fontColor($r('app.color.app_text_muted'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -1553,19 +1549,19 @@ export struct AgentConversationPanel {
           .enabled(this.currentTaskId.length === 0 && !this.isSending)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .backgroundColor('#EDF2FA')
-          .fontColor('#244A80')
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_primary'))
           .borderRadius(8)
           .onClick((): void => { this.startInvestigation(); })
       }
       .width('100%')
       .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: { bottom: 1 }, color: '#D9E3F0' })
+      .backgroundColor($r('app.color.app_card_bg'))
+      .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
 
       if (this.isLoading) {
         Column({ space: 12 }) {
-          Text('正在载入调查记录').fontSize(13).fontColor('#718399')
+          Text('正在载入调查记录').fontSize(13).fontColor($r('app.color.app_text_muted'))
           this.ConversationSkeletonRow()
           this.ConversationSkeletonRow()
           this.ConversationSkeletonRow()
@@ -1581,14 +1577,14 @@ export struct AgentConversationPanel {
           if (this.conversationLoadError) {
             Row({ space: 8 }) {
               Text(this.conversationLoadError)
-                .fontSize(12).fontColor('#A24B32').layoutWeight(1)
+                .fontSize(12).fontColor($r('app.color.app_danger')).layoutWeight(1)
               Button('重试')
-                .fontSize(12).backgroundColor('#F8ECE8').fontColor('#A24B32')
+                .fontSize(12).backgroundColor($r('app.color.app_danger_soft')).fontColor($r('app.color.app_danger'))
                 .onClick((): void => { this.loadConversations(); })
             }
             .width('100%')
             .padding(10)
-            .backgroundColor('#FFF7F3')
+            .backgroundColor($r('app.color.app_danger_soft'))
             .borderRadius(9)
           }
           if (this.conversations.length > 0) {
@@ -1596,35 +1592,35 @@ export struct AgentConversationPanel {
               Text('调查记录')
                 .fontSize(15)
                 .fontWeight(FontWeight.Bold)
-                .fontColor('#0C2942')
+                .fontColor($r('app.color.app_text_primary'))
                 .layoutWeight(1)
               Text(`${this.conversations.length} 条调查线`)
                 .fontSize(11)
-                .fontColor('#718399')
+                .fontColor($r('app.color.app_text_muted'))
             }
             .width('100%')
             this.ConversationRail()
           } else if (!this.conversationLoadError) {
             Text('✦')
               .fontSize(30)
-              .fontColor('#2F6FCE')
+              .fontColor($r('app.color.app_selection'))
               .textAlign(TextAlign.Center)
               .width(64)
               .height(64)
-              .backgroundColor('#E8F0FF')
+              .backgroundColor($r('app.color.app_primary_soft'))
               .borderRadius(18)
             Text('从证据开始调查')
-              .fontSize(21).fontWeight(FontWeight.Bold).fontColor('#0C2942')
+              .fontSize(21).fontWeight(FontWeight.Bold).fontColor($r('app.color.app_text_primary'))
             Text('选择视频片段，提出一个问题。Agent 会展示检索、核验与结论，组员可以沿着同一条线继续追问。')
-              .fontSize(13).fontColor('#718399').textAlign(TextAlign.Center).lineHeight(21)
+              .fontSize(13).fontColor($r('app.color.app_text_muted')).textAlign(TextAlign.Center).lineHeight(21)
             Text('视频检索   ·   工具记录   ·   连续追问')
-              .fontSize(11).fontColor('#416DAF')
+              .fontSize(11).fontColor($r('app.color.app_primary'))
               .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-              .backgroundColor('#E8F0FF')
+              .backgroundColor($r('app.color.app_primary_soft'))
               .borderRadius(8)
             Button('开始第一条调查  ↗')
               .height(44)
-              .backgroundColor('#2459B8').fontColor(Color.White).borderRadius(10)
+              .backgroundColor($r('app.color.app_action_bg')).fontColor(Color.White).borderRadius(10)
               .onClick((): void => { this.startInvestigation(); })
           }
         }
@@ -1640,15 +1636,15 @@ export struct AgentConversationPanel {
         } else {
           Text('调查记录尚未加载，暂时无法追问。')
             .fontSize(12)
-            .fontColor('#718399')
+            .fontColor($r('app.color.app_text_muted'))
             .width('100%')
             .padding(15)
-            .backgroundColor('#FFFFFF')
+            .backgroundColor($r('app.color.app_card_bg'))
         }
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F8FC')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }
