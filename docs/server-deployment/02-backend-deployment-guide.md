@@ -12,9 +12,9 @@ graph TD
     B --> C[3. 安装 PyTorch CUDA 12.6/11.8 Wheel]
     C --> D[4. 安装全量依赖 requirements.txt]
     D --> E[5. 部署轻量模型权重 yolov8n.pt/OSNet/ByteTrack]
-    E --> F[6. 配置大模型 API 密钥与服务地址]
+    E --> F[6. 配置 HTTPS 服务地址]
     F --> G[7. 启动后端服务 backend/run.py]
-    G --> H[8. 健康检查 GET /api/health 与端口映射]
+    G --> H[8. 健康检查与多视频冒烟测试]
 ```
 
 ---
@@ -67,7 +67,7 @@ pip install -r backend/requirements.txt
 3. **ByteTrack 多目标追踪配置 (`bytetrack_fixed.yaml`)**：
    - 放置于 `backend/app/mva_v2/bytetrack_fixed.yaml`。
 4. **多模态视觉大模型 API 配置**：
-   - 用户可在客户端【我的】->【大模型 API 设置】界面实时配置个人或企业的 API Key、Base URL 及模型名称；服务器端亦可在环境变量或配置文件中配置默认的大模型 API 节点。
+   - 用户登录后在客户端【我的】→【模型 API】创建多条个人配置；小组长可以创建小组配置供已加入的组员使用。每轮调查在输入区选择其中一条配置。API Key 加密存储，列表不回传明文。
 
 首次启动前至少设置管理员密码和持久化密钥。密钥一旦用于生产数据后请妥善备份并保持不变，否则已有登录凭据或加密保存的大模型 API Key 将失效：
 
@@ -85,7 +85,7 @@ export DATA_ENCRYPTION_KEY='替换为生成的 Fernet 密钥'
 
 ## 5. 步骤四：启动后端服务与后台运行
 
-在 `backend` 目录下启动后端的 Flask 服务：
+在 `backend` 目录下启动后端服务（默认只监听 `127.0.0.1:5000`，可用 `PUREYES_PORT` 修改端口）。只有位于隔离容器网络且确需从容器外访问时，才设置 `PUREYES_HOST=0.0.0.0` 并限制端口暴露：
 
 ```bash
 cd backend
@@ -102,6 +102,34 @@ nohup python run.py > logs/backend.log 2>&1 &
 tail -f logs/backend.log
 ```
 
+### 5.1 公网 HTTPS 接入
+
+客户端拒绝向远程 HTTP 地址发送登录和 API 请求；仓库里保留的旧官方 IP 地址为 HTTP，不能直接用于新版本登录。先为服务器准备域名和有效 TLS 证书，再让客户端在登录页切换到自定义服务器并填写 `https://你的域名/api`。未写协议的自定义地址默认按 HTTPS 解析。仅本机 `localhost`、`127.0.0.1` 或 `::1` 允许 HTTP 开发调试。
+
+例如在 Nginx 中终止 TLS，并将请求转发到只对本机开放的 Flask 服务（证书路径与域名按实际部署替换）：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.example;
+    ssl_certificate /etc/ssl/your-domain/fullchain.pem;
+    ssl_certificate_key /etc/ssl/your-domain/privkey.pem;
+    client_max_body_size 2g;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 1250s;
+        proxy_buffering off;
+    }
+}
+```
+
+实际部署时用受进程管理器监管的单个应用工作进程；调查线程及录制管理仍有进程内状态。数据库状态可让另一进程看到任务进度与停止请求，视频特征索引会检测磁盘变更，但当前方案并非完整的分布式任务队列。不要直接把 Flask 开发服务器暴露在公网；为代理与应用配置服务管理、重启策略及可观测日志。
+
 ---
 
 ## 6. 步骤五：服务健康检查
@@ -109,7 +137,8 @@ tail -f logs/backend.log
 在服务器本地或新终端发起 Curl 健康检查测试：
 
 ```bash
-curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:5000/api/health
+curl https://你的域名/api/health
 ```
 
 **预期输出**：
@@ -123,3 +152,18 @@ curl http://127.0.0.1:8000/api/health
 
 > [!NOTE]
 > **说明**：健康检查和用户登录接口不需要调用大模型 API；当客户端发起问答检索请求时，服务器才会首次调用配置的大模型 API 接口发起推理。
+
+要验证真实模型和多视频链路，可在服务器已配置模型权重、已完成片段预处理后运行 `backend/smoke_agent.py`。它会用至少两个片段提交调查，轮询结果，并检查轮次及工具记录。先运行只读预检，再明确指定 `--submit` 才会调用模型 API：
+
+```bash
+export PUREYES_SMOKE_URL='https://你的域名/api'
+export PUREYES_SMOKE_EMP_ID='测试账号工号'
+read -rsp '测试账号密码: ' PUREYES_SMOKE_PASSWORD; export PUREYES_SMOKE_PASSWORD
+export PUREYES_SMOKE_WORKSPACE_ID='工作区编号'
+export PUREYES_SMOKE_SEGMENT_IDS='片段编号1,片段编号2'
+export PUREYES_SMOKE_MODEL_CONFIG_ID='可用配置编号'
+python backend/smoke_agent.py
+python backend/smoke_agent.py --submit --require-tools --expect '预期出现的事实短语'
+```
+
+该测试会实际调用模型 API，应使用专门的测试账号与可控短视频。`--expect` 只检查短语，不代替人工逐帧核对画面、时间点和跨视频结论。

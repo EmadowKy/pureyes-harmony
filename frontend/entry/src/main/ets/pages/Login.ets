@@ -82,7 +82,7 @@ struct Login {
     if (!this.isServerOk) {
       await this.testConnection();
       if (!this.isServerOk) {
-        this.errorMsg = '服务器未连接，暂时无法登录';
+        this.errorMsg = this.testResultText || '服务器未连接，暂时无法登录';
         return;
       }
     }
@@ -348,11 +348,11 @@ struct Login {
               .height(28)
               .objectFit(ImageFit.Contain)
             Column({ space: 1 }) {
-              Text(this.isCustomServer ? '自定义服务器' : '官方服务器')
+              Text(this.isCustomServer ? '安全服务器' : '旧版服务器地址')
                 .fontSize(13)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.app_text_primary'))
-              Text(this.isCustomServer ? '切换回官方服务' : '切换到本地或私有服务')
+              Text(this.isCustomServer ? '查看旧版地址' : '配置已启用 HTTPS 的服务')
                 .fontSize(11)
                 .fontColor($r('app.color.app_text_secondary'))
             }
@@ -374,7 +374,7 @@ struct Login {
             } else {
               if (!this.serverUrl || this.serverUrl === OFFICIAL_SERVER_URL) {
                 this.serverUrl = this.customServerUrlStorage && this.customServerUrlStorage.trim().length > 0 ?
-                  this.customServerUrlStorage : OFFICIAL_SERVER_URL;
+                  this.customServerUrlStorage : '';
               }
               this.applyCurrentServerConfig();
             }

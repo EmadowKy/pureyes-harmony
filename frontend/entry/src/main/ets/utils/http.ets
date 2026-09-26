@@ -3,6 +3,13 @@ import http from '@ohos.net.http';
 export const OFFICIAL_SERVER_URL = 'http://116.62.178.139:8000/api';
 export const OFFICIAL_BASE_HOST = 'http://116.62.178.139:8000';
 
+// Credentials and video metadata must not be sent to a remote server over HTTP.
+// Loopback is kept for local development only.
+export function isSecureServerUrl(rawUrl: string): boolean {
+  const value = rawUrl.trim();
+  return /^https:\/\//i.test(value) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(value);
+}
+
 // 初始化持久化存储，确保跨应用退出/重启仍然保留服务器地址偏好
 try {
   PersistentStorage.persistProp('custom_server_url', '');
@@ -16,9 +23,9 @@ export function normalizeServerUrl(rawUrl: string): string {
   if (!url) {
     return OFFICIAL_SERVER_URL;
   }
-  // 仅保留 http:// 或 https:// 协议头的自动补全
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    url = `http://${url}`;
+  // 默认使用 HTTPS，避免未写协议时悄悄退回明文 HTTP。
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
   }
   return url.endsWith('/api') ? url : `${url}/api`;
 }
@@ -67,10 +74,16 @@ const REQUEST_TIMEOUT = 10000;
 export class HttpUtil {
   static async request(url: string, method: http.RequestMethod, data?: Object,
     authToken?: string): Promise<HttpResult> {
+    const currentBaseUrl = getBaseUrl().replace(/\/+$/, '');
+
+    if (!isSecureServerUrl(currentBaseUrl)) {
+      const blocked = new HttpResult();
+      blocked.message = '远程服务器必须使用 HTTPS；请在登录页配置已启用 HTTPS 的地址';
+      return blocked;
+    }
+
+    const requestUrl = url.startsWith('/') ? `${currentBaseUrl}${url}` : `${currentBaseUrl}/${url}`;
     const httpRequest = http.createHttp();
-    let currentBaseUrl = getBaseUrl().replace(/\/+$/, '');
-    
-    let requestUrl = url.startsWith('/') ? `${currentBaseUrl}${url}` : `${currentBaseUrl}/${url}`;
 
     try {
       const response = await httpRequest.request(requestUrl, {
@@ -112,6 +125,11 @@ export class HttpUtil {
 
   static async testServerUrl(targetUrl: string): Promise<TestServerResult> {
     const normalizedUrl = normalizeServerUrl(targetUrl).replace(/\/+$/, '');
+    if (!isSecureServerUrl(normalizedUrl)) {
+      const blocked = new TestServerResult();
+      blocked.message = '远程服务器必须使用 HTTPS，请切换到已配置证书的地址';
+      return blocked;
+    }
     let healthUrl = normalizedUrl;
     if (!healthUrl.endsWith('/health')) {
       if (healthUrl.endsWith('/api')) {
