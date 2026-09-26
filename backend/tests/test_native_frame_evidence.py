@@ -85,9 +85,11 @@ class NativeFrameEvidenceTests(unittest.TestCase):
         ]
 
     def test_batch_keeps_individual_clickable_video_times(self):
-        with tempfile.NamedTemporaryFile(suffix=".jpg") as image:
+        with tempfile.TemporaryDirectory() as image_dir:
+            image_path = Path(image_dir) / "frame.jpg"
+            image_path.write_bytes(b"test frame")
             runner = types.SimpleNamespace(tools=types.SimpleNamespace(
-                read_frame_image=lambda path, seconds, video_id: image.name))
+                read_frame_image=lambda path, seconds, video_id: str(image_path)))
             result, images = self.native._dispatch(runner, self.videos, "read_frames", {
                 "frames": [{"video_id": "a.mp4", "timestamp_sec": 3},
                            {"video_id": "b.mp4", "timestamp_sec": 8}]}, [])
@@ -153,7 +155,9 @@ class NativeFrameEvidenceTests(unittest.TestCase):
         self.assertIn("error", unavailable)
 
     def test_native_loop_marks_only_read_video_and_publishes_frame_link(self):
-        with tempfile.NamedTemporaryFile(suffix=".jpg") as image:
+        with tempfile.TemporaryDirectory() as image_dir:
+            image_path = Path(image_dir) / "frame.jpg"
+            image_path.write_bytes(b"test frame")
             responses = iter([
                 {"content": "", "tool_calls": [{"id": "call-1", "function": {
                     "name": "read_frames", "arguments": json.dumps({"frames": [
@@ -168,7 +172,7 @@ class NativeFrameEvidenceTests(unittest.TestCase):
                 return next(responses)
 
             def read_frame(path, seconds, video_id):
-                return image.name if video_id == "a.mp4" else None
+                return str(image_path) if video_id == "a.mp4" else None
 
             events = []
             tools = types.SimpleNamespace(
