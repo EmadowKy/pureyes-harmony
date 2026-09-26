@@ -165,11 +165,17 @@ Image($r('app.media.business_monitor'))
 
 ---
 
-## 5. 鸿蒙星盾安全与隐私特性集成
+## 5. 鸿蒙原生安全与交互能力
 
-前端在构建通用业务的同时，深度集成了 HarmonyOS 官方主推的星盾安全与隐私特性：
+前端接入以下系统能力，实际效果需在目标设备上验证：
 
-1. **密码保管箱与自动填充** (`Login.ets`)：
-   使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框，打通鸿蒙密码保管箱加密存储与生物特征（指纹/人脸）解锁填充。
-2. **窗口隐私防窥防截屏/录屏** (`EntryAbility.ets`)：
-   配置 `ohos.permission.PRIVACY_WINDOW` 并调用 `win.setWindowPrivacyMode(true)`，阻断截屏录屏与后台卡片预览泄漏。
+1. **系统凭据填充** (`Login.ets`)：
+   使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框；凭据保存和解锁提示由系统及用户设置决定。
+2. **隐私窗口** (`EntryAbility.ets`)：
+   配置 `ohos.permission.PRIVACY_WINDOW` 并调用 `win.setWindowPrivacyMode(true)`，限制系统截屏与录屏；未接入注视感知。
+3. **端侧人脸比对** (`utils/harmonyFaces.ets`)：
+   后端配置为鸿蒙模式时，手机调用 Core Vision Kit 对服务器抓拍图进行分组比对。
+4. **分享与触感** (`components/AgentConversationPanel.ets`)：
+   完成的调查结论可由用户调用 Share Kit 分享；页面看到任务完成时调用 Sensor Service Kit 发出轻触感。
+
+实现边界见 [鸿蒙原生能力接入](06-harmonyos-native-features.md)。

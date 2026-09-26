@@ -1,6 +1,10 @@
 import { HttpUtil, BASE_HOST } from '../../utils/http'
 import { MarkdownAnswer } from './MarkdownAnswer'
 import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+import { vibrator } from '@kit.SensorServiceKit';
 
 class ConfigSelectItem {
   value: string = '';
@@ -125,6 +129,7 @@ export struct AgentConversationPanel {
   @State conversationLoadError: string = '';
   @State segmentLoadError: string = '';
   @State modelLoadError: string = '';
+  @State shareErrorTurnId: string = '';
   private pollTimer: number = 0;
   private pollEpoch: number = 0;
   private syncTimer: number = 0;
@@ -143,6 +148,34 @@ export struct AgentConversationPanel {
   aboutToDisappear(): void {
     this.stopPolling();
     this.stopSync();
+  }
+
+  async shareConclusion(turn: AgentTurnItem): Promise<void> {
+    if (turn.status !== 'completed' || !turn.answer.trim()) return;
+    this.shareErrorTurnId = '';
+    try {
+      const data: systemShare.SharedData = new systemShare.SharedData({
+        utd: utd.UniformDataType.TEXT,
+        content: `问题：${turn.question}\n\n调查结论：\n${turn.answer}`,
+        title: '清眸调查结论'
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(data);
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DETAIL
+      });
+    } catch (_error) {
+      this.shareErrorTurnId = turn.id;
+    }
+  }
+
+  async signalTaskCompleted(): Promise<void> {
+    try {
+      await vibrator.startVibration({ type: 'time', duration: 60 }, { id: 0, usage: 'touch' });
+    } catch (_error) {
+      // Devices without a vibrator or with vibration disabled still show the result.
+    }
   }
 
   async refreshAll(): Promise<void> {
@@ -604,6 +637,7 @@ export struct AgentConversationPanel {
         }
         const status = (data['status'] as string) || 'processing';
         if (status === 'completed' || status === 'failed' || status === 'stopped') {
+          if (status === 'completed') this.signalTaskCompleted();
           this.stopPolling();
           this.isSending = false;
           await this.loadConversations();
@@ -1224,6 +1258,19 @@ export struct AgentConversationPanel {
                   }
                 })
                   .width('100%')
+                if (turn.status === 'completed' && turn.answer.trim().length > 0) {
+                  Button('分享结论')
+                    .fontSize(12)
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .fontColor($r('app.color.app_primary'))
+                    .borderRadius(8)
+                    .onClick((): void => { this.shareConclusion(turn); })
+                  if (this.shareErrorTurnId === turn.id) {
+                    Text('无法打开系统分享面板，请稍后重试。')
+                      .fontSize(11)
+                      .fontColor($r('app.color.app_danger'))
+                  }
+                }
                 if (turn.status === 'failed' && turn.id === this.messages[this.messages.length - 1].id) {
                   Button('重新尝试这一问  ↗')
                     .fontSize(12)
