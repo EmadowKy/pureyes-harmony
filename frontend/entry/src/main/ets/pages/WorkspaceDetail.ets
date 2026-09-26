@@ -545,7 +545,7 @@ struct FaceDetailDialog {
                       .fontColor($r('app.color.app_selection'))
                   }
 
-                  Text('点击播放视频并精准跳转到起始时间 ➔')
+                  Text('播放并跳转到起始时间 ➔')
                     .fontSize(10)
                     .fontColor($r('app.color.app_text_muted'))
                 }

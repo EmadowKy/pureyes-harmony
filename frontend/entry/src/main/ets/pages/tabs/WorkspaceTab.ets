@@ -184,7 +184,7 @@ export struct WorkspaceTab {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
 
-          Text(this.workspaces.length > 0 ? `${this.workspaces.length} 个进行中的调查` : '把相关视频、片段和问答归入同一条调查线')
+          Text(this.workspaces.length > 0 ? `${this.workspaces.length} 个工作区` : '在工作区整理视频和调查记录')
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
         }
