@@ -11,6 +11,11 @@
 | Share Kit 系统分享 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 已完成且有结论的调查轮次提供“分享结论”；点击后分享问题与 Markdown 原文，由用户在系统面板选择目标。不会自动分享视频、截图、令牌或服务器地址。 |
 | Sensor Service Kit 触感 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 页面在轮询中看到任务完成时发出一次 60 ms 轻触感。设备无马达或系统禁用振动时静默退化，结果仍正常显示。 |
 | Form Kit 服务卡片 | `frontend/entry/src/main/ets/investigationform/`、`utils/investigationCard.ets` | 2×2 桌面卡片展示最近一次打开的调查状态、工具步骤数和最近同步时间，点击后在登录验证通过时进入对应工作区的调查轮次。 |
+| ArkUI 调查动效 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 调查记录标识与详情页顶部标识使用 `geometryTransition` 共享元素转场；列表与详情轻量位移渐变，新增工具步骤及展开参数时使用短时转场，选择视频时提供缩放反馈。 |
+
+## 调查页面动效
+
+调查列表进入或返回详情时，利用相同调查 ID 连接列表标识和详情标识；页面内容沿阅读方向小幅移动。工具步骤只在新增时启动入场动画，轮询更新已有步骤不重复播放。展开参数与证据时结合透明度和少量位移，避免长工具链持续跳动。这些效果由 ArkUI `animateTo`、`transition` 和 `geometryTransition` 实现；它们属于应用的交互设计，不代表接入了 HarmonyOS 7 的系统级空间计算或系统界面动画。
 
 ## 人脸重分类的边界
 
@@ -31,3 +36,5 @@
 ## 设备验证
 
 在 HarmonyOS 6.1 手机上验证登录填充提示、隐私窗口的截屏表现、人脸重分类、系统分享面板及完成触感。卡片需额外验证：添加桌面后的首次加载、任务运行和完成时刷新、应用退出后的同步时刻、点击后的登录校验与调查定位、用户退出登录后的清空、重复添加和删除卡片。尤其要测试无振动设备或关闭振动、分享目标不可用及网络中断。本页描述的是代码接入状态，并不代替实机验收。
+
+调查动效需在真机上检查列表往返时共享标识的连续性、工具步骤轮询时是否闪烁，以及长工具链和低性能设备下滚动是否平稳；必要时减少位移动画而保留状态反馈。

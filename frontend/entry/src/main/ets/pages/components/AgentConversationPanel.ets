@@ -314,7 +314,7 @@ export struct AgentConversationPanel {
   async openConversation(conversationId: string, scrollToEnd: boolean = true): Promise<void> {
     this.stopPolling();
     const epoch = this.pollEpoch;
-    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = conversationId;
       this.conversationReady = false;
       this.messages = [];
@@ -474,7 +474,7 @@ export struct AgentConversationPanel {
   startInvestigation(): void {
     this.stopPolling();
     this.stopSync();
-    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = '';
       this.conversationReady = false;
       this.evidenceSegmentIds = [];
@@ -493,7 +493,7 @@ export struct AgentConversationPanel {
   showConversationList(): void {
     this.stopPolling();
     this.stopSync();
-    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = '';
       this.conversationReady = false;
       this.evidenceSegmentIds = [];
@@ -799,10 +799,18 @@ export struct AgentConversationPanel {
     }
     for (let i = 0; i < this.messages.length; i++) {
       if (this.messages[i].id === taskId) {
-        this.showLiveTrace(taskId, calls.length);
-        this.messages[i].toolCalls = calls;
-        this.messages = [...this.messages];
-        this.messageSource.updateItem(i, this.messages[i]);
+        const newStep = calls.length > this.messages[i].toolCalls.length;
+        const update = (): void => {
+          this.showLiveTrace(taskId, calls.length);
+          this.messages[i].toolCalls = calls;
+          this.messages = [...this.messages];
+          this.messageSource.updateItem(i, this.messages[i]);
+        };
+        if (newStep) {
+          this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, update);
+        } else {
+          update();
+        }
         break;
       }
     }
@@ -915,7 +923,7 @@ export struct AgentConversationPanel {
   }
 
   toggleCall(key: string): void {
-    this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
       const index = this.expandedCallKeys.indexOf(key);
       if (index >= 0) {
         this.expandedCallKeys.splice(index, 1);
@@ -938,7 +946,7 @@ export struct AgentConversationPanel {
   }
 
   toggleTrace(turnId: string): void {
-    this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
       const index = this.expandedTraceTurns.indexOf(turnId);
       if (index >= 0) {
         this.expandedTraceTurns.splice(index, 1);
@@ -1133,7 +1141,9 @@ export struct AgentConversationPanel {
                 .width('100%')
                 .padding({ left: 10, right: 0, top: 7, bottom: 3 })
                 .border({ width: { left: 2 }, color: $r('app.color.app_border') })
-                .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
+                .transition(TransitionEffect.OPACITY
+                  .combine(TransitionEffect.translate({ y: -8 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }))
             }
           }
           .alignItems(HorizontalAlign.Start)
@@ -1141,7 +1151,9 @@ export struct AgentConversationPanel {
           .padding({ left: 12, right: 8, top: 11, bottom: 11 })
           .backgroundColor($r('app.color.app_card_subtle_bg'))
           .border({ width: { left: 2, bottom: 1 }, color: $r('app.color.app_border') })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
+          .transition(TransitionEffect.OPACITY
+            .combine(TransitionEffect.translate({ y: -8 }))
+            .animation({ duration: 220, curve: Curve.EaseOut }))
         }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
       }
     }
@@ -1164,6 +1176,8 @@ export struct AgentConversationPanel {
                 .height(34)
                 .backgroundColor(item.latestStatus === 'processing' ? $r('app.color.app_warning_soft') : $r('app.color.app_primary_soft'))
                 .borderRadius(10)
+                .geometryTransition(`investigation-${item.id}`)
+                .transition(TransitionEffect.OPACITY)
               Column({ space: 5 }) {
                 Row({ space: 8 }) {
                   Text(item.title)
@@ -1209,7 +1223,9 @@ export struct AgentConversationPanel {
     .width('100%')
     .padding({ left: 18, right: 18 })
     .backgroundColor($r('app.color.app_card_bg'))
-    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: -16 }))
+      .animation({ duration: 260, curve: Curve.EaseOut }))
   }
 
   @Builder MessageStream() {
@@ -1330,7 +1346,9 @@ export struct AgentConversationPanel {
     .layoutWeight(1)
     .cachedCount(1)
     .backgroundColor($r('app.color.app_card_bg'))
-    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 16 }))
+      .animation({ duration: 260, curve: Curve.EaseOut }))
   }
 
   @Builder Composer() {
@@ -1490,6 +1508,8 @@ export struct AgentConversationPanel {
                 .height(22)
                 .backgroundColor(this.isSelected(segment.id) ? $r('app.color.app_selection') : $r('app.color.app_primary_soft'))
                 .borderRadius(11)
+                .scale({ x: this.isSelected(segment.id) ? 1 : 0.88,
+                  y: this.isSelected(segment.id) ? 1 : 0.88 })
               if (segment.thumbnailUrl) {
                 Image(BASE_HOST + segment.thumbnailUrl)
                   .width(56)
@@ -1578,7 +1598,9 @@ export struct AgentConversationPanel {
     .width('100%')
     .layoutWeight(1)
     .padding(18)
-    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 16 }))
+      .animation({ duration: 260, curve: Curve.EaseOut }))
   }
 
   @Builder ConversationSkeletonRow() {
@@ -1608,6 +1630,19 @@ export struct AgentConversationPanel {
             .fontColor($r('app.color.app_text_primary'))
             .margin({ right: 8 })
             .onClick((): void => { this.showConversationList(); })
+        }
+        if (this.selectedConversationId) {
+          Text('✦')
+            .fontSize(16)
+            .fontColor($r('app.color.app_primary'))
+            .textAlign(TextAlign.Center)
+            .width(34)
+            .height(34)
+            .backgroundColor($r('app.color.app_primary_soft'))
+            .borderRadius(10)
+            .margin({ right: 8 })
+            .geometryTransition(`investigation-${this.selectedConversationId}`)
+            .transition(TransitionEffect.OPACITY)
         }
         Column({ space: 3 }) {
           Text(this.selectedConversationId ? this.activeConversationTitle() : '调查 Agent')
