@@ -2333,7 +2333,7 @@ struct WorkspaceDetail {
         .fontWeight(this.currentSubTab === index ? FontWeight.Bold : FontWeight.Medium)
         .fontColor(this.currentSubTab === index ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
     }
-    .height(60)
+    .height(52)
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .onClick((): void => {
@@ -3338,7 +3338,7 @@ struct WorkspaceDetail {
             this.WorkspaceSubTabItem(2, '问答')
           }
           .width('100%')
-          .height(68)
+          .height(60)
           .padding({ top: 4, bottom: 4 })
           .backgroundColor($r('app.color.app_nav_bar_bg'))
           .border({ width: { top: 1 }, color: $r('app.color.app_border') })

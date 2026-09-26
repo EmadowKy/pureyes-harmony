@@ -1,4 +1,4 @@
-import { HttpUtil } from '../../utils/http'
+import { HttpUtil, BASE_HOST } from '../../utils/http'
 import { MarkdownAnswer } from './MarkdownAnswer'
 import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
 
@@ -11,6 +11,7 @@ class AgentSegmentChoice {
   title: string = '';
   videoName: string = '';
   filePath: string = '';
+  thumbnailUrl: string = '';
   durationText: string = '';
   status: string = 'pending';
 }
@@ -119,6 +120,9 @@ export struct AgentConversationPanel {
   @State expandedCallKeys: Array<string> = [];
   @State expandedTraceTurns: Array<string> = [];
   @State composerFocused: boolean = false;
+  @State conversationLoadError: string = '';
+  @State segmentLoadError: string = '';
+  @State modelLoadError: string = '';
   private pollTimer: number = 0;
   private pollEpoch: number = 0;
   private syncTimer: number = 0;
@@ -141,21 +145,33 @@ export struct AgentConversationPanel {
 
   async refreshAll(): Promise<void> {
     this.isLoading = true;
-    await Promise.all([this.loadConversations(), this.loadSegments(), this.loadModelConfigs()]);
-    if (this.selectedConversationId.length > 0) {
-      await this.openConversation(this.selectedConversationId, false);
-    } else {
-      this.startSync();
+    try {
+      await Promise.all([this.loadConversations(), this.loadSegments(), this.loadModelConfigs()]);
+      if (this.selectedConversationId.length > 0) {
+        await this.openConversation(this.selectedConversationId, false);
+      } else {
+        this.startSync();
+      }
+    } finally {
+      this.isLoading = false;
     }
-    this.isLoading = false;
   }
 
   async loadConversations(): Promise<void> {
     const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/agent/conversations`);
     if (res.code !== 0 || !res.data) {
+      this.conversationLoadError = res.message || '无法加载调查记录，请检查连接后重试。';
       return;
     }
-    const raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+    let raw: Array<Record<string, Object>>;
+    try {
+      raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(raw)) throw new Error('invalid conversations');
+    } catch (_error) {
+      this.conversationLoadError = '调查记录响应异常，请稍后重试。';
+      return;
+    }
+    this.conversationLoadError = '';
     const mapped: Array<AgentConversationItem> = [];
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i];
@@ -179,8 +195,19 @@ export struct AgentConversationPanel {
 
   async loadModelConfigs(): Promise<void> {
     const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/model-configs`);
-    if (res.code !== 0 || !res.data) return;
-    const raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+    if (res.code !== 0 || !res.data) {
+      this.modelLoadError = res.message || '无法加载模型配置';
+      return;
+    }
+    let raw: Array<Record<string, Object>>;
+    try {
+      raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(raw)) throw new Error('invalid model configs');
+    } catch (_error) {
+      this.modelLoadError = '模型配置响应异常';
+      return;
+    }
+    this.modelLoadError = '';
     this.modelConfigs = raw.map((item: Record<string, Object>): ModelConfigOption => parseModelConfig(item));
     if (!this.modelConfigs.some((item: ModelConfigOption): boolean => item.id === this.selectedModelConfigId)) {
       this.selectedModelConfigId = this.modelConfigs.length > 0 ? this.modelConfigs[0].id : 0;
@@ -190,10 +217,18 @@ export struct AgentConversationPanel {
   async loadSegments(): Promise<void> {
     const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/segments`);
     if (res.code !== 0 || !res.data) {
-      this.segments = [];
+      this.segmentLoadError = res.message || '无法加载视频片段，请重试。';
       return;
     }
-    const raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+    let raw: Array<Record<string, Object>>;
+    try {
+      raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(raw)) throw new Error('invalid segments');
+    } catch (_error) {
+      this.segmentLoadError = '视频片段响应异常，请稍后重试。';
+      return;
+    }
+    this.segmentLoadError = '';
     const mapped: Array<AgentSegmentChoice> = [];
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i];
@@ -202,6 +237,7 @@ export struct AgentConversationPanel {
       segment.title = (item['remark'] as string) || '未命名片段';
       segment.videoName = (item['video_name'] as string) || '监控录像';
       segment.filePath = (item['filepath'] as string) || '';
+      segment.thumbnailUrl = (item['thumbnail_url'] as string) || '';
       const start = (item['start_offset'] as number) || 0;
       const end = (item['end_offset'] as number) || 0;
       segment.durationText = `${start.toFixed(0)}s – ${end.toFixed(0)}s`;
@@ -348,6 +384,16 @@ export struct AgentConversationPanel {
   }
 
   toggleSegment(segmentId: number): void {
+    const segment = this.segments.find((item: AgentSegmentChoice): boolean => item.id === segmentId);
+    if (!segment || segment.status === 'pending' || segment.status === 'processing') {
+      this.liveProgress = '该片段仍在预处理中，请完成后再选择。';
+      return;
+    }
+    if (!this.isSelected(segmentId) && this.selectedSegmentIds.length >= 20) {
+      this.liveProgress = '一次调查最多选择 20 个片段。';
+      return;
+    }
+    this.liveProgress = '';
     this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseOut }, (): void => {
       const index = this.selectedSegmentIds.indexOf(segmentId);
       if (index >= 0) {
@@ -424,6 +470,10 @@ export struct AgentConversationPanel {
     }
     if (this.creatingInvestigation && this.selectedSegmentIds.length === 0) {
       this.liveProgress = '先选择至少一个视频片段，再开始调查。';
+      return;
+    }
+    if (this.creatingInvestigation && this.selectedSegmentIds.length > 20) {
+      this.liveProgress = '一次调查最多选择 20 个片段。';
       return;
     }
     if (!this.selectedModelConfigId) {
@@ -736,17 +786,6 @@ export struct AgentConversationPanel {
     return '工具调用';
   }
 
-  toolMark(toolName: string): string {
-    if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '⌕';
-    if (toolName === 'track_target') return '◎';
-    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '◈';
-    if (toolName === 'search_video_text') return '文';
-    if (toolName === 'search_face_tracks') return '人';
-    if (toolName === 'read_frame_image' || toolName === 'read_frames') return '▣';
-    if (toolName === 'get_video_metadata') return 'i';
-    return '•';
-  }
-
   toolAccent(toolName: string): string {
     if (toolName === 'search_video_text') return '#9A641F';
     if (toolName === 'search_face_tracks') return '#745E9F';
@@ -807,21 +846,13 @@ export struct AgentConversationPanel {
   }
 
   @Builder ToolTrace(turn: AgentTurnItem) {
-    Column({ space: 9 }) {
-      Row({ space: 9 }) {
-        Text('⌘')
-          .fontSize(16)
-          .fontColor('#18735E')
-          .width(27)
-          .height(27)
-          .textAlign(TextAlign.Center)
-          .backgroundColor('#DDEFE5')
-          .borderRadius(8)
-        Text('执行记录')
+    Column({ space: 7 }) {
+      Row({ space: 7 }) {
+        Text('执行过程')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor('#233C37')
-        Text(`${turn.toolCalls.length} 次工具调用`)
+        Text(`${turn.toolCalls.length} 步`)
           .fontSize(11)
           .fontColor('#607570')
           .layoutWeight(1)
@@ -829,36 +860,31 @@ export struct AgentConversationPanel {
         Text(this.isTraceExpanded(turn.id) ? '收起' : '查看')
           .fontSize(11)
           .fontColor('#18735E')
-        Text('⌄')
-          .fontSize(14)
-          .fontColor('#18735E')
-          .rotate({ angle: this.isTraceExpanded(turn.id) ? 180 : 0 })
-          .animation({ duration: 170, curve: Curve.EaseOut })
       }
       .width('100%')
-      .padding({ left: 11, right: 11, top: 10, bottom: 10 })
-      .backgroundColor('#EDF4EF')
-      .borderRadius(10)
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .backgroundColor('#F5F7F5')
+      .borderRadius(9)
       .onClick((): void => { this.toggleTrace(turn.id); })
       if (this.isTraceExpanded(turn.id)) {
         ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
           Column({ space: 9 }) {
             Row({ space: 10 }) {
-              Text(this.toolMark(call.name))
-                .fontSize(19)
+              Text(`${index + 1}`)
+                .fontSize(12)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(this.toolAccent(call.name))
                 .textAlign(TextAlign.Center)
-                .width(36)
-                .height(36)
+                .width(28)
+                .height(28)
                 .backgroundColor(this.toolSoft(call.name))
-                .borderRadius(10)
+                .borderRadius(14)
               Column({ space: 3 }) {
                 Text(this.toolNameLabel(call.name))
                   .fontSize(13)
                   .fontWeight(FontWeight.Bold)
                   .fontColor('#1F2B2E')
-                Text(`${this.toolKind(call.name)} · 第 ${index + 1} 步`)
+                Text(this.toolKind(call.name))
                   .fontSize(10)
                   .fontColor('#7A8B87')
               }
@@ -1002,10 +1028,10 @@ export struct AgentConversationPanel {
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')
-          .padding(13)
+          .padding(11)
           .backgroundColor('#FFFFFF')
-          .borderRadius(11)
-          .border({ width: 1, color: '#E0E8E3' })
+          .borderRadius(9)
+          .border({ width: 1, color: '#E8ECE9' })
           .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
       }
@@ -1186,7 +1212,7 @@ export struct AgentConversationPanel {
   }
 
   @Builder Composer() {
-    Column({ space: 8 }) {
+    Column({ space: 6 }) {
       if (this.currentTaskId.length > 0) {
         Row({ space: 10 }) {
           LoadingProgress().width(16).height(16).color('#178272')
@@ -1217,8 +1243,8 @@ export struct AgentConversationPanel {
             .fontSize(12)
             .fontColor('#A24B32')
         }
-        TextArea({ placeholder: '继续追问…', text: this.composerText })
-          .height(60)
+        TextArea({ placeholder: '追问当前调查…', text: this.composerText })
+          .height(52)
           .fontSize(14)
           .fontColor('#1F2B2E')
           .backgroundColor('#F6F8F6')
@@ -1229,11 +1255,8 @@ export struct AgentConversationPanel {
           .onFocus((): void => { this.composerFocused = true; })
           .onBlur((): void => { this.composerFocused = false; })
           .onChange((value: string): void => { this.composerText = value; })
-        Row() {
-          Text('沿用本次调查的视频片段')
-            .fontSize(11)
-            .fontColor('#708080')
-            .layoutWeight(1)
+        Row({ space: 8 }) {
+          this.CompactModelSelector()
           Button('发送')
             .enabled(this.canContinue() && this.composerText.trim().length > 0)
             .fontSize(13)
@@ -1246,18 +1269,17 @@ export struct AgentConversationPanel {
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
-        this.ModelSelector()
       }
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
     .backgroundColor('#FFFFFF')
     .border({ width: { top: 1 }, color: '#DFE7E1' })
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   @Builder ModelSelector() {
-    Row({ space: 6 }) {
+    Row({ space: 4 }) {
       Text('模型').fontSize(11).fontColor('#708080')
       Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
         const option = new ConfigSelectItem();
@@ -1281,6 +1303,29 @@ export struct AgentConversationPanel {
     .justifyContent(FlexAlign.End)
   }
 
+  @Builder CompactModelSelector() {
+    Row({ space: 4 }) {
+      Text('模型').fontSize(11).fontColor('#708080')
+      Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
+        const option = new ConfigSelectItem();
+        option.value = `${item.scope === 'group' ? '小组' : '个人'} · ${item.name} (${item.model})`;
+        return option as SelectOption;
+      }))
+        .selected(Math.max(0, this.modelConfigs.findIndex((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)))
+        .value(this.modelConfigs.find((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)?.name || '选择配置')
+        .font({ size: 11 })
+        .backgroundColor('#EEF5F1')
+        .onSelect((index: number): void => {
+          if (this.modelConfigs[index]) this.selectedModelConfigId = this.modelConfigs[index].id;
+        })
+        .width(142)
+    }
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Start)
+  }
+
   @Builder NewInvestigation() {
     Column({ space: 14 }) {
       Text('建立一条调查线')
@@ -1291,10 +1336,23 @@ export struct AgentConversationPanel {
         .fontSize(13)
         .fontColor('#697C7C')
         .lineHeight(20)
-      Text('选择相关片段')
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#445658')
+      Row() {
+        Text('选择相关片段')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#445658')
+          .layoutWeight(1)
+        Text(`已选 ${this.selectedSegmentIds.length}/20`)
+          .fontSize(11)
+          .fontColor('#708080')
+      }.width('100%')
+      if (this.segmentLoadError) {
+        Row({ space: 8 }) {
+          Text(this.segmentLoadError).fontSize(12).fontColor('#A24B32').layoutWeight(1)
+          Button('重试').fontSize(12).backgroundColor('#F8ECE8').fontColor('#A24B32')
+            .onClick((): void => { this.loadSegments(); })
+        }.width('100%')
+      }
       List({ space: 8 }) {
         ForEach(this.segments, (segment: AgentSegmentChoice): void => {
           ListItem() {
@@ -1307,30 +1365,51 @@ export struct AgentConversationPanel {
                 .height(22)
                 .backgroundColor(this.isSelected(segment.id) ? '#178272' : '#D9E6DD')
                 .borderRadius(11)
+              if (segment.thumbnailUrl) {
+                Image(BASE_HOST + segment.thumbnailUrl)
+                  .width(56)
+                  .height(48)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(7)
+              }
               Column({ space: 3 }) {
+                Text(segment.videoName)
+                  .fontSize(10)
+                  .fontColor('#708080')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
                 Text(segment.title)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#1F2B2E')
                   .maxLines(1)
-                Text(`${segment.videoName} · ${segment.durationText}`)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(segment.durationText)
                   .fontSize(11)
                   .fontColor('#708080')
               }
               .layoutWeight(1)
-              Text(segment.status === 'completed' ? '已索引' : '待索引')
+              Text(segment.status === 'pending' || segment.status === 'processing' ? '处理中' :
+                (segment.status === 'completed' ? '已索引' : '按需索引'))
                 .fontSize(11)
-                .fontColor(segment.status === 'completed' ? '#178272' : '#C77818')
+                .fontColor(segment.status === 'pending' || segment.status === 'processing' ? '#A56822' : '#178272')
             }
             .width('100%')
             .padding(12)
-            .backgroundColor(this.isSelected(segment.id) ? '#EEF6F2' : '#FFFFFF')
+            .backgroundColor(this.isSelected(segment.id) ? '#EEF6F2' :
+              (segment.status === 'pending' || segment.status === 'processing' ? '#F6F7F6' : '#FFFFFF'))
             .border({ width: 1, color: this.isSelected(segment.id) ? '#9BCFB3' : '#E2EAE5' })
             .borderRadius(10)
             .animation({ duration: 160, curve: Curve.EaseOut })
             .onClick((): void => { this.toggleSegment(segment.id); })
           }
         }, (segment: AgentSegmentChoice): string => `${segment.id}`)
+        if (this.segments.length === 0 && !this.segmentLoadError) {
+          ListItem() {
+            Text('暂无视频片段，请先在「片段」页面添加。')
+              .fontSize(12).fontColor('#708080').padding(16)
+          }
+        }
       }
       .width('100%')
       .layoutWeight(1)
@@ -1343,6 +1422,12 @@ export struct AgentConversationPanel {
         .padding(10)
         .onChange((value: string): void => { this.composerText = value; })
       this.ModelSelector()
+      if (this.modelLoadError) {
+        Text(this.modelLoadError).fontSize(11).fontColor('#A24B32')
+      }
+      if (this.liveProgress) {
+        Text(this.liveProgress).fontSize(11).fontColor('#A24B32')
+      }
       Row({ space: 10 }) {
         Button('返回')
           .layoutWeight(1)
@@ -1384,7 +1469,7 @@ export struct AgentConversationPanel {
         }
         Column({ space: 3 }) {
           Text(this.selectedConversationId ? this.activeConversationTitle() : '调查 Agent')
-            .fontSize(18)
+            .fontSize(17)
             .fontWeight(FontWeight.Bold)
             .fontColor('#1F2B2E')
             .maxLines(1)
@@ -1407,7 +1492,7 @@ export struct AgentConversationPanel {
           .onClick((): void => { this.startInvestigation(); })
       }
       .width('100%')
-      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .padding({ left: 14, right: 14, top: 6, bottom: 6 })
       .backgroundColor('#FFFFFF')
       .border({ width: { bottom: 1 }, color: '#DFE7E1' })
 
@@ -1423,6 +1508,19 @@ export struct AgentConversationPanel {
         this.NewInvestigation()
       } else if (!this.selectedConversationId) {
         Column({ space: 10 }) {
+          if (this.conversationLoadError) {
+            Row({ space: 8 }) {
+              Text(this.conversationLoadError)
+                .fontSize(12).fontColor('#A24B32').layoutWeight(1)
+              Button('重试')
+                .fontSize(12).backgroundColor('#F8ECE8').fontColor('#A24B32')
+                .onClick((): void => { this.loadConversations(); })
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor('#FFF7F3')
+            .borderRadius(9)
+          }
           if (this.conversations.length > 0) {
             Row() {
               Text('调查记录')
@@ -1436,7 +1534,7 @@ export struct AgentConversationPanel {
             }
             .width('100%')
             this.ConversationRail()
-          } else {
+          } else if (!this.conversationLoadError) {
             Text('✦')
               .fontSize(30)
               .fontColor('#178272')
