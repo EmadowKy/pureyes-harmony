@@ -113,9 +113,17 @@ class UserGroupApiTest(unittest.TestCase):
         workspace_configs = self.client.get(f"/api/workspaces/{workspace_id}/model-configs", headers=member)
         self.assertEqual({row["id"] for row in workspace_configs.get_json()["data"]},
                          {personal_id, shared_id})
+        with self.app.app_context():
+            from app.models.workspace import WorkspaceVideoSegment
+            segment = WorkspaceVideoSegment(workspace_id=workspace_id, video_name="config.mp4",
+                                            filepath="storage/slices/config.mp4", start_offset=0,
+                                            end_offset=10, duration=10, status="completed")
+            db.session.add(segment)
+            db.session.commit()
+            segment_id = segment.id
         self.assertEqual(self.client.post(f"/api/workspaces/{workspace_id}/qa", headers=leader,
                                           json={"question": "test", "model_config_id": personal_id,
-                                                "segment_ids": []}).status_code, 403)
+                                                "segment_ids": [segment_id]}).status_code, 403)
         self.assertEqual(self.client.put(f"/api/model-configs/{shared_id}", headers=member,
                                          json={"name": "Changed"}).status_code, 403)
         self.assertEqual(self.client.delete(f"/api/model-configs/{personal_id}", headers=leader).status_code, 403)
@@ -601,6 +609,12 @@ class UserGroupApiTest(unittest.TestCase):
             json={"name": "Agent Conversation Workspace"},
         )
         workspace_id = workspace_response.get_json()["data"]["id"]
+        config_response = self.client.post("/api/model-configs", headers=owner_headers, json={
+            "scope": "group", "group_id": group_id, "name": "Agent Test",
+            "api_key": "test-secret", "base_url": "https://example.com/v1", "model": "test-model",
+        })
+        self.assertEqual(config_response.status_code, 201, config_response.get_json())
+        config_id = config_response.get_json()["data"]["id"]
 
         with self.app.app_context():
             from app.models.group import GroupMember
@@ -644,7 +658,8 @@ class UserGroupApiTest(unittest.TestCase):
             first_turn = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa",
                 headers=owner_headers,
-                json={"question": "入口处有什么人？", "segment_ids": [segment_id]},
+                json={"question": "入口处有什么人？", "segment_ids": [segment_id],
+                      "model_config_id": config_id},
             )
         self.assertEqual(first_turn.status_code, 200, first_turn.get_json())
         first_data = first_turn.get_json()["data"]
@@ -671,7 +686,8 @@ class UserGroupApiTest(unittest.TestCase):
             follow_up = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa",
                 headers=owner_headers,
-                json={"question": "他后来去了哪里？", "conversation_id": conversation_id},
+                json={"question": "他后来去了哪里？", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(follow_up.status_code, 200, follow_up.get_json())
         self.assertEqual(follow_up.get_json()["data"]["conversation_id"], conversation_id)
@@ -734,7 +750,7 @@ class UserGroupApiTest(unittest.TestCase):
                 f"/api/workspaces/{workspace_id}/qa",
                 headers=member_headers,
                 json={"question": "这个人后来出现在哪里？", "conversation_id": conversation_id,
-                      "segment_ids": [other_segment_id]},
+                      "segment_ids": [other_segment_id], "model_config_id": config_id},
             )
         self.assertEqual(member_turn.status_code, 200, member_turn.get_json())
         self.assertEqual(member_turn.get_json()["data"]["conversation_id"], conversation_id)
@@ -786,7 +802,8 @@ class UserGroupApiTest(unittest.TestCase):
         with patch.object(workspace_routes.threading, "Thread", NoopThread):
             retry = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa", headers=member_headers,
-                json={"question": "重新核验入口", "conversation_id": conversation_id},
+                json={"question": "重新核验入口", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(retry.status_code, 200, retry.get_json())
         self.assertEqual(retry.get_json()["data"]["turn_index"], 4)
@@ -822,7 +839,8 @@ class UserGroupApiTest(unittest.TestCase):
         with patch.object(workspace_routes.threading, "Thread", NoopThread):
             after_stop = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa", headers=member_headers,
-                json={"question": "停止后继续追问", "conversation_id": conversation_id},
+                json={"question": "停止后继续追问", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(after_stop.status_code, 200, after_stop.get_json())
         self.assertEqual(after_stop.get_json()["data"]["turn_index"], 5)
@@ -834,7 +852,8 @@ class UserGroupApiTest(unittest.TestCase):
         with patch.object(workspace_routes.threading, "Thread", NoopThread):
             sixth = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa", headers=owner_headers,
-                json={"question": "检查出口", "conversation_id": conversation_id},
+                json={"question": "检查出口", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(sixth.status_code, 200, sixth.get_json())
         with self.app.app_context():
@@ -851,7 +870,8 @@ class UserGroupApiTest(unittest.TestCase):
         with patch.object(workspace_routes.threading, "Thread", NoopThread):
             timed_turn = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa", headers=member_headers,
-                json={"question": "这轮故意超时", "conversation_id": conversation_id},
+                json={"question": "这轮故意超时", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(timed_turn.status_code, 200, timed_turn.get_json())
         timed_id = timed_turn.get_json()["data"]["task_id"]
@@ -867,7 +887,8 @@ class UserGroupApiTest(unittest.TestCase):
         with patch.object(workspace_routes.threading, "Thread", NoopThread):
             after_timeout = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa", headers=owner_headers,
-                json={"question": "超时后继续追问", "conversation_id": conversation_id},
+                json={"question": "超时后继续追问", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(after_timeout.status_code, 200, after_timeout.get_json())
 

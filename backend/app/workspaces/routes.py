@@ -949,14 +949,6 @@ def submit_qa(workspace_id):
     conversation_id = data.get("conversation_id")
     config_id = data.get("model_config_id")
 
-    from app.models.llm_config import LLMConfig
-    from app.model_configs.routes import available_config
-    config = db.session.get(LLMConfig, config_id) if type(config_id) is int else None
-    if not config or not available_config(config, emp_id, workspace.group_id):
-        return fail(message="请选择当前可用的模型配置", code=6105, http_status=403)
-    # Freeze credentials for this turn before another member can edit/delete the entry.
-    llm_settings = {"api_key": config.api_key, "base_url": config.base_url, "model": config.model}
-
     if not isinstance(question, str) or not question.strip():
         return fail(message="question is required", code=5004, http_status=400)
     question = question.strip()
@@ -992,6 +984,14 @@ def submit_qa(workspace_id):
         if segment.status in ("pending", "processing"):
             return fail(message=f"segment {seg_id} preprocessing is still running", code=5021, http_status=409)
         selected_segments.append(segment)
+
+    from app.models.llm_config import LLMConfig
+    from app.model_configs.routes import available_config
+    config = db.session.get(LLMConfig, config_id) if type(config_id) is int else None
+    if not config or not available_config(config, emp_id, workspace.group_id):
+        return fail(message="请选择当前可用的模型配置", code=6105, http_status=403)
+    # Freeze credentials for this turn before another member can edit/delete the entry.
+    llm_settings = {"api_key": config.api_key, "base_url": config.base_url, "model": config.model}
 
     if conversation is None:
         conversation = AgentConversation(
