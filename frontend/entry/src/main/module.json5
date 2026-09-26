@@ -52,6 +52,18 @@
     ],
     "extensionAbilities": [
       {
+        "name": "InvestigationFormAbility",
+        "srcEntry": "./ets/investigationform/InvestigationFormAbility.ets",
+        "label": "$string:investigation_card_name",
+        "type": "form",
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:investigation_form_config"
+          }
+        ]
+      },
+      {
         "name": "EntryBackupAbility",
         "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
         "type": "backup",

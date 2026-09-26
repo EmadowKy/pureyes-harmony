@@ -6,7 +6,21 @@ import { SecurityUtil } from '../utils/security';
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
+  private mainStage?: window.WindowStage;
+
+  private cardTarget(want: Want): string {
+    const params = want.parameters;
+    if (params?.['fromInvestigationCard'] !== 'true') return '';
+    const workspaceId = Number(params['workspaceId']);
+    const conversationId = (params['conversationId'] as string) || '';
+    if (!Number.isSafeInteger(workspaceId) || workspaceId < 0 ||
+        conversationId.length > 128) return '';
+    return JSON.stringify({ workspaceId, conversationId });
+  }
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    const route = this.cardTarget(want);
+    if (route) AppStorage.setOrCreate('widget_route', route);
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (err) {
@@ -20,6 +34,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
+    this.mainStage = windowStage;
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
@@ -51,8 +66,23 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    this.mainStage = undefined;
     // Main window is destroyed, release UI related resources
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    const route = this.cardTarget(want);
+    if (!route || !this.mainStage) return;
+    this.mainStage.getMainWindow().then((win: window.Window): void => {
+      win.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).then((): void => {
+        AppStorage.setOrCreate('widget_route', route);
+      }).catch((error: Object): void => {
+        hilog.error(DOMAIN, 'InvestigationCard', 'Failed to open index: %{public}s', JSON.stringify(error));
+      });
+    }).catch((error: Object): void => {
+      hilog.error(DOMAIN, 'InvestigationCard', 'Failed to open investigation: %{public}s', JSON.stringify(error));
+    });
   }
 
   onForeground(): void {

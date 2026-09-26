@@ -1354,6 +1354,7 @@ struct SegmentDetailDialog {
 struct WorkspaceDetail {
   workspaceId: number = 0;
   workspaceName: string = '';
+  initialConversationId: string = '';
 
   @State currentSubTab: number = 0; // 0: 片段, 1: 人脸, 2: 问答
   @State segments: Array<WorkspaceVideoSegment> = [];
@@ -1500,7 +1501,9 @@ struct WorkspaceDetail {
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object>;
     if (params) {
       this.workspaceId = params['workspaceId'] as number;
-      this.workspaceName = params['workspaceName'] as string;
+      this.workspaceName = (params['workspaceName'] as string) || '工作区';
+      this.initialConversationId = (params['conversationId'] as string) || '';
+      if (this.initialConversationId) this.currentSubTab = 2;
     }
     this.loadSegments();
     this.loadFaceGroups();
@@ -3056,6 +3059,7 @@ struct WorkspaceDetail {
             if (this.currentSubTab === 2) {
               AgentConversationPanel({
                 workspaceId: this.workspaceId,
+                initialConversationId: this.initialConversationId,
                 onTimestampClick: (segmentId: number, timeStr: string): void => {
                   this.handleAgentTimestampClick(segmentId, timeStr);
                 }

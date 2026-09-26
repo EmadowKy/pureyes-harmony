@@ -1,0 +1,22 @@
+{
+  "forms": [
+    {
+      "name": "InvestigationCard",
+      "displayName": "$string:investigation_card_name",
+      "description": "$string:investigation_card_desc",
+      "src": "./ets/investigationform/InvestigationCard.ets",
+      "uiSyntax": "arkts",
+      "isDynamic": false,
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "isDefault": true,
+      "updateEnabled": false,
+      "scheduledUpdateTime": "10:30",
+      "updateDuration": 0,
+      "defaultDimension": "2*2",
+      "supportDimensions": ["2*2"]
+    }
+  ]
+}

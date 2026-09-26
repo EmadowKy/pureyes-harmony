@@ -4,6 +4,7 @@ import { GroupTab } from './tabs/GroupTab'
 import { ProfileTab } from './tabs/ProfileTab'
 import { HttpResult, HttpUtil, getBaseUrl } from '../utils/http'
 import { SecurityUtil } from '../utils/security'
+import { common } from '@kit.AbilityKit';
 
 export class GroupInfo {
   id: number = 0;
@@ -28,6 +29,7 @@ struct Index {
   @StorageLink('currentGroupId') currentGroupId: number = 0; 
   @StorageLink('refreshGroupFlag') @Watch('onRefreshFlagChange') refreshGroupFlag: number = 0;
   @StorageLink('session_check_flag') @Watch('onSessionCheck') sessionCheckFlag: number = 0;
+  @StorageLink('widget_route') @Watch('onWidgetRoute') widgetRoute: string = '';
   @State groups: Array<GroupInfo> = [];
   @State sessionState: string = 'checking';
   @State sessionMessage: string = '';
@@ -40,6 +42,35 @@ struct Index {
 
   onSessionCheck(): void {
     this.verifySession();
+  }
+
+  onWidgetRoute(): void {
+    if (this.sessionState === 'ready') this.openWidgetTarget();
+  }
+
+  private openWidgetTarget(): void {
+    if (!this.widgetRoute || this.sessionState !== 'ready') return;
+    let workspaceId = 0;
+    let conversationId = '';
+    try {
+      const target = JSON.parse(this.widgetRoute) as Record<string, Object>;
+      workspaceId = target['workspaceId'] as number;
+      conversationId = (target['conversationId'] as string) || '';
+    } catch (_error) {
+      // Invalid widget payload falls back to the workspace list.
+    }
+    this.widgetRoute = '';
+    if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
+      this.currentIndex = 1;
+      this.tabsController.changeIndex(1);
+      return;
+    }
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/WorkspaceDetail',
+      params: { workspaceId, workspaceName: '工作区', conversationId }
+    }).catch((error: Object): void => {
+      console.warn('[InvestigationCard] navigation failed', JSON.stringify(error));
+    });
   }
 
   private openLogin(): void {
@@ -64,7 +95,7 @@ struct Index {
         AppStorage.setOrCreate('login_notice', savedServer ?
           '服务器地址已更改，请重新登录' : '登录状态升级后需重新登录一次');
       }
-      await SecurityUtil.clearSession();
+      await SecurityUtil.clearSession(this.getUIContext().getHostContext() as common.UIAbilityContext);
       this.checkingSession = false;
       this.openLogin();
       return;
@@ -99,11 +130,12 @@ struct Index {
       this.sessionState = 'ready';
       this.checkingSession = false;
       this.loadGroups();
+      this.openWidgetTarget();
       return;
     }
     if (res.httpStatus === 401 || res.httpStatus === 403 || res.code === 2002) {
       AppStorage.setOrCreate('login_notice', '登录已过期或账号不可用，请重新登录');
-      await SecurityUtil.clearSession();
+      await SecurityUtil.clearSession(this.getUIContext().getHostContext() as common.UIAbilityContext);
       this.checkingSession = false;
       this.openLogin();
       return;

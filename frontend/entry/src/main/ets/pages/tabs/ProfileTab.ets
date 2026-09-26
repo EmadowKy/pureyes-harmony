@@ -2,6 +2,7 @@ import { HttpUtil } from '../../utils/http'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { SecurityUtil } from '../../utils/security'
 import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
+import { common } from '@kit.AbilityKit';
 
 class ConfigGroupOption {
   id: number = 0;
@@ -803,7 +804,7 @@ export struct ProfileTab {
 
   async handleLogout(): Promise<void> {
     await HttpUtil.post('/auth/logout');
-    await SecurityUtil.clearSession();
+    await SecurityUtil.clearSession(this.getUIContext().getHostContext() as common.UIAbilityContext);
     try {
       this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' });
     } catch (error) {

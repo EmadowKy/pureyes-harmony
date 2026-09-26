@@ -5,6 +5,7 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { vibrator } from '@kit.SensorServiceKit';
+import { InvestigationCard, InvestigationCardSnapshot } from '../../utils/investigationCard';
 
 class ConfigSelectItem {
   value: string = '';
@@ -100,6 +101,7 @@ class AgentMessageDataSource implements IDataSource {
 @Component
 export struct AgentConversationPanel {
   @Prop workspaceId: number = 0;
+  @Prop initialConversationId: string = '';
   onTimestampClick: (segmentId: number, timeStr: string) => void =
     (_segmentId: number, _timeStr: string): void => {};
 
@@ -138,10 +140,13 @@ export struct AgentConversationPanel {
   private lastProgressAtMs: number = 0;
   private lastProgressCount: number = 0;
   private syncing: boolean = false;
+  private lastCardState: string = '';
+  private cardWrite: Promise<void> = Promise.resolve();
   private messageScroller: Scroller = new Scroller();
   private messageSource: AgentMessageDataSource = new AgentMessageDataSource();
 
   aboutToAppear(): void {
+    if (this.initialConversationId) this.selectedConversationId = this.initialConversationId;
     this.refreshAll();
   }
 
@@ -176,6 +181,30 @@ export struct AgentConversationPanel {
     } catch (_error) {
       // Devices without a vibrator or with vibration disabled still show the result.
     }
+  }
+
+  publishCard(turn: AgentTurnItem, stage: string = ''): void {
+    if (this.workspaceId <= 0 || !this.selectedConversationId) return;
+    const snapshot = new InvestigationCardSnapshot();
+    snapshot.workspaceId = this.workspaceId;
+    snapshot.conversationId = this.selectedConversationId;
+    snapshot.status = turn.status;
+    snapshot.steps = turn.toolCalls.length;
+    snapshot.stage = turn.status === 'processing' ? (stage || '正在调查') :
+      (turn.status === 'completed' ? '结论已生成' : '查看调查记录');
+    const fingerprint = `${snapshot.conversationId}:${snapshot.status}:${snapshot.steps}:${snapshot.stage}`;
+    if (fingerprint === this.lastCardState) return;
+    this.lastCardState = fingerprint;
+    const now = new Date();
+    snapshot.updatedAt = `${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ` +
+      `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.cardWrite = this.cardWrite.then(async (): Promise<void> => {
+      await InvestigationCard.publish(context, snapshot);
+    }).catch((error: Object): void => {
+      console.warn('[InvestigationCard] publish failed', JSON.stringify(error));
+      this.lastCardState = '';
+    });
   }
 
   async refreshAll(): Promise<void> {
@@ -366,6 +395,7 @@ export struct AgentConversationPanel {
       this.isSending = false;
       this.isStopping = false;
     }
+    if (mapped.length > 0) this.publishCard(mapped[mapped.length - 1]);
     if (scrollToEnd) {
       setTimeout((): void => this.messageScroller.scrollEdge(Edge.Bottom), 120);
     }
@@ -636,6 +666,8 @@ export struct AgentConversationPanel {
           this.lastProgressCount = progress.length;
         }
         const status = (data['status'] as string) || 'processing';
+        const activeTurn = this.messages.find((turn: AgentTurnItem): boolean => turn.id === taskId);
+        if (activeTurn && status === 'processing') this.publishCard(activeTurn, this.liveStage);
         if (status === 'completed' || status === 'failed' || status === 'stopped') {
           if (status === 'completed') this.signalTaskCompleted();
           this.stopPolling();

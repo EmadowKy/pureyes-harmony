@@ -1,5 +1,7 @@
 import asset from '@ohos.security.asset';
 import util from '@ohos.util';
+import { common } from '@kit.AbilityKit';
+import { InvestigationCard } from './investigationCard';
 
 function stringToUint8Array(str: string): Uint8Array {
   const encoder = new util.TextEncoder();
@@ -103,11 +105,19 @@ export class SecurityUtil {
     }
   }
 
-  static async clearSession(): Promise<void> {
+  static async clearSession(context?: common.Context): Promise<void> {
     AppStorage.setOrCreate('access_token', '');
     AppStorage.setOrCreate('refresh_token', '');
     AppStorage.setOrCreate('session_server_url', '');
     AppStorage.setOrCreate('currentGroupId', 0);
+    AppStorage.setOrCreate('widget_route', '');
+    if (context) {
+      try {
+        await InvestigationCard.clear(context);
+      } catch (error) {
+        console.warn('[InvestigationCard] clear failed', JSON.stringify(error));
+      }
+    }
     await SecurityUtil.removeSecureProp('access_token');
     await SecurityUtil.removeSecureProp('refresh_token');
     await SecurityUtil.removeSecureProp('session_server_url');

@@ -177,5 +177,7 @@ Image($r('app.media.business_monitor'))
    后端配置为鸿蒙模式时，手机调用 Core Vision Kit 对服务器抓拍图进行分组比对。
 4. **分享与触感** (`components/AgentConversationPanel.ets`)：
    完成的调查结论可由用户调用 Share Kit 分享；页面看到任务完成时调用 Sensor Service Kit 发出轻触感。
+5. **调查服务卡片** (`investigationform/`)：
+   Form Kit 的桌面卡片显示最近同步的调查状态和工具步骤数；点击后验证会话并定位到对应工作区。卡片不显示监控隐私内容，应用关闭后不会自行轮询服务端。
 
 实现边界见 [鸿蒙原生能力接入](06-harmonyos-native-features.md)。
