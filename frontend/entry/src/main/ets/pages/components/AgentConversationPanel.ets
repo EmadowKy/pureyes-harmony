@@ -92,6 +92,7 @@ export struct AgentConversationPanel {
   @State conversationReady: boolean = false;
   @State expandedCallKeys: Array<string> = [];
   @State expandedTraceTurns: Array<string> = [];
+  @State composerFocused: boolean = false;
   private pollTimer: number = 0;
   private pollEpoch: number = 0;
   private syncTimer: number = 0;
@@ -139,7 +140,14 @@ export struct AgentConversationPanel {
       conversation.latestQuestion = (item['latest_question'] as string) || '';
       mapped.push(conversation);
     }
-    this.conversations = mapped;
+    const unchanged = mapped.length === this.conversations.length && mapped.every(
+      (item: AgentConversationItem, index: number): boolean => {
+        const previous = this.conversations[index];
+        return item.id === previous.id && item.title === previous.title &&
+          item.turnCount === previous.turnCount && item.latestStatus === previous.latestStatus &&
+          item.latestQuestion === previous.latestQuestion;
+      });
+    if (!unchanged) this.conversations = mapped;
   }
 
   async loadModelConfigs(): Promise<void> {
@@ -179,10 +187,12 @@ export struct AgentConversationPanel {
   async openConversation(conversationId: string, scrollToEnd: boolean = true): Promise<void> {
     this.stopPolling();
     const epoch = this.pollEpoch;
-    this.selectedConversationId = conversationId;
-    this.conversationReady = false;
-    this.messages = [];
-    this.creatingInvestigation = false;
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+      this.selectedConversationId = conversationId;
+      this.conversationReady = false;
+      this.messages = [];
+      this.creatingInvestigation = false;
+    });
     this.currentTaskId = '';
     this.isSending = false;
     this.isStopping = false;
@@ -236,7 +246,13 @@ export struct AgentConversationPanel {
       }
       mapped.push(turn);
     }
-    this.messages = mapped;
+    if (this.messages.length > 0 && mapped.length > this.messages.length) {
+      this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+        this.messages = mapped;
+      });
+    } else {
+      this.messages = mapped;
+    }
     if (processingId.length > 0) {
       this.currentTaskId = processingId;
       this.isSending = true;
@@ -301,43 +317,49 @@ export struct AgentConversationPanel {
   }
 
   toggleSegment(segmentId: number): void {
-    const index = this.selectedSegmentIds.indexOf(segmentId);
-    if (index >= 0) {
-      this.selectedSegmentIds.splice(index, 1);
-    } else {
-      this.selectedSegmentIds.push(segmentId);
-    }
-    this.selectedSegmentIds = [...this.selectedSegmentIds];
+    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseOut }, (): void => {
+      const index = this.selectedSegmentIds.indexOf(segmentId);
+      if (index >= 0) {
+        this.selectedSegmentIds.splice(index, 1);
+      } else {
+        this.selectedSegmentIds.push(segmentId);
+      }
+      this.selectedSegmentIds = [...this.selectedSegmentIds];
+    });
   }
 
   startInvestigation(): void {
     this.stopPolling();
     this.stopSync();
-    this.selectedConversationId = '';
-    this.conversationReady = false;
-    this.evidenceSegmentIds = [];
-    this.messages = [];
-    this.selectedSegmentIds = [];
-    this.composerText = '';
-    this.liveProgress = '';
-    this.currentTaskId = '';
-    this.isSending = false;
-    this.isStopping = false;
-    this.creatingInvestigation = true;
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+      this.selectedConversationId = '';
+      this.conversationReady = false;
+      this.evidenceSegmentIds = [];
+      this.messages = [];
+      this.selectedSegmentIds = [];
+      this.composerText = '';
+      this.liveProgress = '';
+      this.currentTaskId = '';
+      this.isSending = false;
+      this.isStopping = false;
+      this.creatingInvestigation = true;
+    });
   }
 
   showConversationList(): void {
     this.stopPolling();
     this.stopSync();
-    this.selectedConversationId = '';
-    this.conversationReady = false;
-    this.evidenceSegmentIds = [];
-    this.currentTaskId = '';
-    this.messages = [];
-    this.isSending = false;
-    this.isStopping = false;
-    this.liveProgress = '';
-    this.creatingInvestigation = false;
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+      this.selectedConversationId = '';
+      this.conversationReady = false;
+      this.evidenceSegmentIds = [];
+      this.currentTaskId = '';
+      this.messages = [];
+      this.isSending = false;
+      this.isStopping = false;
+      this.liveProgress = '';
+      this.creatingInvestigation = false;
+    });
     this.loadConversations();
     this.startSync();
   }
@@ -723,13 +745,15 @@ export struct AgentConversationPanel {
   }
 
   toggleCall(key: string): void {
-    const index = this.expandedCallKeys.indexOf(key);
-    if (index >= 0) {
-      this.expandedCallKeys.splice(index, 1);
-    } else {
-      this.expandedCallKeys.push(key);
-    }
-    this.expandedCallKeys = [...this.expandedCallKeys];
+    this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+      const index = this.expandedCallKeys.indexOf(key);
+      if (index >= 0) {
+        this.expandedCallKeys.splice(index, 1);
+      } else {
+        this.expandedCallKeys.push(key);
+      }
+      this.expandedCallKeys = [...this.expandedCallKeys];
+    });
   }
 
   isTraceExpanded(turnId: string): boolean {
@@ -737,13 +761,15 @@ export struct AgentConversationPanel {
   }
 
   toggleTrace(turnId: string): void {
-    const index = this.expandedTraceTurns.indexOf(turnId);
-    if (index >= 0) {
-      this.expandedTraceTurns.splice(index, 1);
-    } else {
-      this.expandedTraceTurns.push(turnId);
-    }
-    this.expandedTraceTurns = [...this.expandedTraceTurns];
+    this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+      const index = this.expandedTraceTurns.indexOf(turnId);
+      if (index >= 0) {
+        this.expandedTraceTurns.splice(index, 1);
+      } else {
+        this.expandedTraceTurns.push(turnId);
+      }
+      this.expandedTraceTurns = [...this.expandedTraceTurns];
+    });
   }
 
   @Builder ToolTrace(turn: AgentTurnItem) {
@@ -766,9 +792,14 @@ export struct AgentConversationPanel {
           .fontColor('#607570')
           .layoutWeight(1)
           .textAlign(TextAlign.End)
-        Text(this.isTraceExpanded(turn.id) ? '收起⌃' : '查看⌄')
+        Text(this.isTraceExpanded(turn.id) ? '收起' : '查看')
           .fontSize(11)
           .fontColor('#18735E')
+        Text('⌄')
+          .fontSize(14)
+          .fontColor('#18735E')
+          .rotate({ angle: this.isTraceExpanded(turn.id) ? 180 : 0 })
+          .animation({ duration: 170, curve: Curve.EaseOut })
       }
       .width('100%')
       .padding({ left: 11, right: 11, top: 10, bottom: 10 })
@@ -932,6 +963,7 @@ export struct AgentConversationPanel {
                 .backgroundColor('#F8FAF9')
                 .borderRadius(7)
                 .border({ width: 1, color: '#E2EAE5' })
+                .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
             }
           }
           .alignItems(HorizontalAlign.Start)
@@ -940,6 +972,7 @@ export struct AgentConversationPanel {
           .backgroundColor('#FFFFFF')
           .borderRadius(11)
           .border({ width: 1, color: '#E0E8E3' })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
       }
     }
@@ -1001,12 +1034,13 @@ export struct AgentConversationPanel {
           .width('100%')
           .border({ width: { bottom: 1 }, color: '#E8EEEA' })
         }
-      })
+      }, (item: AgentConversationItem): string => item.id)
     }
     .layoutWeight(1)
     .width('100%')
     .padding({ left: 18, right: 18 })
     .backgroundColor('#FFFFFF')
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   @Builder MessageStream() {
@@ -1106,12 +1140,14 @@ export struct AgentConversationPanel {
           .padding({ left: 18, right: 18, top: 20, bottom: 23 })
           .backgroundColor('#FFFFFF')
           .border({ width: { bottom: 1 }, color: '#EDF1EE' })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }
-      })
+      }, (turn: AgentTurnItem): string => turn.id)
     }
     .width('100%')
     .layoutWeight(1)
     .backgroundColor('#FFFFFF')
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   @Builder Composer() {
@@ -1133,11 +1169,13 @@ export struct AgentConversationPanel {
             .onClick((): void => { this.stopTask(); })
         }
         .width('100%')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       } else if (this.isSending) {
         Row({ space: 8 }) {
           LoadingProgress().width(17).height(17).color('#178272')
           Text('正在提交调查…').fontSize(13).fontColor('#708080')
         }
+        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       } else {
         if (this.liveProgress.length > 0) {
           Text(this.liveProgress)
@@ -1149,9 +1187,12 @@ export struct AgentConversationPanel {
           .fontSize(14)
           .fontColor('#1F2B2E')
           .backgroundColor('#F6F8F6')
-          .border({ width: 1, color: '#D5E2DA' })
+          .border({ width: 1, color: this.composerFocused ? '#178272' : '#D5E2DA' })
           .borderRadius(16)
           .padding(10)
+          .animation({ duration: 160, curve: Curve.EaseOut })
+          .onFocus((): void => { this.composerFocused = true; })
+          .onBlur((): void => { this.composerFocused = false; })
           .onChange((value: string): void => { this.composerText = value; })
         Row() {
           Text('沿用本次调查的视频片段')
@@ -1177,6 +1218,7 @@ export struct AgentConversationPanel {
     .padding({ left: 16, right: 16, top: 10, bottom: 10 })
     .backgroundColor('#FFFFFF')
     .border({ width: { top: 1 }, color: '#DFE7E1' })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   @Builder ModelSelector() {
@@ -1250,9 +1292,10 @@ export struct AgentConversationPanel {
             .backgroundColor(this.isSelected(segment.id) ? '#EEF6F2' : '#FFFFFF')
             .border({ width: 1, color: this.isSelected(segment.id) ? '#9BCFB3' : '#E2EAE5' })
             .borderRadius(10)
+            .animation({ duration: 160, curve: Curve.EaseOut })
             .onClick((): void => { this.toggleSegment(segment.id); })
           }
-        })
+        }, (segment: AgentSegmentChoice): string => `${segment.id}`)
       }
       .width('100%')
       .layoutWeight(1)
@@ -1288,6 +1331,7 @@ export struct AgentConversationPanel {
     .width('100%')
     .layoutWeight(1)
     .padding(18)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   build() {
