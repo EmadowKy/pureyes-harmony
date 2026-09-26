@@ -73,6 +73,17 @@ class MVA2Runner:
             return fallback[:180]
         if result.get("available") is False:
             return "该检索能力尚未配置或暂时不可用"
+        if result.get("error"):
+            return "工具执行失败，请检查参数或稍后重试"
+        if result.get("notice"):
+            return "所选画面已查看，或已达到本轮画面读取预算"
+        frames = result.get("frames")
+        if isinstance(frames, list):
+            attached = sum(1 for frame in frames if isinstance(frame, dict)
+                           and frame.get("status") == "image_attached")
+            return f"已读取 {attached} 张原始画面，供模型核验" if attached else "未能读取请求的画面"
+        if result.get("status") == "image_attached":
+            return "已读取 1 张原始画面，供模型核验"
         count = result.get("match_count")
         if count is None:
             count = (result.get("summary") or {}).get("total_matching_records")

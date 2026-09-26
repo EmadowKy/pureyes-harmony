@@ -371,7 +371,9 @@ def _tool_calls_from_progress(progress_json):
             "details": [],
             "status": "running",
         })
-    return calls[-12:]
+    # A native model may issue several calls in one round. Keep the entire
+    # persisted chain so revisiting an investigation shows its early evidence.
+    return calls
 
 
 def _parse_preprocess_options(data):

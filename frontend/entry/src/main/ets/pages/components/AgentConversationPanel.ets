@@ -43,6 +43,7 @@ class AgentToolCall {
   query: string = '';
   queryType: string = '';
   videoId: string = '';
+  videoIds: Array<string> = [];
   timestampSec: number = -1;
   times: Array<number> = [];
   details: Array<string> = [];
@@ -119,6 +120,7 @@ export struct AgentConversationPanel {
   @State conversationReady: boolean = false;
   @State expandedCallKeys: Array<string> = [];
   @State expandedTraceTurns: Array<string> = [];
+  @State collapsedTraceTurns: Array<string> = [];
   @State composerFocused: boolean = false;
   @State conversationLoadError: string = '';
   @State segmentLoadError: string = '';
@@ -324,6 +326,7 @@ export struct AgentConversationPanel {
       this.currentTaskId = processingId;
       this.isSending = true;
       const activeTurn = mapped.find((turn: AgentTurnItem): boolean => turn.id === processingId);
+      if (activeTurn) this.showLiveTrace(processingId, activeTurn.toolCalls.length);
       this.startPolling(processingId, activeTurn ? activeTurn.createdAt : '');
     } else {
       this.currentTaskId = '';
@@ -677,6 +680,10 @@ export struct AgentConversationPanel {
     if (call.name === 'read_frames') {
       const frames = (params['frames'] as Array<Record<string, Object>>) || [];
       call.query = `${frames.length} 张画面`;
+      for (let i = 0; i < frames.length; i++) {
+        const videoId = (frames[i]['video_id'] as string) || '';
+        if (videoId && call.videoIds.indexOf(videoId) < 0) call.videoIds.push(videoId);
+      }
     }
     if (call.name === 'search_visual_semantics_batch') {
       const queries = (params['queries'] as Array<string>) || [];
@@ -726,6 +733,7 @@ export struct AgentConversationPanel {
     }
     for (let i = 0; i < this.messages.length; i++) {
       if (this.messages[i].id === taskId) {
+        this.showLiveTrace(taskId, calls.length);
         this.messages[i].toolCalls = calls;
         this.messages = [...this.messages];
         this.messageSource.updateItem(i, this.messages[i]);
@@ -768,6 +776,23 @@ export struct AgentConversationPanel {
       if (id > 0 && ids.indexOf(id) < 0) ids.push(id);
     }
     return ids.length;
+  }
+
+  toolScopeLabel(turn: AgentTurnItem, call: AgentToolCall): string {
+    const labels: Array<string> = [];
+    const ids = call.videoIds.length > 0 ? call.videoIds : (call.videoId ? [call.videoId] : []);
+    for (let i = 0; i < ids.length; i++) {
+      const segmentId = this.toolSegmentId(turn, ids[i]);
+      const label = segmentId > 0 ? this.evidenceVideoLabel(turn, segmentId) : this.toolVideoLabel(turn, ids[i]);
+      if (label && labels.indexOf(label) < 0) labels.push(label);
+    }
+    if (labels.length === 0) {
+      for (let i = 0; i < call.evidence.length; i++) {
+        const label = this.evidenceVideoLabel(turn, call.evidence[i].segmentId);
+        if (labels.indexOf(label) < 0) labels.push(label);
+      }
+    }
+    return labels.length > 0 ? labels.join(' · ') : '调查视频';
   }
 
   formatTimestamp(seconds: number): string {
@@ -847,13 +872,22 @@ export struct AgentConversationPanel {
     return this.expandedTraceTurns.indexOf(turnId) >= 0;
   }
 
+  showLiveTrace(turnId: string, callCount: number): void {
+    if (callCount > 0 && this.expandedTraceTurns.indexOf(turnId) < 0 &&
+        this.collapsedTraceTurns.indexOf(turnId) < 0) {
+      this.expandedTraceTurns = [...this.expandedTraceTurns, turnId];
+    }
+  }
+
   toggleTrace(turnId: string): void {
     this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
       const index = this.expandedTraceTurns.indexOf(turnId);
       if (index >= 0) {
         this.expandedTraceTurns.splice(index, 1);
+        this.collapsedTraceTurns = [...this.collapsedTraceTurns, turnId];
       } else {
         this.expandedTraceTurns.push(turnId);
+        this.collapsedTraceTurns = this.collapsedTraceTurns.filter((id: string): boolean => id !== turnId);
       }
       this.expandedTraceTurns = [...this.expandedTraceTurns];
     });
@@ -862,11 +896,11 @@ export struct AgentConversationPanel {
   @Builder ToolTrace(turn: AgentTurnItem) {
     Column({ space: 7 }) {
       Row({ space: 7 }) {
-        Text('执行过程')
+        Text('工具调用链')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor('#0C2942')
-        Text(`${turn.toolCalls.length} 步`)
+        Text(`${turn.toolCalls.length} 步 · 按执行顺序`)
           .fontSize(11)
           .fontColor('#667B96')
           .layoutWeight(1)
@@ -882,8 +916,8 @@ export struct AgentConversationPanel {
       .onClick((): void => { this.toggleTrace(turn.id); })
       if (this.isTraceExpanded(turn.id)) {
         ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
-          Column({ space: 9 }) {
-            Row({ space: 10 }) {
+          Column({ space: 7 }) {
+            Row({ space: 9 }) {
               Text(`${index + 1}`)
                 .fontSize(12)
                 .fontWeight(FontWeight.Medium)
@@ -893,14 +927,16 @@ export struct AgentConversationPanel {
                 .height(28)
                 .backgroundColor(this.toolSoft(call.name))
                 .borderRadius(14)
-              Column({ space: 3 }) {
+              Column({ space: 2 }) {
                 Text(this.toolNameLabel(call.name))
                   .fontSize(13)
                   .fontWeight(FontWeight.Bold)
                   .fontColor('#0C2942')
-                Text(this.toolKind(call.name))
+                Text(`${this.toolKind(call.name)} · ${this.toolScopeLabel(turn, call)}`)
                   .fontSize(10)
                   .fontColor('#8191A5')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
@@ -920,35 +956,54 @@ export struct AgentConversationPanel {
             Text(call.summary || (call.status === 'running' ? '正在等待工具返回…' : '工具已执行'))
                 .fontSize(12)
                 .fontColor(call.status === 'failed' ? '#A14D4D' : '#4C617A')
-                .maxLines(this.isCallExpanded(`${turn.id}-${index}`) ? 8 : 2)
+                .maxLines(this.isCallExpanded(`${turn.id}-${index}`) ? 8 : 3)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
-            if (!this.isCallExpanded(`${turn.id}-${index}`) && (call.query || call.evidence.length > 0)) {
-              Row({ space: 7 }) {
-                if (call.query) {
-                  Text(call.query)
-                    .fontSize(10)
-                    .fontColor(this.toolAccent(call.name))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .padding({ left: 7, right: 7, top: 4, bottom: 4 })
-                    .backgroundColor(this.toolSoft(call.name))
-                    .borderRadius(5)
-                    .layoutWeight(1)
-                }
-                if (call.evidence.length > 0) {
-                  Text(this.evidenceVideoCount(call) > 1 ?
-                    `${this.evidenceVideoCount(call)} 段视频 · ${call.evidence.length} 处证据` :
-                    `${call.evidence.length} 处证据`)
-                    .fontSize(10)
+            if (call.query) {
+              Text(`检索 · ${call.query}`)
+                .fontSize(10)
+                .fontColor('#657A92')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            }
+            if (call.evidence.length > 0) {
+              Text(this.evidenceVideoCount(call) > 1 ?
+                `跨 ${this.evidenceVideoCount(call)} 段视频 · ${call.evidence.length} 处可查看证据` :
+                `${call.evidence.length} 处可查看证据`)
+                .fontSize(10)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#2459B8')
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(call.evidence.slice(0, this.isCallExpanded(`${turn.id}-${index}`) ?
+                  call.evidence.length : 3), (evidence: AgentToolEvidence, evidenceIndex: number): void => {
+                  Text(`${this.evidenceVideoLabel(turn, evidence.segmentId)} · ${this.formatTimestamp(evidence.timestampSec)} ↗`)
+                    .fontSize(11)
                     .fontColor('#2459B8')
+                    .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+                    .backgroundColor('#E8F0FF')
+                    .borderRadius(7)
+                    .margin({ right: 6, bottom: 4 })
+                    .onClick((): void => {
+                      if (turn.segmentIds.indexOf(evidence.segmentId) >= 0) {
+                        this.onTimestampClick(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
+                      }
+                    })
+                }, (evidence: AgentToolEvidence, evidenceIndex: number): string =>
+                  `${turn.id}-${index}-evidence-${evidenceIndex}`)
+                if (call.evidence.length > 3 && !this.isCallExpanded(`${turn.id}-${index}`)) {
+                  Text(`还有 ${call.evidence.length - 3} 处 · 展开`)
+                    .fontSize(11)
+                    .fontColor('#536982')
+                    .padding({ top: 6, bottom: 6 })
+                    .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
                 }
               }
               .width('100%')
             }
             Row() {
               Blank()
-              Text(this.isCallExpanded(`${turn.id}-${index}`) ? '收起详情  ⌃' : '查看参数与证据  ⌄')
+              Text(this.isCallExpanded(`${turn.id}-${index}`) ? '收起参数与结果  ⌃' : '查看参数与结果  ⌄')
                 .fontSize(11)
                 .fontColor(this.toolAccent(call.name))
             }
@@ -956,6 +1011,9 @@ export struct AgentConversationPanel {
             .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
             if (this.isCallExpanded(`${turn.id}-${index}`)) {
                 Column({ space: 8 }) {
+                  Text(`工具标识 · ${call.name}`)
+                    .fontSize(10)
+                    .fontColor('#8191A5')
                   if (call.query || call.videoId || call.timestampSec >= 0 || call.queryType) {
                     Text('调用参数')
                       .fontSize(10)
@@ -983,18 +1041,21 @@ export struct AgentConversationPanel {
                         })
                     }
                   }
-                  Divider().color('#DDE6F2')
-                  Text('观察结果')
-                    .fontSize(10)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#718399')
+                  if (call.details.length > 0 || (call.evidence.length === 0 && call.times.length > 0)) {
+                    Divider().color('#DDE6F2')
+                    Text('观察结果')
+                      .fontSize(10)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor('#718399')
+                  }
                   ForEach(call.details, (detail: string, detailIndex: number): void => {
                     Row({ space: 6 }) {
                       Text('•').fontSize(12).fontColor(this.toolAccent(call.name))
                       Text(detail).fontSize(11).fontColor('#4C617A').layoutWeight(1)
                     }.width('100%')
                   }, (detail: string, detailIndex: number): string => `${turn.id}-${index}-detail-${detailIndex}`)
-                  if (call.times.length > 0 && this.toolSegmentId(turn, call.videoId) > 0) {
+                  if (call.evidence.length === 0 && call.times.length > 0 &&
+                      this.toolSegmentId(turn, call.videoId) > 0) {
                     Flex({ wrap: FlexWrap.Wrap }) {
                       ForEach(call.times, (seconds: number, timeIndex: number): void => {
                         Text(`${this.formatTimestamp(seconds)} ↗`)
@@ -1010,44 +1071,18 @@ export struct AgentConversationPanel {
                       }, (seconds: number, timeIndex: number): string => `${turn.id}-${index}-time-${timeIndex}`)
                     }
                   }
-                  if (call.evidence.length > 0) {
-                    Text('可查看的证据')
-                      .fontSize(10)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor('#718399')
-                    Flex({ wrap: FlexWrap.Wrap }) {
-                      ForEach(call.evidence, (evidence: AgentToolEvidence, evidenceIndex: number): void => {
-                        Text(`${this.evidenceVideoLabel(turn, evidence.segmentId)} · ${evidence.label} · ${this.formatTimestamp(evidence.timestampSec)} ↗`)
-                          .fontSize(11)
-                          .fontColor(this.toolAccent(call.name))
-                          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-                          .backgroundColor(this.toolSoft(call.name))
-                          .borderRadius(6)
-                          .margin({ right: 6, bottom: 5 })
-                          .onClick((): void => {
-                            if (turn.segmentIds.indexOf(evidence.segmentId) >= 0) {
-                              this.onTimestampClick(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
-                            }
-                          })
-                      }, (evidence: AgentToolEvidence, evidenceIndex: number): string =>
-                        `${turn.id}-${index}-evidence-${evidenceIndex}`)
-                    }
-                  }
                 }
                 .width('100%')
-                .padding(10)
-                .backgroundColor('#F8FAFE')
-                .borderRadius(7)
-                .border({ width: 1, color: '#DDE6F2' })
+                .padding({ left: 10, right: 0, top: 7, bottom: 3 })
+                .border({ width: { left: 2 }, color: '#D9E3F0' })
                 .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
             }
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')
-          .padding(11)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(9)
-          .border({ width: 1, color: '#E6ECF4' })
+          .padding({ left: 12, right: 8, top: 11, bottom: 11 })
+          .backgroundColor('#F8FAFE')
+          .border({ width: { left: 2, bottom: 1 }, color: '#D9E3F0' })
           .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
       }

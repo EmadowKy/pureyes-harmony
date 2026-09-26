@@ -52,6 +52,18 @@ def public_tool_evidence(result):
     return scope["_public_tool_evidence"](result)
 
 
+def public_tool_summary(result):
+    tree = ast.parse((ROOT / "runner.py").read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MVA2Runner")
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "_public_tool_summary")
+    method.decorator_list = []
+    scope = {"Dict": dict, "Any": object}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])),
+                 str(ROOT / "runner.py"), "exec"), scope)
+    return scope["_public_tool_summary"](result, "已完成工具核验")
+
+
 def public_tool_params(params):
     tree = ast.parse(ROUTES.read_text(encoding="utf-8"))
     method = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
@@ -84,6 +96,12 @@ class NativeFrameEvidenceTests(unittest.TestCase):
             self.assertEqual([(11, 3.0), (22, 8.0)], [
                 (item["segment_id"], item["timestamp_sec"])
                 for item in public_tool_evidence(result)])
+
+    def test_frame_trace_reports_read_count_and_failure_without_raw_error(self):
+        self.assertEqual("已读取 2 张原始画面，供模型核验", public_tool_summary({
+            "frames": [{"status": "image_attached"}, {"status": "image_attached"}]}))
+        self.assertEqual("工具执行失败，请检查参数或稍后重试",
+                         public_tool_summary({"error": "private model failure"}))
 
     def test_partial_failure_keeps_successful_link_and_all_failure_is_reported(self):
         with tempfile.NamedTemporaryFile(suffix=".jpg") as image:

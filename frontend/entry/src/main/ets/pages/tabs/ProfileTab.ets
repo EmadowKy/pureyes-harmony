@@ -1285,7 +1285,7 @@ export struct ProfileTab {
               .padding(18)
               .backgroundColor($r('app.color.app_card_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
-              .borderRadius(8)
+              .borderRadius(10)
           }
         }
 
@@ -1339,7 +1339,7 @@ export struct ProfileTab {
               .padding(18)
               .backgroundColor($r('app.color.app_card_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
-              .borderRadius(8)
+              .borderRadius(10)
           }
         }
 

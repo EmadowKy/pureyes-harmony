@@ -714,11 +714,13 @@ export struct GroupTab {
             Text(this.groupId ? '邀请同事后，成员会显示在这里。' : '从顶部选择一个小组以查看成员。')
               .fontSize(13)
               .fontColor($r('app.color.app_text_secondary'))
+              .textAlign(TextAlign.Center)
           }
-          .width('90%')
-          .padding(28)
+          .width('100%')
+          .padding({ left: 28, right: 28, bottom: 52 })
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
         } else {
           this.MemberList()
         }
