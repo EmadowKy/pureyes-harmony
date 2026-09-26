@@ -547,6 +547,10 @@ export struct AgentConversationPanel {
       const frames = (params['frames'] as Array<Record<string, Object>>) || [];
       call.query = `${frames.length} 张画面`;
     }
+    if (call.name === 'search_visual_semantics_batch') {
+      const queries = (params['queries'] as Array<string>) || [];
+      call.query = queries.join(' · ').substring(0, 200);
+    }
     call.queryType = (params['query_type'] as string) || '';
     const timestamp = params['timestamp_sec'];
     const numericTimestamp = Number(timestamp);
@@ -641,7 +645,7 @@ export struct AgentConversationPanel {
 
   toolNameLabel(toolName: string): string {
     if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '查找目标';
-    if (toolName === 'search_visual_semantics') return '画面语义';
+    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '画面语义';
     if (toolName === 'search_video_text') return '画面文字';
     if (toolName === 'track_target') return '追踪轨迹';
     if (toolName === 'search_face_tracks') return '人脸线索';
@@ -653,7 +657,7 @@ export struct AgentConversationPanel {
   toolMark(toolName: string): string {
     if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '⌕';
     if (toolName === 'track_target') return '◎';
-    if (toolName === 'search_visual_semantics') return '◈';
+    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '◈';
     if (toolName === 'search_video_text') return '文';
     if (toolName === 'search_face_tracks') return '人';
     if (toolName === 'read_frame_image' || toolName === 'read_frames') return '▣';
@@ -680,7 +684,7 @@ export struct AgentConversationPanel {
   toolKind(toolName: string): string {
     if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '目标索引';
     if (toolName === 'track_target') return '轨迹追踪';
-    if (toolName === 'search_visual_semantics') return '语义检索';
+    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '语义检索';
     if (toolName === 'search_video_text') return '文字识别';
     if (toolName === 'search_face_tracks') return '人脸索引';
     if (toolName === 'read_frame_image' || toolName === 'read_frames') return '视觉核验';

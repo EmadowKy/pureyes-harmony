@@ -1713,6 +1713,7 @@ struct WorkspaceDetail {
       }
       this.segments = mapped;
       this.loadFaceGroups();
+      this.loadHarmonyQueueCount();
       
       if (hasProcessing) {
         setTimeout(() => {
@@ -2343,6 +2344,8 @@ struct WorkspaceDetail {
         this.loadSegments();
       } else if (index === 1) {
         this.loadFaceGroups();
+        this.loadHarmonyQueueCount();
+        this.loadFaceBackend();
       } else {
         this.loadQARecords();
       }
@@ -3478,6 +3481,16 @@ struct FaceGroupCard {
           .fontColor($r('app.color.app_text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.group.is_legacy) {
+          Text('旧版线索 · 待重建')
+            .fontSize(10)
+            .fontColor($r('app.color.app_danger'))
+        }
+        if (this.group.needs_classification) {
+          Text('等待鸿蒙手机归类')
+            .fontSize(10)
+            .fontColor($r('app.color.app_selection'))
+        }
       }
       .padding(8)
       .alignItems(HorizontalAlign.Start)

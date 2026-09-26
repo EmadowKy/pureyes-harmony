@@ -89,8 +89,8 @@ class MVA2Runner:
         if not isinstance(result, dict):
             return []
         evidence = []
-        for frame in result.get("frames") or []:
-            if frame.get("segment_id") is not None:
+        for frame in result.get("frames") or [result]:
+            if frame.get("status") == "image_attached" and frame.get("segment_id") is not None:
                 evidence.append({"segment_id": frame["segment_id"],
                                  "timestamp_sec": frame["timestamp_sec"],
                                  "label": f"视频 {frame['video_index']} 画面"})

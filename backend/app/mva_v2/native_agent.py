@@ -68,7 +68,10 @@ def _frame(runner, video_items, args, temp_files):
     if not path or not os.path.exists(path):
         return {"error": "无法截取画面"}, None
     temp_files.append(path)
-    return {"video_id": selected["video_id"], "timestamp_sec": timestamp, "status": "image_attached"}, {"type": "image", "image": path}
+    index = next(i for i, item in enumerate(video_items, 1) if item is selected)
+    return {"video_id": selected["video_id"], "video_index": index,
+            "segment_id": selected.get("meta", {}).get("id"),
+            "timestamp_sec": timestamp, "status": "image_attached"}, {"type": "image", "image": path}
 
 
 def _dispatch(runner, video_items, name, args, temp_files):
@@ -76,11 +79,23 @@ def _dispatch(runner, video_items, name, args, temp_files):
         frames = validate_frame_batch(video_items, args.get("frames"))
         results, images = [], []
         for _, item, timestamp in frames:
-            result, image = _frame(runner, video_items, {"video_id": item["video_id"], "timestamp_sec": timestamp}, temp_files)
+            try:
+                result, image = _frame(runner, video_items, {"video_id": item["video_id"], "timestamp_sec": timestamp}, temp_files)
+            except Exception as exc:
+                logger.warning("Frame extraction failed for %s at %ss: %s", item["video_id"], timestamp, exc)
+                result, image = {"video_id": item["video_id"], "timestamp_sec": timestamp,
+                                 "error": "无法截取画面"}, None
             results.append(result)
             if image:
                 images.extend([{"type": "text", "text": json.dumps(result, ensure_ascii=False)}, image])
-        return {"frames": results}, images
+        succeeded = [frame for frame in results if frame.get("status") == "image_attached"]
+        response = {"frames": results, "match_count": len(succeeded),
+                    "matches": [{"timestamp_sec": frame["timestamp_sec"],
+                                 "class_name": f"视频 {frame['video_index']} 画面"}
+                                for frame in succeeded]}
+        if not succeeded:
+            response["error"] = "所有请求画面均无法提取"
+        return response, images
     if name == "read_frame_image":
         result, image = _frame(runner, video_items, args, temp_files)
         return result, ([{"type": "text", "text": json.dumps(result, ensure_ascii=False)}, image] if image else [])
@@ -103,7 +118,20 @@ def _dispatch(runner, video_items, name, args, temp_files):
         queries = args.get("queries")
         if not isinstance(queries, list) or not 1 <= len(queries) <= 4 or not all(isinstance(q, str) for q in queries):
             return {"error": "queries 须含 1 到 4 个字符串"}, []
-        return {"results": [{"query": q, "result": runner.tools.search_visual_semantics(q, video_id)} for q in queries]}, []
+        results = [{"query": q, "result": runner.tools.search_visual_semantics(q, video_id)}
+                   for q in queries]
+        matches = []
+        for entry in results:
+            for item in (entry["result"].get("matches") or [])[:2]:
+                if isinstance(item, dict):
+                    matches.append({**item, "class_name": entry["query"]})
+        response = {"results": results, "match_count": sum(
+            entry["result"].get("match_count") or 0 for entry in results),
+            "matches": matches[:8]}
+        if all(entry["result"].get("available") is False for entry in results):
+            response["available"] = False
+            response["error"] = "画面语义检索不可用"
+        return response, []
     if name == "search_video_text":
         return runner.tools.search_video_text(query, video_id), []
     if name == "track_target":
@@ -218,37 +246,46 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                             name = "search_visual_semantics_batch"
                         else:
                             raise ValueError("模型返回了缺少工具名称的调用")
-                    used_tools.append(name)
                     if name in ("read_frames", "read_frame_image"):
                         requested = args.get("frames", [args]) if name == "read_frames" else [args]
                         fresh = []
+                        requested_keys = set()
                         for frame in requested:
                             if not isinstance(frame, dict):
                                 continue
                             key = (frame.get("video_id"), frame.get("timestamp_sec"))
-                            if key not in seen_frames and len(seen_frames) < frame_budget:
+                            if (key not in seen_frames and key not in requested_keys
+                                    and len(seen_frames) + len(fresh) < frame_budget):
                                 fresh.append(frame)
-                                seen_frames.add(key)
+                                requested_keys.add(key)
                         if not fresh:
                             result, new_images = {"notice": f"这些时间点已经看过，或已达到 {frame_budget} 帧预算。请根据现有画面作答。"}, []
                         else:
                             result, new_images = _dispatch(runner, video_items, "read_frames", {"frames": fresh[:4]}, temp_files)
                     else:
                         result, new_images = _dispatch(runner, video_items, name, args, temp_files)
+                    selected_for_memory = resolve_selected_video(video_items, args)
+                    cards = cards_from_result(name, result, video_items, selected_for_memory,
+                                              str(args.get("query_text") or ""))
                     if not (isinstance(result, dict) and result.get("error")):
-                        selected_for_memory = resolve_selected_video(video_items, args)
+                        used_tools.append(name)
                         if selected_for_memory:
                             priorities.mark_explored(selected_for_memory["video_id"])
+                        elif name in ("read_frames", "read_frame_image"):
+                            frame_results = result.get("frames") or [result]
+                            for frame in frame_results:
+                                if isinstance(frame, dict) and frame.get("status") == "image_attached":
+                                    priorities.mark_explored(frame["video_id"])
                         elif name == "search_face_tracks":
-                            for item in video_items:
-                                priorities.mark_explored(item["video_id"])
-                    cards = cards_from_result(name, result, video_items,
-                                              resolve_selected_video(video_items, args),
-                                              str(args.get("query_text") or ""))
+                            for card in cards:
+                                priorities.mark_explored(card["video_id"])
                     if name in ("read_frames", "read_frame_image") and isinstance(result, dict):
                         frame_results = result.get("frames") or [result]
                         pending_frames.extend(frame for frame in frame_results
                                               if isinstance(frame, dict) and frame.get("status") == "image_attached")
+                        seen_frames.update((frame["video_id"], frame["timestamp_sec"])
+                                           for frame in frame_results if isinstance(frame, dict)
+                                           and frame.get("status") == "image_attached")
                     images.extend(new_images)
                     visual_evidence_count += sum(1 for part in new_images if part.get("type") == "image")
                 except Exception as exc:
