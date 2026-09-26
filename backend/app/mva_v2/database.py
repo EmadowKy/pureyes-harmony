@@ -17,6 +17,7 @@ class SpatiotemporalDB:
     """Implementation of a Local Clip-bounded Spatiotemporal Database (with JSON file persistence to align with SQLite lifecycle)"""
     _shared_records = []
     _loaded_path = None
+    _loaded_signature = None
     _thread_lock = threading.RLock()
 
     def __init__(self):
@@ -27,6 +28,14 @@ class SpatiotemporalDB:
     @staticmethod
     def _lock_path():
         return f"{DB_FILE_PATH}.lock"
+
+    @staticmethod
+    def _disk_signature():
+        try:
+            stat = os.stat(DB_FILE_PATH)
+            return stat.st_mtime_ns, stat.st_size
+        except FileNotFoundError:
+            return None
 
     @staticmethod
     def _read_disk_unlocked():
@@ -70,14 +79,20 @@ class SpatiotemporalDB:
 
     def _load_from_disk(self):
         with SpatiotemporalDB._thread_lock:
-            if SpatiotemporalDB._loaded_path == DB_FILE_PATH:
+            if (SpatiotemporalDB._loaded_path == DB_FILE_PATH
+                    and SpatiotemporalDB._loaded_signature == self._disk_signature()):
                 return
             try:
                 os.makedirs(os.path.dirname(DB_FILE_PATH), exist_ok=True)
                 with FileLock(self._lock_path(), timeout=30):
+                    signature = self._disk_signature()
+                    if (SpatiotemporalDB._loaded_path == DB_FILE_PATH
+                            and SpatiotemporalDB._loaded_signature == signature):
+                        return
                     data = self._read_disk_unlocked()
-                self._replace_shared_records(data)
-                SpatiotemporalDB._loaded_path = DB_FILE_PATH
+                    self._replace_shared_records(data)
+                    SpatiotemporalDB._loaded_path = DB_FILE_PATH
+                    SpatiotemporalDB._loaded_signature = signature
                 logger.info(f"Loaded {len(self.records)} records from spatiotemporal DB file: {DB_FILE_PATH}")
             except Exception as e:
                 logger.error(f"Failed to load spatiotemporal DB from disk: {e}")
@@ -144,6 +159,8 @@ class SpatiotemporalDB:
         return None
 
     def snapshot(self):
+        # Another worker may have replaced the on-disk index since this process last read it.
+        self._load_from_disk()
         with SpatiotemporalDB._thread_lock:
             return list(self.records)
 

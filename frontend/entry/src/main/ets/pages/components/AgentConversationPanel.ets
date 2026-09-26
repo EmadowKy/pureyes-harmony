@@ -65,6 +65,32 @@ class AgentTurnPayload {
 
 class EmptyRequestPayload {}
 
+class AgentMessageDataSource implements IDataSource {
+  private items: Array<AgentTurnItem> = [];
+  private listeners: Array<DataChangeListener> = [];
+
+  totalCount(): number { return this.items.length; }
+  getData(index: number): AgentTurnItem { return this.items[index]; }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    this.listeners.push(listener);
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    this.listeners = this.listeners.filter((item: DataChangeListener): boolean => item !== listener);
+  }
+
+  setItems(items: Array<AgentTurnItem>): void {
+    this.items = items;
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded());
+  }
+
+  updateItem(index: number, item: AgentTurnItem): void {
+    this.items[index] = item;
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataChanged(index));
+  }
+}
+
 @Component
 export struct AgentConversationPanel {
   @Prop workspaceId: number = 0;
@@ -102,6 +128,7 @@ export struct AgentConversationPanel {
   private lastProgressCount: number = 0;
   private syncing: boolean = false;
   private messageScroller: Scroller = new Scroller();
+  private messageSource: AgentMessageDataSource = new AgentMessageDataSource();
 
   aboutToAppear(): void {
     this.refreshAll();
@@ -191,6 +218,7 @@ export struct AgentConversationPanel {
       this.selectedConversationId = conversationId;
       this.conversationReady = false;
       this.messages = [];
+      this.messageSource.setItems([]);
       this.creatingInvestigation = false;
     });
     this.currentTaskId = '';
@@ -203,6 +231,7 @@ export struct AgentConversationPanel {
     }
     if (res.code !== 0 || !res.data) {
       this.messages = [];
+      this.messageSource.setItems([]);
       this.liveProgress = res.message || '加载调查记录失败';
       return;
     }
@@ -249,9 +278,11 @@ export struct AgentConversationPanel {
     if (this.messages.length > 0 && mapped.length > this.messages.length) {
       this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
         this.messages = mapped;
+        this.messageSource.setItems(mapped);
       });
     } else {
       this.messages = mapped;
+      this.messageSource.setItems(mapped);
     }
     if (processingId.length > 0) {
       this.currentTaskId = processingId;
@@ -336,6 +367,7 @@ export struct AgentConversationPanel {
       this.conversationReady = false;
       this.evidenceSegmentIds = [];
       this.messages = [];
+      this.messageSource.setItems([]);
       this.selectedSegmentIds = [];
       this.composerText = '';
       this.liveProgress = '';
@@ -355,6 +387,7 @@ export struct AgentConversationPanel {
       this.evidenceSegmentIds = [];
       this.currentTaskId = '';
       this.messages = [];
+      this.messageSource.setItems([]);
       this.isSending = false;
       this.isStopping = false;
       this.liveProgress = '';
@@ -645,6 +678,7 @@ export struct AgentConversationPanel {
       if (this.messages[i].id === taskId) {
         this.messages[i].toolCalls = calls;
         this.messages = [...this.messages];
+        this.messageSource.updateItem(i, this.messages[i]);
         break;
       }
     }
@@ -1045,7 +1079,7 @@ export struct AgentConversationPanel {
 
   @Builder MessageStream() {
     List({ space: 0, scroller: this.messageScroller }) {
-      ForEach(this.messages, (turn: AgentTurnItem): void => {
+      LazyForEach(this.messageSource, (turn: AgentTurnItem): void => {
         ListItem() {
           Column({ space: 13 }) {
             Row({ space: 8 }) {
@@ -1146,6 +1180,7 @@ export struct AgentConversationPanel {
     }
     .width('100%')
     .layoutWeight(1)
+    .cachedCount(1)
     .backgroundColor('#FFFFFF')
     .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
