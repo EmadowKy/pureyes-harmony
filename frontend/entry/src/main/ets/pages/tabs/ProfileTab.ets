@@ -593,7 +593,9 @@ export struct ProfileTab {
   }
 
   async loadModelConfigs(): Promise<void> {
-    const [configs, groups] = await Promise.all([HttpUtil.get('/model-configs'), HttpUtil.get('/groups/')]);
+    const results = await Promise.all([HttpUtil.get('/model-configs'), HttpUtil.get('/groups/')]);
+    const configs = results[0];
+    const groups = results[1];
     if (configs.code === 0 && configs.data) {
       const rows = JSON.parse(configs.data) as Array<Record<string, Object>>;
       this.modelConfigs = rows.map((row: Record<string, Object>): ModelConfigOption => parseModelConfig(row));
