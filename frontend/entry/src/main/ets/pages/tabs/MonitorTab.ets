@@ -70,7 +70,7 @@ struct AddMonitorDialog {
       Text('添加监控').fontSize(20).fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.app_text_primary'))
 
-      TextInput({ placeholder: '监控名称', text: this.monitorName })
+      TextInput({ placeholder: '请输入监控名称', text: this.monitorName })
         .onChange((val: string): void => {
           this.monitorName = val;
         })
@@ -78,7 +78,7 @@ struct AddMonitorDialog {
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_input_bg'))
 
-      TextInput({ placeholder: '视频流地址 (stream_url)', text: this.streamUrl })
+      TextInput({ placeholder: '请输入视频流地址', text: this.streamUrl })
         .onChange((val: string): void => {
           this.streamUrl = val;
         })
@@ -858,7 +858,7 @@ export struct MonitorTab {
         .backgroundColor(Color.Black)
 
         Row({ space: 10 }) {
-          TextInput({ placeholder: 'YYYY-MM-DD HH:mm:ss', text: this.jumpTimeText })
+          TextInput({ placeholder: '请输入时间 YYYY-MM-DD HH:mm:ss', text: this.jumpTimeText })
             .layoutWeight(1)
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
@@ -1084,7 +1084,7 @@ export struct MonitorTab {
                   this.MonitorCover(monitor)
 
                   if (this.editingMonitorId === monitor.id) {
-                    TextInput({ placeholder: '监控名称', text: this.editingMonitorName })
+                    TextInput({ placeholder: '请输入监控名称', text: this.editingMonitorName })
                       .height(36)
                       .fontSize(13)
                       .fontColor($r('app.color.app_text_primary'))
@@ -1092,7 +1092,7 @@ export struct MonitorTab {
                       .onChange((val: string): void => {
                         this.editingMonitorName = val;
                       })
-                    TextInput({ placeholder: '视频流地址', text: this.editingMonitorUrl })
+                    TextInput({ placeholder: '请输入视频流地址', text: this.editingMonitorUrl })
                       .height(36)
                       .fontSize(13)
                       .fontColor($r('app.color.app_text_primary'))

@@ -113,7 +113,7 @@ export struct CreateUserDialog {
         .width('100%')
         .textAlign(TextAlign.Start)
 
-      TextInput({ placeholder: '工号', text: this.empId })
+      TextInput({ placeholder: '请输入工号', text: this.empId })
         .width('100%')
         .onChange((val: string): void => {
           this.empId = val;
@@ -124,7 +124,7 @@ export struct CreateUserDialog {
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      TextInput({ placeholder: '姓名，可选', text: this.name })
+      TextInput({ placeholder: '请输入姓名（选填）', text: this.name })
         .width('100%')
         .onChange((val: string): void => {
           this.name = val;
@@ -135,7 +135,7 @@ export struct CreateUserDialog {
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      TextInput({ placeholder: '手机号，可选', text: this.phone })
+      TextInput({ placeholder: '请输入手机号（选填）', text: this.phone })
         .width('100%')
         .onChange((val: string): void => {
           this.phone = val;
@@ -146,7 +146,7 @@ export struct CreateUserDialog {
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      TextInput({ placeholder: '初始密码，至少6位', text: this.pass })
+      TextInput({ placeholder: '请输入初始密码（至少 6 位）', text: this.pass })
         .width('100%')
         .type(InputType.Password)
         .onChange((val: string): void => {
@@ -1501,12 +1501,12 @@ export struct ProfileTab {
                 if (this.configGroups[index]) this.llmConfigGroupId = this.configGroups[index].id;
               })
           }
-          TextInput({ placeholder: '配置名称，如「视觉模型」', text: this.llmConfigName })
+          TextInput({ placeholder: '请输入配置名称', text: this.llmConfigName })
             .width('100%').height(42)
             .onChange((val: string): void => { this.llmConfigName = val; })
           Row({ space: 8 }) {
             TextInput({
-              placeholder: this.editingConfigId ? '新 API Key（留空保持原有）' : 'API Key',
+              placeholder: this.editingConfigId ? '新 API Key（留空不修改）' : '请输入 API Key',
               text: this.llmApiKey
             })
               .type(InputType.Password)
@@ -1522,7 +1522,7 @@ export struct ProfileTab {
           }
           .width('100%')
 
-          TextInput({ placeholder: 'BASE URL', text: this.llmBaseUrl })
+          TextInput({ placeholder: '请输入 API 地址', text: this.llmBaseUrl })
             .width('100%')
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
@@ -1533,7 +1533,7 @@ export struct ProfileTab {
               this.llmBaseUrl = val;
             })
 
-          TextInput({ placeholder: 'MODEL 模型名称', text: this.llmModel })
+          TextInput({ placeholder: '请输入模型名称', text: this.llmModel })
             .width('100%')
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
@@ -1822,7 +1822,7 @@ export struct ProfileTab {
         this.PageHeader('用户搜索')
 
         Row({ space: 8 }) {
-          TextInput({ placeholder: '输入姓名、工号或手机号', text: this.searchKeyword })
+          TextInput({ placeholder: '搜索姓名、工号或手机号', text: this.searchKeyword })
             .layoutWeight(1)
             .height(40)
             .fontColor($r('app.color.app_text_primary'))
@@ -1912,7 +1912,7 @@ export struct ProfileTab {
         this.PageHeader('用户管理')
 
         Row({ space: 8 }) {
-          TextInput({ placeholder: '按姓名或工号搜索', text: this.searchKeyword })
+          TextInput({ placeholder: '搜索姓名或工号', text: this.searchKeyword })
             .layoutWeight(1)
             .height(40)
             .fontColor($r('app.color.app_text_primary'))

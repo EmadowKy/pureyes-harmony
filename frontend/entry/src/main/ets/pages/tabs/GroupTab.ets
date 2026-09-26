@@ -47,7 +47,7 @@ export struct RenameGroupDialog {
         .width('100%')
         .textAlign(TextAlign.Start)
 
-      TextInput({ placeholder: '新的小组名称', text: this.groupName })
+      TextInput({ placeholder: '请输入小组名称', text: this.groupName })
         .width('100%')
         .onChange((val: string): void => {
           this.groupName = val;
@@ -515,7 +515,7 @@ export struct GroupTab {
       }
       .width('100%')
 
-      TextInput({ placeholder: '输入工号、姓名或手机号', text: this.inviteKeyword })
+      TextInput({ placeholder: '搜索工号、姓名或手机号', text: this.inviteKeyword })
         .width('100%')
         .height(40)
         .fontColor($r('app.color.app_text_primary'))

@@ -217,7 +217,7 @@ struct Login {
                 .width('100%')
 
               Row() {
-                TextInput({ placeholder: 'https://example.com', text: this.serverUrl })
+                TextInput({ placeholder: '请输入服务器地址', text: this.serverUrl })
                   .layoutWeight(1)
                   .height(46)
                   .fontColor($r('app.color.app_text_primary'))

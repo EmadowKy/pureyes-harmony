@@ -1286,7 +1286,7 @@ export struct AgentConversationPanel {
             .fontSize(12)
             .fontColor($r('app.color.app_danger'))
         }
-        TextArea({ placeholder: '追问当前调查…', text: this.composerText })
+        TextArea({ placeholder: '请输入追问', text: this.composerText })
           .height(52)
           .fontSize(14)
           .fontColor($r('app.color.app_text_primary'))
@@ -1461,7 +1461,7 @@ export struct AgentConversationPanel {
       }
       .width('100%')
       .layoutWeight(1)
-      TextArea({ placeholder: '例如：这个穿深色上衣的人先后出现在哪里？', text: this.composerText })
+      TextArea({ placeholder: '请输入问题', text: this.composerText })
         .height(88)
         .fontSize(14)
         .backgroundColor($r('app.color.app_input_bg'))

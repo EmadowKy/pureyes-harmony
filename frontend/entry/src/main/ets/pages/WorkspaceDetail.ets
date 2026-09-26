@@ -200,7 +200,7 @@ struct MonitorTimeRangeDialog {
               .fontColor($r('app.color.app_text_primary'))
               .alignSelf(ItemAlign.Start)
 
-            TextInput({ text: this.startTimeText, placeholder: '2026-07-25 10:00:00' })
+            TextInput({ text: this.startTimeText, placeholder: '请输入起始时间' })
               .height(40)
               .fontSize(13)
               .onChange((val: string): void => {
@@ -213,7 +213,7 @@ struct MonitorTimeRangeDialog {
               .alignSelf(ItemAlign.Start)
               .margin({ top: 6 })
 
-            TextInput({ text: this.endTimeText, placeholder: '2026-07-25 10:05:00' })
+            TextInput({ text: this.endTimeText, placeholder: '请输入结束时间' })
               .height(40)
               .fontSize(13)
               .onChange((val: string): void => {
@@ -309,7 +309,7 @@ struct MonitorTimeRangeDialog {
               .fontColor($r('app.color.app_text_secondary'))
               .alignSelf(ItemAlign.Start)
 
-            TextInput({ text: this.remarkText, placeholder: '请输入片段备注/说明' })
+            TextInput({ text: this.remarkText, placeholder: '请输入片段备注' })
               .height(40)
               .fontSize(13)
               .onChange((val: string): void => {
@@ -470,12 +470,12 @@ struct FaceDetailDialog {
       Divider().color($r('app.color.app_border'))
 
       Row({ space: 8 }) {
-        TextInput({ text: this.startFilter, placeholder: '开始 mm:ss' })
+        TextInput({ text: this.startFilter, placeholder: '开始时间 mm:ss' })
           .layoutWeight(1)
           .height(36)
           .fontSize(12)
           .onChange((value: string): void => { this.startFilter = value; })
-        TextInput({ text: this.endFilter, placeholder: '结束 mm:ss' })
+        TextInput({ text: this.endFilter, placeholder: '结束时间 mm:ss' })
           .layoutWeight(1)
           .height(36)
           .fontSize(12)
@@ -3155,7 +3155,7 @@ struct WorkspaceDetail {
                   .fontSize(14)
                   .fontColor($r('app.color.app_text_primary'))
                   .alignSelf(ItemAlign.Start)
-                TextArea({ placeholder: '请输入要分析提问的具体问题', text: this.questionText })
+                TextArea({ placeholder: '请输入问题', text: this.questionText })
                   .height(80)
                   .fontColor($r('app.color.app_text_primary'))
                   .backgroundColor($r('app.color.app_input_bg'))
