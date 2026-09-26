@@ -77,6 +77,55 @@ class UserGroupApiTest(unittest.TestCase):
     def setUp(self):
         self.super_headers = self.auth_headers("admin", "admin")
 
+    def test_personal_and_group_model_configs_permissions(self):
+        self.create_user("cfg_leader", "Config Leader")
+        self.create_user("cfg_member", "Config Member")
+        self.create_user("cfg_outsider", "Config Outsider")
+        leader = self.auth_headers("cfg_leader", "pass1234")
+        member = self.auth_headers("cfg_member", "pass1234")
+        outsider = self.auth_headers("cfg_outsider", "pass1234")
+        group = self.client.post("/api/groups/", headers=leader, json={"name": "Config Team"})
+        self.assertEqual(group.status_code, 201, group.get_json())
+        group_id = group.get_json()["data"]["id"]
+        self.assertEqual(self.client.post(f"/api/groups/{group_id}/invite", headers=leader,
+                                          json={"emp_id": "cfg_member"}).status_code, 201)
+        self.assertEqual(self.client.post(f"/api/groups/{group_id}/respond", headers=member,
+                                          json={"action": "accept"}).status_code, 200)
+        values = {"name": "Vision", "api_key": "secret-value", "base_url": "https://example.com/v1",
+                  "model": "vision-model"}
+        personal = self.client.post("/api/model-configs", headers=member,
+                                    json={**values, "scope": "personal"})
+        shared = self.client.post("/api/model-configs", headers=leader,
+                                  json={**values, "scope": "group", "group_id": group_id})
+        self.assertEqual(personal.status_code, 201, personal.get_json())
+        self.assertEqual(shared.status_code, 201, shared.get_json())
+        personal_id = personal.get_json()["data"]["id"]
+        shared_id = shared.get_json()["data"]["id"]
+        listed = self.client.get(f"/api/model-configs?group_id={group_id}", headers=member)
+        self.assertEqual({row["id"] for row in listed.get_json()["data"]}, {personal_id, shared_id})
+        self.assertNotIn("secret-value", listed.get_data(as_text=True))
+        self.assertFalse(next(row for row in listed.get_json()["data"] if row["id"] == shared_id)["can_edit"])
+        self.assertEqual(self.client.get("/api/model-configs", headers=outsider).get_json()["data"], [])
+        workspace = self.client.post(f"/api/workspaces/{group_id}", headers=leader,
+                                     json={"name": "Config Workspace"})
+        self.assertEqual(workspace.status_code, 201, workspace.get_json())
+        workspace_id = workspace.get_json()["data"]["id"]
+        workspace_configs = self.client.get(f"/api/workspaces/{workspace_id}/model-configs", headers=member)
+        self.assertEqual({row["id"] for row in workspace_configs.get_json()["data"]},
+                         {personal_id, shared_id})
+        self.assertEqual(self.client.post(f"/api/workspaces/{workspace_id}/qa", headers=leader,
+                                          json={"question": "test", "model_config_id": personal_id,
+                                                "segment_ids": []}).status_code, 403)
+        self.assertEqual(self.client.put(f"/api/model-configs/{shared_id}", headers=member,
+                                         json={"name": "Changed"}).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/model-configs/{personal_id}", headers=leader).status_code, 403)
+        self.assertEqual(self.client.post("/api/model-configs", headers=member,
+                                          json={**values, "scope": "group", "group_id": group_id}).status_code, 403)
+        self.assertEqual(self.client.put(f"/api/model-configs/{shared_id}", headers=leader,
+                                         json={"name": "Updated"}).status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/model-configs/{personal_id}", headers=member).status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/model-configs/{shared_id}", headers=leader).status_code, 200)
+
     def test_admin_user_search_create_and_role_update(self):
         self.create_user("u_search", "Search Target")
 

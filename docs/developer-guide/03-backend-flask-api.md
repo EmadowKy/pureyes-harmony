@@ -134,6 +134,18 @@
 
 ## 7. AI 多模态视觉问答 API
 
+### 7.0 模型配置 API
+
+| 方法 | 路径 | 用途 |
+| :--- | :--- | :--- |
+| `GET` | `/api/model-configs[?group_id=...]` | 本人的个人配置及已加入小组的共享配置；指定小组时限制共享列表 |
+| `POST` | `/api/model-configs` | 新建配置，提交 `scope`、`name`、`api_key`、`base_url`、`model`；小组配置另传 `group_id` |
+| `PUT` | `/api/model-configs/:config_id` | 修改名称、地址、模型或密钥；密钥可省略以保持原值，范围与归属不可修改 |
+| `DELETE` | `/api/model-configs/:config_id` | 删除配置 |
+| `GET` | `/api/workspaces/:id/model-configs` | 可在当前工作区问答中选择的个人及小组配置 |
+
+读接口只返回 `api_key_configured`，绝不返回密钥。个人配置仅本人可修改；小组配置仅该组创建者可修改，已接受邀请的组员可查看和使用。提交轮次时重新校验配置归属与工作区小组；任务在内存中固定该轮密钥、地址和模型，结束即清理，数据库轮次只保存配置名称标签。
+
 ### 7.1 创建调查与提交追问
 
 `POST /api/workspaces/:workspace_id/qa` 创建一轮任务：
@@ -141,11 +153,12 @@
 ```json
 {
   "segment_ids": [10, 11],
-  "question": "视频中穿红衣服拿黑包的人何时出现？"
+  "question": "视频中穿红衣服拿黑包的人何时出现？",
+  "model_config_id": 5
 }
 ```
 
-响应 `data` 包含 `task_id`、`conversation_id`、`turn_index`。继续同一调查时，传 `{"conversation_id":"已有会话 ID","question":"后来去了哪里？"}`；服务端始终沿用首轮选定的片段范围，忽略追问中额外的片段选择。问题不能为空、最长 4000 字；首轮需选择 1–20 个当前工作区片段。片段正在预处理时返回冲突；同一调查只能同时运行一轮，重复提交返回 HTTP 409。不同组员可在上一轮结束后追问，每轮使用提交者自己的大模型配置。
+响应 `data` 包含 `task_id`、`conversation_id`、`turn_index`。继续同一调查时，传 `{"conversation_id":"已有会话 ID","question":"后来去了哪里？","model_config_id":5}`；服务端始终沿用首轮选定的片段范围，忽略追问中额外的片段选择。问题不能为空、最长 4000 字；首轮需选择 1–20 个当前工作区片段。片段正在预处理时返回冲突；同一调查只能同时运行一轮，重复提交返回 HTTP 409。不同组员可在上一轮结束后追问，每轮必须选择本人个人配置或当前小组共享配置。
 
 ### 7.2 查询与控制调查
 

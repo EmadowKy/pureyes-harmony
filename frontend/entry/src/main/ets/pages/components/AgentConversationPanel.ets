@@ -1,5 +1,10 @@
 import { HttpUtil } from '../../utils/http'
 import { MarkdownAnswer } from './MarkdownAnswer'
+import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
+
+class ConfigSelectItem {
+  value: string = '';
+}
 
 class AgentSegmentChoice {
   id: number = 0;
@@ -21,6 +26,7 @@ class AgentConversationItem {
 class AgentTurnItem {
   id: string = '';
   creatorId: string = '';
+  modelConfigLabel: string = '';
   question: string = '';
   answer: string = '';
   status: string = 'processing';
@@ -52,6 +58,7 @@ class AgentToolEvidence {
 
 class AgentTurnPayload {
   question: string = '';
+  model_config_id: number = 0;
   conversation_id: string = '';
   segment_ids: Array<number> = [];
 }
@@ -65,6 +72,8 @@ export struct AgentConversationPanel {
     (_segmentId: number, _timeStr: string): void => {};
 
   @State conversations: Array<AgentConversationItem> = [];
+  @State modelConfigs: Array<ModelConfigOption> = [];
+  @State selectedModelConfigId: number = 0;
   @State messages: Array<AgentTurnItem> = [];
   @State segments: Array<AgentSegmentChoice> = [];
   @State selectedConversationId: string = '';
@@ -104,7 +113,7 @@ export struct AgentConversationPanel {
 
   async refreshAll(): Promise<void> {
     this.isLoading = true;
-    await Promise.all([this.loadConversations(), this.loadSegments()]);
+    await Promise.all([this.loadConversations(), this.loadSegments(), this.loadModelConfigs()]);
     if (this.selectedConversationId.length > 0) {
       await this.openConversation(this.selectedConversationId, false);
     } else {
@@ -131,6 +140,16 @@ export struct AgentConversationPanel {
       mapped.push(conversation);
     }
     this.conversations = mapped;
+  }
+
+  async loadModelConfigs(): Promise<void> {
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/model-configs`);
+    if (res.code !== 0 || !res.data) return;
+    const raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+    this.modelConfigs = raw.map((item: Record<string, Object>): ModelConfigOption => parseModelConfig(item));
+    if (!this.modelConfigs.some((item: ModelConfigOption): boolean => item.id === this.selectedModelConfigId)) {
+      this.selectedModelConfigId = this.modelConfigs.length > 0 ? this.modelConfigs[0].id : 0;
+    }
   }
 
   async loadSegments(): Promise<void> {
@@ -195,6 +214,7 @@ export struct AgentConversationPanel {
       const turn = new AgentTurnItem();
       turn.id = (item['id'] as string) || '';
       turn.creatorId = (item['creator_id'] as string) || '';
+      turn.modelConfigLabel = (item['model_config_label'] as string) || '';
       turn.question = (item['question'] as string) || '';
       turn.answer = (item['answer'] as string) || '';
       turn.status = (item['status'] as string) || 'processing';
@@ -351,8 +371,13 @@ export struct AgentConversationPanel {
       this.liveProgress = '先选择至少一个视频片段，再开始调查。';
       return;
     }
+    if (!this.selectedModelConfigId) {
+      this.liveProgress = '请先到「我的 → 模型 API」创建配置，然后在这里选择。';
+      return;
+    }
     const payload = new AgentTurnPayload();
     payload.question = question;
+    payload.model_config_id = this.selectedModelConfigId;
     if (this.selectedConversationId.length > 0) {
       payload.conversation_id = this.selectedConversationId;
     } else {
@@ -385,6 +410,7 @@ export struct AgentConversationPanel {
         await this.openConversation(this.selectedConversationId, true);
       }
       if (!this.currentTaskId) this.liveProgress = errorMessage;
+      if (res.code === 6105) await this.loadModelConfigs();
       return;
     }
     const data = JSON.parse(res.data) as Record<string, Object>;
@@ -1003,6 +1029,11 @@ export struct AgentConversationPanel {
               Text(turn.creatorId ? `${turn.creatorId} · 提问` : '组员提问')
                 .fontSize(11)
                 .fontColor('#758580')
+              if (turn.modelConfigLabel) {
+                Text(turn.modelConfigLabel)
+                  .fontSize(10)
+                  .fontColor('#557568')
+              }
               Text(turn.question)
                 .fontSize(15)
                 .fontColor('#1F2B2E')
@@ -1139,12 +1170,38 @@ export struct AgentConversationPanel {
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
+        this.ModelSelector()
       }
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 10, bottom: 10 })
     .backgroundColor('#FFFFFF')
     .border({ width: { top: 1 }, color: '#DFE7E1' })
+  }
+
+  @Builder ModelSelector() {
+    Row({ space: 6 }) {
+      Text('模型').fontSize(11).fontColor('#708080')
+      Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
+        const option = new ConfigSelectItem();
+        option.value = `${item.scope === 'group' ? '小组' : '个人'} · ${item.name} (${item.model})`;
+        return option as SelectOption;
+      }))
+        .selected(Math.max(0, this.modelConfigs.findIndex((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)))
+        .value(this.modelConfigs.find((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)?.name || '选择配置')
+        .font({ size: 11 })
+        .backgroundColor('#EEF5F1')
+        .onSelect((index: number): void => {
+          if (this.modelConfigs[index]) this.selectedModelConfigId = this.modelConfigs[index].id;
+        })
+        .width(190)
+      Button('刷新').fontSize(11).backgroundColor(Color.Transparent).fontColor('#178272')
+        .onClick((): void => { this.loadModelConfigs(); })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.End)
   }
 
   @Builder NewInvestigation() {
@@ -1207,6 +1264,7 @@ export struct AgentConversationPanel {
         .borderRadius(12)
         .padding(10)
         .onChange((value: string): void => { this.composerText = value; })
+      this.ModelSelector()
       Row({ space: 10 }) {
         Button('返回')
           .layoutWeight(1)

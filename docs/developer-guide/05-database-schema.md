@@ -24,6 +24,8 @@ erDiagram
     WorkspaceVideoSegment ||--o{ QAVideoSelection : "被选择"
     User ||--o{ QARecord : "提问"
     User ||--o{ AgentConversation : "发起"
+    User ||--o{ LLMConfig : "拥有个人配置"
+    Group ||--o{ LLMConfig : "共享配置"
     BlacklistToken
 
     User {
@@ -99,12 +101,16 @@ erDiagram
 | `role` | `VARCHAR(20)` | DEFAULT 'user'| 角色 (`super_admin` / `admin` / `user`) |
 | `is_active` | `BOOLEAN` | DEFAULT TRUE | 账号启停用状态标识 |
 | `auth_version` | `INTEGER` | DEFAULT 0 | 登出、改密、改角色或停用时递增，使旧 JWT 立即失效 |
-| `llm_api_key` | `TEXT` | NULLABLE | Fernet 加密后的个人大模型 API Key；接口永不回传明文 |
+| `llm_api_key` | `TEXT` | NULLABLE | 旧版单配置字段；启动时迁移进 `llm_configs` 后清空 |
 | `created_at` | `DATETIME` | DEFAULT UTC | 创建时间 |
 
 ### 2.2 小组表 `groups` & 成员表 `group_members`
 - `groups`: 包含 `id`, `name`, `creator_id` (外键关联 `users.emp_id`), `created_at`。
 - `group_members`: 联合主键 `(group_id, emp_id)`，包含 `status` (`pending`/`accepted`) 与 `joined_at`。
+
+### 2.2.1 模型配置表 `llm_configs`
+
+`id` 为主键；`name` 是配置名称，`scope` 为 `personal` 或 `group`；个人配置通过 `owner_id` 归属用户，小组配置通过 `group_id` 归属小组。`api_key` 使用 Fernet 加密类型存储，`base_url`、`model` 分别保存接口地址和模型名称。密钥不在配置列表、工作区轮次或工具记录中返回。`qa_records.model_config_label` 保存提交时的展示标签，旧轮次可为空。
 
 ### 2.3 工作区表 `workspaces` & 视频切片表 `workspace_video_segments`
 - `workspace_video_segments` 关键字段：

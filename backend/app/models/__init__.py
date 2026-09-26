@@ -6,6 +6,7 @@ from .workspace import Workspace, WorkspaceVideoSegment
 from .qa_record import QARecord, QAVideoSelection
 from .face import WorkspaceFaceGroup, WorkspaceFaceRecord
 from .agent_conversation import AgentConversation
+from .llm_config import LLMConfig
 
 __all__ = [
     "User",
@@ -20,4 +21,5 @@ __all__ = [
     "WorkspaceFaceGroup",
     "WorkspaceFaceRecord",
     "AgentConversation",
+    "LLMConfig",
 ]

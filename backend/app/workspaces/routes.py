@@ -731,10 +731,7 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
             if not record:
                 raise RuntimeError("QA 记录未找到。")
 
-            from app.models.user import User
-            creator = User.query.filter_by(emp_id=record.creator_id).first()
-            if not creator or not creator.llm_api_key or not creator.llm_base_url:
-                raise RuntimeError("未配置大模型 API 参数，请先到‘我的’页面配置 API KEY 和 BASE URL。")
+            settings = task_info["llm_settings"]
 
             # 配置 api_config 供后端的 Qwen_VL 调用
             import sys
@@ -743,9 +740,9 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
             sys.modules['utils'] = mva_utils
             
             api_config = mva_utils.api_config
-            api_config.api_key = creator.llm_api_key
-            api_config.base_url = creator.llm_base_url
-            api_config.model = creator.llm_model
+            api_config.api_key = settings["api_key"]
+            api_config.base_url = settings["base_url"]
+            api_config.model = settings["model"]
             api_config.task_id = task_id
             api_config.is_final_answer = True
             api_config.should_cancel = is_cancelled
@@ -870,8 +867,10 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
             running_tasks[task_id]['finished_at'] = time.time()
         finally:
             heartbeat_stop.set()
+            task_info.pop("llm_settings", None)
             if 'api_config' in locals():
                 api_config.should_cancel = None
+                api_config.api_key = None
 
 
 def _get_video_duration(video_path):
@@ -948,6 +947,15 @@ def submit_qa(workspace_id):
     question = data.get("question")
     segment_ids = data.get("segment_ids", [])
     conversation_id = data.get("conversation_id")
+    config_id = data.get("model_config_id")
+
+    from app.models.llm_config import LLMConfig
+    from app.model_configs.routes import available_config
+    config = db.session.get(LLMConfig, config_id) if type(config_id) is int else None
+    if not config or not available_config(config, emp_id, workspace.group_id):
+        return fail(message="请选择当前可用的模型配置", code=6105, http_status=403)
+    # Freeze credentials for this turn before another member can edit/delete the entry.
+    llm_settings = {"api_key": config.api_key, "base_url": config.base_url, "model": config.model}
 
     if not isinstance(question, str) or not question.strip():
         return fail(message="question is required", code=5004, http_status=400)
@@ -1010,6 +1018,7 @@ def submit_qa(workspace_id):
         heartbeat_at=datetime.utcnow(),
         conversation_id=conversation.id,
         turn_index=turn_index,
+        model_config_label=("个人 · " if config.scope == "personal" else "小组 · ") + config.name,
     )
     db.session.add(record)
     
@@ -1060,6 +1069,7 @@ def submit_qa(workspace_id):
         "video_paths": video_paths,
         "conversation_id": conversation.id,
         "turn_index": turn_index,
+        "llm_settings": llm_settings,
     }
     
     # Start thread
@@ -1111,6 +1121,22 @@ def list_agent_conversations(workspace_id):
     conversations = (AgentConversation.query.filter_by(workspace_id=workspace_id)
                      .order_by(AgentConversation.updated_at.desc()).all())
     return success(data=[_serialize_conversation(item) for item in conversations])
+
+
+@workspaces_bp.get("/<int:workspace_id>/model-configs")
+@jwt_required()
+def workspace_model_configs(workspace_id):
+    workspace, error = _require_workspace_member(workspace_id)
+    if error:
+        return error
+    from app.models.group import Group
+    from app.models.llm_config import LLMConfig
+    emp_id = get_jwt_identity()
+    group = db.session.get(Group, workspace.group_id)
+    personal = LLMConfig.query.filter_by(scope="personal", owner_id=emp_id).all()
+    shared = LLMConfig.query.filter_by(scope="group", group_id=workspace.group_id).all()
+    return success(data=[config.public(emp_id, group.creator_id if group else None)
+                         for config in personal + shared])
 
 
 @workspaces_bp.get("/agent/conversations/<conversation_id>/messages")

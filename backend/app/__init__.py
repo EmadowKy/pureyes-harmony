@@ -69,6 +69,8 @@ def _ensure_agent_conversation_schema():
             additions.append("ALTER TABLE qa_records ADD COLUMN turn_index INTEGER NOT NULL DEFAULT 1")
         if "heartbeat_at" not in columns:
             additions.append("ALTER TABLE qa_records ADD COLUMN heartbeat_at DATETIME")
+        if "model_config_label" not in columns:
+            additions.append("ALTER TABLE qa_records ADD COLUMN model_config_label VARCHAR(120)")
         if additions:
             with db.engine.begin() as conn:
                 for statement in additions:
@@ -132,6 +134,33 @@ def _encrypt_legacy_api_keys():
         db.session.rollback()
         print(f"[DB] API key encryption migration skipped: {exc}")
 
+
+def _migrate_legacy_llm_configs():
+    """Preserve each existing user's model settings as a named personal choice."""
+    try:
+        from app.models.user import User
+        from app.models.llm_config import LLMConfig
+        users = User.query.filter(User.llm_api_key.isnot(None), User.llm_base_url.isnot(None)).all()
+        changed = False
+        for user in users:
+            if not user.llm_api_key or not user.llm_base_url:
+                continue
+            exists = LLMConfig.query.filter_by(scope="personal", owner_id=user.emp_id).first()
+            if not exists:
+                db.session.add(LLMConfig(scope="personal", owner_id=user.emp_id,
+                                         name="原有配置", api_key=user.llm_api_key,
+                                         base_url=user.llm_base_url,
+                                         model=user.llm_model or "qwen3.7-plus"))
+            user.llm_api_key = None
+            user.llm_base_url = None
+            user.llm_model = None
+            changed = True
+        if changed:
+            db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[DB] model config migration skipped: {exc}")
+
 def create_app():
     app = Flask(__name__)
 
@@ -168,6 +197,9 @@ def create_app():
     from app.workspaces import workspaces_bp
     app.register_blueprint(workspaces_bp, url_prefix="/api/workspaces")
 
+    from app.model_configs import model_configs_bp
+    app.register_blueprint(model_configs_bp, url_prefix="/api/model-configs")
+
     from app.video_stream_routes import video_stream_bp
     app.register_blueprint(video_stream_bp)
 
@@ -184,6 +216,7 @@ def create_app():
         _ensure_agent_conversation_schema()
         _ensure_face_schema()
         _encrypt_legacy_api_keys()
+        _migrate_legacy_llm_configs()
         from app.models.blacklist import TokenBlacklist
         TokenBlacklist.cleanup_expired(max_age_hours=25)
 
