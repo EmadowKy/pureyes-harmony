@@ -58,6 +58,7 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     // Ability has brought to foreground
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    AppStorage.setOrCreate('session_check_flag', Date.now());
   }
 
   onBackground(): void {

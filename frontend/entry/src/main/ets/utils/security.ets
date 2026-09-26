@@ -83,9 +83,11 @@ export class SecurityUtil {
   static async initSecureState(): Promise<void> {
     try {
       const secureToken = await SecurityUtil.getSecureProp('access_token');
-      if (secureToken) {
-        AppStorage.setOrCreate('access_token', secureToken);
-      }
+      AppStorage.setOrCreate('access_token', secureToken || '');
+      const refreshToken = await SecurityUtil.getSecureProp('refresh_token');
+      AppStorage.setOrCreate('refresh_token', refreshToken || '');
+      const sessionServer = await SecurityUtil.getSecureProp('session_server_url');
+      AppStorage.setOrCreate('session_server_url', sessionServer || '');
 
       const secureServerUrl = await SecurityUtil.getSecureProp('custom_server_url');
       if (secureServerUrl) {
@@ -99,5 +101,15 @@ export class SecurityUtil {
     } catch (e) {
       console.warn('[SecurityUtil] initSecureState fallback:', JSON.stringify(e));
     }
+  }
+
+  static async clearSession(): Promise<void> {
+    AppStorage.setOrCreate('access_token', '');
+    AppStorage.setOrCreate('refresh_token', '');
+    AppStorage.setOrCreate('session_server_url', '');
+    AppStorage.setOrCreate('currentGroupId', 0);
+    await SecurityUtil.removeSecureProp('access_token');
+    await SecurityUtil.removeSecureProp('refresh_token');
+    await SecurityUtil.removeSecureProp('session_server_url');
   }
 }

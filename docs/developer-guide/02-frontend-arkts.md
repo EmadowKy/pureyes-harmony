@@ -63,24 +63,13 @@ struct Index {
 
 ---
 
-## 3. HTTP 请求封装与 Token 拦截器 (http.ets)
+## 3. HTTP 请求与启动会话校验
 
 工作区详情使用【片段 | 人脸 | 问答】三个子页。【问答】挂载 `AgentConversationPanel`：先加载持久化调查线与可选片段，再按会话读取各轮消息；运行期间轮询状态和会话记录并显示阶段、耗时及工具调用。提交控件在任何组员的会话运行中隐藏，仅提供【停止本轮】；结束后显示追问输入。失败的最新轮可重新提交同一问题。`MarkdownAnswer` 使用打包的 `answer_markdown.html` 渲染 Markdown，并将视频时间标记交回工作区播放器定位。跨用户状态以服务端会话为准，切换页面或重新进入后重新同步。
 
-前端基于 `@ohos.net.http` 实现了统一的异步 HTTP 封装：
+`http.ets` 根据官方或自定义服务器设置构造请求，返回业务码及 HTTP 状态码，并区分网络异常。普通受保护接口使用 `AppStorage` 中的访问令牌；登录请求不发送旧令牌，续期请求明确使用刷新令牌。
 
-- **Base URL 管理**：导出 `BASE_HOST` 与 `BASE_URL`，方便在模拟器 (`10.0.2.2:6006`)、真机及公网环境之间灵活切换。
-- **请求头拦截器 (Interceptor)**：自动注入 Authorization 标头：
-  ```typescript
-  let headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-  let token = AppStorage.Get<string>('user_token');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  ```
-- **401 Unauthorized 错误拦截**：当服务器返回 401（Token 无效、过期或账号被禁用）时，自动清除本地 Token 并重定向拉起 `Login.ets` 页面。
+`EntryAbility` 先从 Asset Store Kit 恢复访问令牌、刷新令牌和登录时的服务器地址，再加载 `Index.ets`。首页在渲染页签前调用 `/users/me` 验证服务端会话；访问令牌过期（401）时尝试 `/auth/refresh` 并再次验证。令牌无效、账号停用或服务器地址变化时清理本地凭据并打开登录页；服务器不可达时保留凭据，只显示重试与切换服务器入口。应用回到前台时重新验证。旧版本没有服务器绑定记录的会话需要重新登录一次。
 
 ---
 

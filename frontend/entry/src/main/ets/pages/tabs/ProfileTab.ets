@@ -736,9 +736,7 @@ export struct ProfileTab {
 
   async handleLogout(): Promise<void> {
     await HttpUtil.post('/auth/logout');
-    AppStorage.setOrCreate('access_token', '');
-    AppStorage.setOrCreate('currentGroupId', 0);
-    await SecurityUtil.removeSecureProp('access_token');
+    await SecurityUtil.clearSession();
     try {
       this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' });
     } catch (error) {

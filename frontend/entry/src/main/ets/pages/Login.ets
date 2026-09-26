@@ -1,4 +1,4 @@
-import { HttpUtil, updateBaseHost, OFFICIAL_SERVER_URL } from '../utils/http'
+import { HttpUtil, updateBaseHost, OFFICIAL_SERVER_URL, getBaseUrl } from '../utils/http'
 import { SecurityUtil } from '../utils/security'
 
 @Entry
@@ -22,6 +22,8 @@ struct Login {
 
   async aboutToAppear(): Promise<void> {
     await SecurityUtil.initSecureState();
+    this.errorMsg = AppStorage.get<string>('login_notice') || '';
+    AppStorage.setOrCreate('login_notice', '');
     this.serverUrl = this.isCustomServer && this.customServerUrlStorage.trim().length > 0 ?
       this.customServerUrlStorage : OFFICIAL_SERVER_URL;
     this.applyCurrentServerConfig();
@@ -40,6 +42,11 @@ struct Login {
     const res = await HttpUtil.testServerUrl(targetUrl);
     
     this.testingServer = false;
+    if (targetUrl !== (this.isCustomServer ? this.serverUrl : OFFICIAL_SERVER_URL)) {
+      this.isServerOk = false;
+      this.testResultText = '服务器地址已变更，请重新测试';
+      return;
+    }
     this.testResultText = res.message;
     this.isTestSuccess = res.success;
     this.isServerOk = res.success;
@@ -96,8 +103,21 @@ struct Login {
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       const token = dataObj['access_token'] as string;
+      const refreshToken = dataObj['refresh_token'] as string;
+      if (!token || !refreshToken) {
+        this.errorMsg = '服务器未返回完整的登录凭据';
+        return;
+      }
       AppStorage.setOrCreate('access_token', token);
-      await SecurityUtil.setSecureProp('access_token', token);
+      AppStorage.setOrCreate('refresh_token', refreshToken);
+      const sessionServer = getBaseUrl().replace(/\/+$/, '');
+      AppStorage.setOrCreate('session_server_url', sessionServer);
+      const accessSaved = await SecurityUtil.setSecureProp('access_token', token);
+      const refreshSaved = await SecurityUtil.setSecureProp('refresh_token', refreshToken);
+      const serverSaved = await SecurityUtil.setSecureProp('session_server_url', sessionServer);
+      if (!accessSaved || !refreshSaved || !serverSaved) {
+        this.errorMsg = '安全存储不可用，下次启动需重新登录';
+      }
       try {
         this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' });
       } catch (error) {
@@ -205,6 +225,8 @@ struct Login {
                   .onChange((val: string): void => {
                     this.serverUrl = val;
                     this.customServerUrlStorage = val;
+                    this.isServerOk = false;
+                    this.isTestSuccess = false;
                   })
 
                 Button() {
@@ -345,6 +367,8 @@ struct Login {
           .border({ width: { top: 1 }, color: $r('app.color.app_border') })
           .onClick((): void => {
             this.isCustomServer = !this.isCustomServer;
+            this.isServerOk = false;
+            this.isTestSuccess = false;
             if (!this.isCustomServer) {
               this.applyCurrentServerConfig();
             } else {
