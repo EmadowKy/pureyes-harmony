@@ -16,7 +16,7 @@ def init(model_path: str="Qwen3-VL-2B-Instruct", device_id: int=None):
     return None, None
 
 
-def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tokens=2048):
+def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tokens=2048, tools=None):
     api_key = getattr(api_config, 'api_key', None)
     base_url = getattr(api_config, 'base_url', None)
     model_name = getattr(api_config, 'model', None)
@@ -29,6 +29,21 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", [])
+
+        if role == "tool":
+            openai_messages.append({
+                "role": "tool",
+                "tool_call_id": msg["tool_call_id"],
+                "content": str(content),
+            })
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            openai_messages.append({
+                "role": "assistant",
+                "content": content or None,
+                "tool_calls": msg["tool_calls"],
+            })
+            continue
         
         openai_content = []
         if isinstance(content, str):
@@ -108,9 +123,16 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
         "max_tokens": max_tokens,
         "stream": True
     }
+    if tools is not None:
+        payload["tools"] = tools
+        payload["tool_choice"] = "none" if getattr(api_config, 'force_answer', False) else "auto"
+        payload["parallel_tool_calls"] = True
     
     print(f"[MVA Cloud API] Sending request to {url} with model {req_model}")
     try:
+        should_cancel = getattr(api_config, 'should_cancel', None)
+        if callable(should_cancel) and should_cancel():
+            raise RuntimeError("调查已停止")
         session = requests.Session()
         session.trust_env = False
         response = session.post(
@@ -124,11 +146,15 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
         if response.status_code == 200:
             import json
             collected_chunks = []
+            streamed_tool_calls = {}
             
             # Retrieve task_id from thread local to update running_tasks registry
             task_id = getattr(api_config, 'task_id', None)
             
             for line in response.iter_lines():
+                if callable(should_cancel) and should_cancel():
+                    response.close()
+                    raise RuntimeError("调查已停止")
                 if line:
                     decoded_line = line.decode('utf-8')
                     if decoded_line.startswith("data:"):
@@ -145,16 +171,41 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                             if not choices:
                                 continue
                             delta = (choices[0] or {}).get("delta") or {}
+                            if tools is not None:
+                                complete_calls = ((choices[0] or {}).get("message") or {}).get("tool_calls") or []
+                                for complete_index, complete_call in enumerate(complete_calls):
+                                    if complete_call.get("function", {}).get("name"):
+                                        streamed_tool_calls[complete_index] = complete_call
+                                for call_chunk in delta.get("tool_calls") or []:
+                                    index = call_chunk.get("index", 0)
+                                    call = streamed_tool_calls.setdefault(index, {
+                                        "id": "", "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    })
+                                    if call_chunk.get("id"):
+                                        call["id"] = call_chunk["id"]
+                                    function = call_chunk.get("function") or {}
+                                    if function.get("name"):
+                                        call["function"]["name"] += function["name"]
+                                    if function.get("arguments"):
+                                        call["function"]["arguments"] += function["arguments"]
                             chunk_text = delta.get('content')
                             if chunk_text is None:
                                 chunk_text = ''
                             collected_chunks.append(chunk_text)
                             partial_text = "".join(collected_chunks)
+
+                            if tools is not None:
+                                if task_id and partial_text:
+                                    from app.workspaces.routes import running_tasks
+                                    if task_id in running_tasks and not (callable(should_cancel) and should_cancel()):
+                                        running_tasks[task_id]['answer'] = partial_text
+                                continue
                             
                             # Update running tasks dict dynamically for streaming/typewriter feedback
                             if task_id:
                                 from app.workspaces.routes import running_tasks
-                                if task_id in running_tasks:
+                                if task_id in running_tasks and not (callable(should_cancel) and should_cancel()):
                                     import re
                                     # 1. 最终回答流：若包含 final_answer，将其提取并更新至主答案字段
                                     match_ans = re.search(r'"final_answer"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', partial_text)
@@ -183,6 +234,11 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                             print(f"[MVA Stream Parse Error] {parse_err}")
                             
             content = "".join(collected_chunks)
+            if tools is not None:
+                return {
+                    "content": content,
+                    "tool_calls": [streamed_tool_calls[index] for index in sorted(streamed_tool_calls)],
+                }
             print(f"[MVA Cloud API] Answer (stream complete): {content}")
             return content
         else:

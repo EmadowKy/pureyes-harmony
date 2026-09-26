@@ -11,12 +11,16 @@ frontend/
 ├── AppScope/                      # 应用全局配置 (app.json5, 图标资源)
 ├── entry/src/main/
 │   ├── module.json5               # 模块配置 (权限: INTERNET, 页面路由配置)
+│   ├── resources/rawfile/answer_markdown.html # Markdown 排版与链接处理
 │   └── ets/
 │       ├── entryability/          # UIAbility 生命周期入口
 │       ├── pages/                 # 主页面集合
 │       │   ├── Index.ets          # 主框架页 (Tabs 容器与底部导航栏)
 │       │   ├── Login.ets          # 登录页 (凭据记忆、Token 校验)
-│       │   ├── WorkspaceDetail.ets# 工作区详情页 (切片设置、MVA 问答面板)
+│       │   ├── WorkspaceDetail.ets# 工作区详情页（片段、人脸、问答）
+│       │   ├── components/        # 工作区详情的复用组件
+│       │   │   ├── AgentConversationPanel.ets # 调查线、追问、进度与工具执行记录
+│       │   │   └── MarkdownAnswer.ets  # ArkWeb 中的回答渲染与视频时间跳转
 │       │   └── tabs/              # 四大底部 Tab 视图组件
 │       │       ├── MonitorTab.ets # 监控设备卡片网格
 │       │       ├── WorkspaceTab.ets# 工作区管理列表
@@ -59,22 +63,13 @@ struct Index {
 
 ---
 
-## 3. HTTP 请求封装与 Token 拦截器 (http.ets)
+## 3. HTTP 请求与启动会话校验
 
-前端基于 `@ohos.net.http` 实现了统一的异步 HTTP 封装：
+工作区详情使用【片段 | 人脸 | 问答】三个子页。【问答】挂载 `AgentConversationPanel`：先加载持久化调查线与可选片段，再按会话读取各轮消息；运行期间轮询状态和会话记录并显示阶段、耗时及工具调用。提交控件在任何组员的会话运行中隐藏，仅提供【停止本轮】；结束后显示追问输入。失败的最新轮可重新提交同一问题。`MarkdownAnswer` 使用打包的 `answer_markdown.html` 渲染 Markdown，并将视频时间标记交回工作区播放器定位。跨用户状态以服务端会话为准，切换页面或重新进入后重新同步。
 
-- **Base URL 管理**：导出 `BASE_HOST` 与 `BASE_URL`，方便在模拟器 (`10.0.2.2:6006`)、真机及公网环境之间灵活切换。
-- **请求头拦截器 (Interceptor)**：自动注入 Authorization 标头：
-  ```typescript
-  let headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-  let token = AppStorage.Get<string>('user_token');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  ```
-- **401 Unauthorized 错误拦截**：当服务器返回 401（Token 无效、过期或账号被禁用）时，自动清除本地 Token 并重定向拉起 `Login.ets` 页面。
+`http.ets` 根据官方或自定义服务器设置构造请求，返回业务码及 HTTP 状态码，并区分网络异常。普通受保护接口使用 `AppStorage` 中的访问令牌；登录请求不发送旧令牌，续期请求明确使用刷新令牌。
+
+`EntryAbility` 先从 Asset Store Kit 恢复访问令牌、刷新令牌和登录时的服务器地址，再加载 `Index.ets`。首页在渲染页签前调用 `/users/me` 验证服务端会话；访问令牌过期（401）时尝试 `/auth/refresh` 并再次验证。令牌无效、账号停用或服务器地址变化时清理本地凭据并打开登录页；服务器不可达时保留凭据，只显示重试与切换服务器入口。应用回到前台时重新验证。旧版本没有服务器绑定记录的会话需要重新登录一次。
 
 ---
 
@@ -170,11 +165,19 @@ Image($r('app.media.business_monitor'))
 
 ---
 
-## 5. 鸿蒙星盾安全与隐私特性集成
+## 5. 鸿蒙原生安全与交互能力
 
-前端在构建通用业务的同时，深度集成了 HarmonyOS 官方主推的星盾安全与隐私特性：
+前端接入以下系统能力，实际效果需在目标设备上验证：
 
-1. **密码保管箱与自动填充** (`Login.ets`)：
-   使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框，打通鸿蒙密码保管箱加密存储与生物特征（指纹/人脸）解锁填充。
-2. **窗口隐私防窥防截屏/录屏** (`EntryAbility.ets`)：
-   配置 `ohos.permission.PRIVACY_WINDOW` 并调用 `win.setWindowPrivacyMode(true)`，阻断截屏录屏与后台卡片预览泄漏。
+1. **系统凭据填充** (`Login.ets`)：
+   使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框；凭据保存和解锁提示由系统及用户设置决定。
+2. **隐私窗口** (`EntryAbility.ets`)：
+   配置 `ohos.permission.PRIVACY_WINDOW` 并调用 `win.setWindowPrivacyMode(true)`，限制系统截屏与录屏；未接入注视感知。
+3. **端侧人脸比对** (`utils/harmonyFaces.ets`)：
+   后端配置为鸿蒙模式时，手机调用 Core Vision Kit 对服务器抓拍图进行分组比对。
+4. **分享与触感** (`components/AgentConversationPanel.ets`)：
+   完成的调查结论可由用户调用 Share Kit 分享；页面看到任务完成时调用 Sensor Service Kit 发出轻触感。
+5. **调查服务卡片** (`investigationform/`)：
+   Form Kit 的桌面卡片显示最近同步的调查状态和工具步骤数；点击后验证会话并定位到对应工作区。卡片不显示监控隐私内容，应用关闭后不会自行轮询服务端。
+
+实现边界见 [鸿蒙原生能力接入](06-harmonyos-native-features.md)。

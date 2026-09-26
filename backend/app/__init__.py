@@ -67,12 +67,46 @@ def _ensure_agent_conversation_schema():
             additions.append("ALTER TABLE qa_records ADD COLUMN conversation_id VARCHAR(64)")
         if "turn_index" not in columns:
             additions.append("ALTER TABLE qa_records ADD COLUMN turn_index INTEGER NOT NULL DEFAULT 1")
+        if "heartbeat_at" not in columns:
+            additions.append("ALTER TABLE qa_records ADD COLUMN heartbeat_at DATETIME")
+        if "model_config_label" not in columns:
+            additions.append("ALTER TABLE qa_records ADD COLUMN model_config_label VARCHAR(120)")
         if additions:
             with db.engine.begin() as conn:
                 for statement in additions:
                     conn.execute(text(statement))
     except Exception as exc:
         print(f"[DB] Agent conversation schema check skipped: {exc}")
+    from app.models.qa_record import QARecord
+    duplicates = (db.session.query(QARecord.conversation_id)
+                  .filter(QARecord.conversation_id.isnot(None), QARecord.status == "processing")
+                  .group_by(QARecord.conversation_id).having(db.func.count(QARecord.id) > 1).all())
+    for (conversation_id,) in duplicates:
+        active = (QARecord.query.filter_by(conversation_id=conversation_id, status="processing")
+                  .order_by(QARecord.created_at.desc(), QARecord.id.desc()).all())
+        for stale in active[1:]:
+            stale.status = "failed"
+            stale.answer = "同一调查线存在并发任务，本轮已中断，请继续追问。"
+    if duplicates:
+        db.session.commit()
+    next(index for index in QARecord.__table__.indexes
+         if index.name == "uq_qa_active_conversation").create(bind=db.engine, checkfirst=True)
+
+
+def _ensure_face_schema():
+    """Preserve existing face records while adding embedding-based classification."""
+    try:
+        from sqlalchemy import inspect, text
+
+        columns = {column["name"] for column in inspect(db.engine).get_columns("workspace_face_records")}
+        with db.engine.begin() as conn:
+            if "embedding_json" not in columns:
+                conn.execute(text("ALTER TABLE workspace_face_records ADD COLUMN embedding_json TEXT"))
+            if "classification_backend" not in columns:
+                conn.execute(text("ALTER TABLE workspace_face_records ADD COLUMN classification_backend VARCHAR(24) NOT NULL DEFAULT 'legacy'"))
+                conn.execute(text("UPDATE workspace_face_records SET classification_backend = 'server' WHERE embedding_json IS NOT NULL"))
+    except Exception as exc:
+        print(f"[DB] face schema check skipped: {exc}")
 
 
 def _encrypt_legacy_api_keys():
@@ -99,6 +133,33 @@ def _encrypt_legacy_api_keys():
     except Exception as exc:
         db.session.rollback()
         print(f"[DB] API key encryption migration skipped: {exc}")
+
+
+def _migrate_legacy_llm_configs():
+    """Preserve each existing user's model settings as a named personal choice."""
+    try:
+        from app.models.user import User
+        from app.models.llm_config import LLMConfig
+        users = User.query.filter(User.llm_api_key.isnot(None), User.llm_base_url.isnot(None)).all()
+        changed = False
+        for user in users:
+            if not user.llm_api_key or not user.llm_base_url:
+                continue
+            exists = LLMConfig.query.filter_by(scope="personal", owner_id=user.emp_id).first()
+            if not exists:
+                db.session.add(LLMConfig(scope="personal", owner_id=user.emp_id,
+                                         name="原有配置", api_key=user.llm_api_key,
+                                         base_url=user.llm_base_url,
+                                         model=user.llm_model or "qwen3.7-plus"))
+            user.llm_api_key = None
+            user.llm_base_url = None
+            user.llm_model = None
+            changed = True
+        if changed:
+            db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[DB] model config migration skipped: {exc}")
 
 def create_app():
     app = Flask(__name__)
@@ -136,6 +197,9 @@ def create_app():
     from app.workspaces import workspaces_bp
     app.register_blueprint(workspaces_bp, url_prefix="/api/workspaces")
 
+    from app.model_configs import model_configs_bp
+    app.register_blueprint(model_configs_bp, url_prefix="/api/model-configs")
+
     from app.video_stream_routes import video_stream_bp
     app.register_blueprint(video_stream_bp)
 
@@ -150,7 +214,9 @@ def create_app():
         _ensure_user_schema()
         _ensure_qa_selection_schema()
         _ensure_agent_conversation_schema()
+        _ensure_face_schema()
         _encrypt_legacy_api_keys()
+        _migrate_legacy_llm_configs()
         from app.models.blacklist import TokenBlacklist
         TokenBlacklist.cleanup_expired(max_age_hours=25)
 

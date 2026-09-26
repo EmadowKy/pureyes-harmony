@@ -19,8 +19,8 @@ graph TD
     B --> B3[03-账号认证与安全]
     B --> B4[04-小组协作通讯录]
     B --> B5[05-实时视频监控]
-    B --> B6[06-工作区与视频切片]
-    B --> B7[07-多模态 AI 问答]
+    B --> B6[06-工作区与视频片段]
+    B --> B7[07-调查 Agent 与追问]
     B --> B8[08-管理员控制台]
     B --> B9[09-个人中心与设置]
 
@@ -42,8 +42,8 @@ graph TD
 - [03-账号认证与安全设置](./user-guide/03-authentication.md)
 - [04-小组协作与团队通讯录](./user-guide/04-group-collaboration.md)
 - [05-实时视频监控与历史回放](./user-guide/05-live-monitoring.md)
-- [06-工作区管理与视频切片](./user-guide/06-workspace-management.md)
-- [07-智能多模态视觉问答](./user-guide/07-ai-multimodal-qa.md)
+- [06-工作区管理与视频片段](./user-guide/06-workspace-management.md)
+- [07-工作区调查 Agent 与连续追问](./user-guide/07-ai-multimodal-qa.md)
 - [08-管理员控制台与用户管理](./user-guide/08-admin-console.md)
 - [09-个人中心与大模型 API 设置](./user-guide/09-profile-and-settings.md)
 
@@ -52,7 +52,7 @@ graph TD
 - [01-系统整体架构设计与数据流](./developer-guide/01-architecture-design.md)
 - [02-鸿蒙前端 ArkTS 架构与组件设计](./developer-guide/02-frontend-arkts.md)
 - [03-后端 RESTful API 接口规范详解](./developer-guide/03-backend-flask-api.md)
-- [04-AI 多模态视觉分析引擎原理](./developer-guide/04-ai-mva-engine.md)
+- [04-AI 多模态视觉分析与调查 Agent](./developer-guide/04-ai-mva-engine.md)
 - [05-数据库设计与实体关系模型](./developer-guide/05-database-schema.md)
 - [06-鸿蒙原生特色特性接入与技术架构](./developer-guide/06-harmonyos-native-features.md)
 

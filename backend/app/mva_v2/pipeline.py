@@ -294,6 +294,10 @@ class JITVideoPipeline:
         self.text_recognizer = OnnxTextRecognizer()
         self._unavailable_modalities = set()
         self.frame_queue = asyncio.Queue(maxsize=50)
+        # Detection/ReID/OCR still inspect every configured sample. CLIP is
+        # substantially heavier, so keep reusable semantic keyframes instead
+        # of recomputing nearly identical embeddings every second.
+        self.clip_interval_seconds = max(1.0, float(os.environ.get("CLIP_SAMPLE_INTERVAL_SECONDS", "5")))
 
     def _warn_unavailable_once(self, modality: str, exc: Exception) -> None:
         if modality not in self._unavailable_modalities:
@@ -374,6 +378,12 @@ class JITVideoPipeline:
         last_callback_time = 0.0
         all_records = []
         processed_sample_count = 0
+        last_scene_clip_at = float("-inf")
+        last_object_clip_at: Dict[Any, float] = {}
+        clip_interval_seconds = max(1.0, float(getattr(self, "clip_interval_seconds", 5.0)))
+        begin_semantic_job = getattr(self.semantic_embedder, "begin_job", None)
+        if callable(begin_semantic_job):
+            begin_semantic_job()
 
         try:
             while cap.isOpened() and frame_idx <= end_frame_idx:
@@ -401,7 +411,10 @@ class JITVideoPipeline:
                     # 每一张用户选择的采样帧都进入检测；不能以运动检测作为
                     # “是否有信息”的代理，否则静止的人、车辆、招牌都会被漏掉。
                     timestamp = frame_idx / fps
-                    frame_clip_vector = self._embed_image(frame)
+                    should_embed_scene = timestamp - last_scene_clip_at >= clip_interval_seconds
+                    frame_clip_vector = self._embed_image(frame) if should_embed_scene else []
+                    if frame_clip_vector:
+                        last_scene_clip_at = timestamp
                     bboxes = self.detector.detect(frame)
                     if bboxes:
                         tracked_objs = self.tracker.update(bboxes, frame)
@@ -413,7 +426,11 @@ class JITVideoPipeline:
                                     reid_vector = self.extractor.extract_reid(track.image_crop).tolist()
                                 except Exception as reid_err:
                                     logger.warning(f"Skipping invalid person ReID crop: {reid_err}")
-                            object_clip_vector = self._embed_image(track.image_crop)
+                            last_object_time = last_object_clip_at.get(track.track_id, float("-inf"))
+                            should_embed_object = timestamp - last_object_time >= clip_interval_seconds
+                            object_clip_vector = self._embed_image(track.image_crop) if should_embed_object else []
+                            if object_clip_vector:
+                                last_object_clip_at[track.track_id] = timestamp
                             all_records.append({
                                 "video_id": video_id,
                                 "workspace_id": workspace_id,
@@ -480,3 +497,6 @@ class JITVideoPipeline:
                 progress_callback(100)
         finally:
             cap.release()
+            end_semantic_job = getattr(self.semantic_embedder, "end_job", None)
+            if callable(end_semantic_job):
+                end_semantic_job()

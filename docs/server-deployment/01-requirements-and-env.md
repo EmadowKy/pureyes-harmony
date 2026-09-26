@@ -70,6 +70,8 @@ shapely>=2.0.0,<2.1.0      # OCR 几何依赖；避免升级至仅支持 NumPy 2
 | :--- | :--- | :--- | :--- |
 | **YOLOv8 目标检测权重** | `yolov8n.pt` | `backend/yolov8n.pt` 及根目录 | 用于检测画面中的人员、车辆等实体，文件大小约 6.5 MB。 |
 | **OSNet 重识别权重** | `osnet_x1_0.pth` / `osnet_x1_0.onnx` | `models/` 或 `backend/models/` | 用于跨镜头行人重识别 (Person ReID) 特征向量提取，可通过 `convert_osnet.py` 转换。 |
+| **YuNet 人脸检测权重** | `face_detection_yunet_2023mar.onnx` | 由 `FACE_DETECTOR_MODEL_PATH` 指向 | 检测人脸及关键点，供对齐使用；从 [OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) 获取。 |
+| **SFace 人脸特征权重** | `face_recognition_sface_2021dec.onnx` | 由 `FACE_RECOGNIZER_MODEL_PATH` 指向 | 提取对齐后的人脸特征，供视频内轨迹及工作区归类使用；从 [OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface) 获取。 |
 | **中文 CLIP 语义权重** | Hugging Face 模型目录 | 由 `CLIP_MODEL_PATH` 指向 | 用于“描述搜画面”、衣着/场景/物品语义检索。必须是包含 processor 配置的本地目录，不会在用户提问时自动下载。 |
 | **RapidOCR / PP-OCR 模型** | `ch_PP-OCRv4_det_infer.onnx`、`ch_PP-OCRv4_rec_infer.onnx`、`ch_ppocr_mobile_v2.0_cls_infer.onnx` | 由 `OCR_MODEL_ROOT` 指向 | 用于招牌、车牌、屏幕与字幕文字索引；每条结果均带有时间戳、位置和置信度。 |
 | **ByteTrack 追踪配置** | `bytetrack_fixed.yaml` | `backend/app/mva_v2/bytetrack_fixed.yaml` | 多目标跨帧连续追踪的算法配置文件。 |
@@ -84,12 +86,20 @@ shapely>=2.0.0,<2.1.0      # OCR 几何依赖；避免升级至仅支持 NumPy 2
 [Service]
 Environment=YOLO_MODEL_PATH=/srv/pureyes/backend/models/yolov8n.pt
 Environment=REID_MODEL_PATH=/srv/pureyes/models/osnet_x1_0.onnx
+Environment=FACE_DETECTOR_MODEL_PATH=/srv/pureyes/models/face_detection_yunet_2023mar.onnx
+Environment=FACE_RECOGNIZER_MODEL_PATH=/srv/pureyes/models/face_recognition_sface_2021dec.onnx
+# 人脸归类模式由服务端配置决定，不提供应用内切换接口
+Environment=FACE_RECOGNITION_BACKEND=server
 Environment=CLIP_MODEL_PATH=/srv/pureyes/models/chinese-clip
 Environment=OCR_MODEL_ROOT=/srv/pureyes/models/rapidocr
 Environment=OCR_LANGUAGE=ch
+# 可选：单轮调查 Agent 最长运行时间，单位秒（默认 1200）
+Environment=AGENT_TASK_TIMEOUT_SECONDS=1200
 ```
 
-其中 YOLO 和 ReID 缺失会阻止目标预处理；CLIP 或 OCR 缺失时系统会明确记录该模态不可用，但不会写入伪造的零向量，也不会在用户请求时自动下载模型。OCR 目录必须包含表中列出的三个 PP-OCR ONNX 文件。补齐模型后重新预处理目标片段，即可生成相应的语义或文字索引。
+其中 YOLO 和 ReID 缺失会阻止目标预处理；YuNet 或 SFace 缺失会使片段预处理失败并显示人脸模型配置错误。OSNet 是行人身体特征模型，不能替代人脸模型。CLIP 或 OCR 缺失时系统会明确记录该模态不可用，但不会写入伪造的零向量，也不会在用户请求时自动下载模型。OCR 目录必须包含表中列出的三个 PP-OCR ONNX 文件。补齐模型后重新预处理目标片段，即可生成相应的索引。人脸旧版颜色归类记录只有重建后才能获得人脸特征。
+
+`FACE_RECOGNITION_BACKEND` 可设 `server`（默认，YuNet + SFace）或 `harmony`（服务端只抓拍和初步时空跟踪，手机通过 Core Vision Kit 人脸比对完成归类）。只能由服务端运维修改环境配置并重启服务；没有面向用户或管理员的切换接口。重启应在正在预处理的片段结束后进行，新配置只作用于重启后开始的预处理，不会改写已有记录。配置为其他值时预处理会明确失败。鸿蒙模式不需要服务端 YuNet/SFace 权重，但需要支持 Core Vision Kit 的 HarmonyOS 手机打开工作区，点击“使用本机鸿蒙人脸能力归类”，并保持联网直到待归类任务完成。预处理仍需配置 YOLO/OSNet 等其他目标索引模型。
 
 ---
 

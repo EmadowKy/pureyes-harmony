@@ -47,7 +47,7 @@ export struct RenameGroupDialog {
         .width('100%')
         .textAlign(TextAlign.Start)
 
-      TextInput({ placeholder: '新的小组名称', text: this.groupName })
+      TextInput({ placeholder: '请输入小组名称', text: this.groupName })
         .width('100%')
         .onChange((val: string): void => {
           this.groupName = val;
@@ -515,7 +515,7 @@ export struct GroupTab {
       }
       .width('100%')
 
-      TextInput({ placeholder: '输入工号、姓名或手机号', text: this.inviteKeyword })
+      TextInput({ placeholder: '搜索工号、姓名或手机号', text: this.inviteKeyword })
         .width('100%')
         .height(40)
         .fontColor($r('app.color.app_text_primary'))
@@ -595,7 +595,7 @@ export struct GroupTab {
               Blank()
                 .width(3)
                 .height(48)
-                .backgroundColor(member.status === 'pending' ? $r('app.color.app_accent') : $r('app.color.app_selection'))
+                .backgroundColor(member.status === 'pending' ? $r('app.color.app_warning') : $r('app.color.app_selection'))
 
               Image(member.avatar ? member.avatar : $r('app.media.foreground'))
                 .width(50)
@@ -714,11 +714,13 @@ export struct GroupTab {
             Text(this.groupId ? '邀请同事后，成员会显示在这里。' : '从顶部选择一个小组以查看成员。')
               .fontSize(13)
               .fontColor($r('app.color.app_text_secondary'))
+              .textAlign(TextAlign.Center)
           }
-          .width('90%')
-          .padding(28)
+          .width('100%')
+          .padding({ left: 28, right: 28, bottom: 52 })
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
         } else {
           this.MemberList()
         }

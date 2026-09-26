@@ -13,6 +13,14 @@
       "value": "Pureyes清眸"
     },
     {
+      "name": "investigation_card_name",
+      "value": "清眸调查"
+    },
+    {
+      "name": "investigation_card_desc",
+      "value": "查看多视频调查的最近进度并继续调查"
+    },
+    {
       "name": "privacy_window_reason",
       "value": "用于保护监控画面、人脸信息与AI问答数据不被非法截屏或录屏泄漏"
     }

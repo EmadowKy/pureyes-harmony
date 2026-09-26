@@ -1,9 +1,22 @@
-import { HttpUtil } from '../../utils/http'
+import { HttpUtil, BASE_HOST } from '../../utils/http'
+import { MarkdownAnswer } from './MarkdownAnswer'
+import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+import { vibrator } from '@kit.SensorServiceKit';
+import { InvestigationCard, InvestigationCardSnapshot } from '../../utils/investigationCard';
+
+class ConfigSelectItem {
+  value: string = '';
+}
 
 class AgentSegmentChoice {
   id: number = 0;
   title: string = '';
   videoName: string = '';
+  filePath: string = '';
+  thumbnailUrl: string = '';
   durationText: string = '';
   status: string = 'pending';
 }
@@ -18,68 +31,211 @@ class AgentConversationItem {
 
 class AgentTurnItem {
   id: string = '';
+  creatorId: string = '';
+  modelConfigLabel: string = '';
   question: string = '';
   answer: string = '';
   status: string = 'processing';
   turnIndex: number = 1;
   createdAt: string = '';
   toolCalls: Array<AgentToolCall> = [];
+  segmentIds: Array<number> = [];
 }
 
 class AgentToolCall {
   name: string = '';
+  summary: string = '';
+  query: string = '';
+  queryType: string = '';
+  videoId: string = '';
+  videoIds: Array<string> = [];
+  timestampSec: number = -1;
+  times: Array<number> = [];
+  details: Array<string> = [];
+  evidence: Array<AgentToolEvidence> = [];
+  status: string = 'running';
+  iteration: number = 0;
+}
+
+class AgentToolEvidence {
+  segmentId: number = 0;
+  timestampSec: number = 0;
+  label: string = '';
 }
 
 class AgentTurnPayload {
   question: string = '';
+  model_config_id: number = 0;
   conversation_id: string = '';
   segment_ids: Array<number> = [];
+}
+
+class EmptyRequestPayload {}
+
+class AgentMessageDataSource implements IDataSource {
+  private items: Array<AgentTurnItem> = [];
+  private listeners: Array<DataChangeListener> = [];
+
+  totalCount(): number { return this.items.length; }
+  getData(index: number): AgentTurnItem { return this.items[index]; }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    this.listeners.push(listener);
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    this.listeners = this.listeners.filter((item: DataChangeListener): boolean => item !== listener);
+  }
+
+  setItems(items: Array<AgentTurnItem>): void {
+    this.items = items;
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded());
+  }
+
+  updateItem(index: number, item: AgentTurnItem): void {
+    this.items[index] = item;
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataChanged(index));
+  }
 }
 
 @Component
 export struct AgentConversationPanel {
   @Prop workspaceId: number = 0;
+  @Prop initialConversationId: string = '';
+  onTimestampClick: (segmentId: number, timeStr: string) => void =
+    (_segmentId: number, _timeStr: string): void => {};
 
   @State conversations: Array<AgentConversationItem> = [];
+  @State modelConfigs: Array<ModelConfigOption> = [];
+  @State selectedModelConfigId: number = 0;
   @State messages: Array<AgentTurnItem> = [];
   @State segments: Array<AgentSegmentChoice> = [];
   @State selectedConversationId: string = '';
+  @State evidenceSegmentIds: Array<number> = [];
   @State selectedSegmentIds: Array<number> = [];
   @State composerText: string = '';
   @State creatingInvestigation: boolean = false;
   @State isLoading: boolean = true;
   @State isSending: boolean = false;
+  @State isStopping: boolean = false;
   @State liveProgress: string = '';
+  @State liveStage: string = '准备调查';
+  @State elapsedSeconds: number = 0;
+  @State quietSeconds: number = 0;
   @State currentTaskId: string = '';
+  @State conversationReady: boolean = false;
+  @State expandedCallKeys: Array<string> = [];
+  @State expandedTraceTurns: Array<string> = [];
+  @State collapsedTraceTurns: Array<string> = [];
+  @State composerFocused: boolean = false;
+  @State conversationLoadError: string = '';
+  @State segmentLoadError: string = '';
+  @State modelLoadError: string = '';
+  @State shareErrorTurnId: string = '';
   private pollTimer: number = 0;
-  private polling: boolean = false;
+  private pollEpoch: number = 0;
+  private syncTimer: number = 0;
+  private clockTimer: number = 0;
+  private activeStartedAtMs: number = 0;
+  private lastProgressAtMs: number = 0;
+  private lastProgressCount: number = 0;
+  private syncing: boolean = false;
+  private lastCardState: string = '';
+  private cardWrite: Promise<void> = Promise.resolve();
   private messageScroller: Scroller = new Scroller();
+  private messageSource: AgentMessageDataSource = new AgentMessageDataSource();
 
   aboutToAppear(): void {
+    if (this.initialConversationId) this.selectedConversationId = this.initialConversationId;
     this.refreshAll();
   }
 
   aboutToDisappear(): void {
     this.stopPolling();
+    this.stopSync();
+  }
+
+  async shareConclusion(turn: AgentTurnItem): Promise<void> {
+    if (turn.status !== 'completed' || !turn.answer.trim()) return;
+    this.shareErrorTurnId = '';
+    try {
+      const data: systemShare.SharedData = new systemShare.SharedData({
+        utd: utd.UniformDataType.TEXT,
+        content: `问题：${turn.question}\n\n调查结论：\n${turn.answer}`,
+        title: '清眸调查结论'
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(data);
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DETAIL
+      });
+    } catch (_error) {
+      this.shareErrorTurnId = turn.id;
+    }
+  }
+
+  async signalTaskCompleted(): Promise<void> {
+    try {
+      await vibrator.startVibration({ type: 'time', duration: 60 }, { id: 0, usage: 'touch' });
+    } catch (_error) {
+      // Devices without a vibrator or with vibration disabled still show the result.
+    }
+  }
+
+  publishCard(turn: AgentTurnItem, stage: string = ''): void {
+    if (this.workspaceId <= 0 || !this.selectedConversationId) return;
+    const snapshot = new InvestigationCardSnapshot();
+    snapshot.workspaceId = this.workspaceId;
+    snapshot.conversationId = this.selectedConversationId;
+    snapshot.status = turn.status;
+    snapshot.steps = turn.toolCalls.length;
+    snapshot.stage = turn.status === 'processing' ? (stage || '正在调查') :
+      (turn.status === 'completed' ? '结论已生成' : '查看调查记录');
+    const fingerprint = `${snapshot.conversationId}:${snapshot.status}:${snapshot.steps}:${snapshot.stage}`;
+    if (fingerprint === this.lastCardState) return;
+    this.lastCardState = fingerprint;
+    const now = new Date();
+    snapshot.updatedAt = `${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ` +
+      `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.cardWrite = this.cardWrite.then(async (): Promise<void> => {
+      await InvestigationCard.publish(context, snapshot);
+    }).catch((error: Object): void => {
+      console.warn('[InvestigationCard] publish failed', JSON.stringify(error));
+      this.lastCardState = '';
+    });
   }
 
   async refreshAll(): Promise<void> {
     this.isLoading = true;
-    await this.loadConversations();
-    await this.loadSegments();
-    if (this.selectedConversationId.length > 0) {
-      await this.openConversation(this.selectedConversationId, false);
+    try {
+      await Promise.all([this.loadConversations(), this.loadSegments(), this.loadModelConfigs()]);
+      if (this.selectedConversationId.length > 0) {
+        await this.openConversation(this.selectedConversationId, false);
+      } else {
+        this.startSync();
+      }
+    } finally {
+      this.isLoading = false;
     }
-    this.isLoading = false;
   }
 
   async loadConversations(): Promise<void> {
     const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/agent/conversations`);
     if (res.code !== 0 || !res.data) {
-      this.conversations = [];
+      this.conversationLoadError = res.message || '无法加载调查记录，请检查连接后重试。';
       return;
     }
-    const raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+    let raw: Array<Record<string, Object>>;
+    try {
+      raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(raw)) throw new Error('invalid conversations');
+    } catch (_error) {
+      this.conversationLoadError = '调查记录响应异常，请稍后重试。';
+      return;
+    }
+    this.conversationLoadError = '';
     const mapped: Array<AgentConversationItem> = [];
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i];
@@ -91,16 +247,52 @@ export struct AgentConversationPanel {
       conversation.latestQuestion = (item['latest_question'] as string) || '';
       mapped.push(conversation);
     }
-    this.conversations = mapped;
+    const unchanged = mapped.length === this.conversations.length && mapped.every(
+      (item: AgentConversationItem, index: number): boolean => {
+        const previous = this.conversations[index];
+        return item.id === previous.id && item.title === previous.title &&
+          item.turnCount === previous.turnCount && item.latestStatus === previous.latestStatus &&
+          item.latestQuestion === previous.latestQuestion;
+      });
+    if (!unchanged) this.conversations = mapped;
+  }
+
+  async loadModelConfigs(): Promise<void> {
+    const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/model-configs`);
+    if (res.code !== 0 || !res.data) {
+      this.modelLoadError = res.message || '无法加载模型配置';
+      return;
+    }
+    let raw: Array<Record<string, Object>>;
+    try {
+      raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(raw)) throw new Error('invalid model configs');
+    } catch (_error) {
+      this.modelLoadError = '模型配置响应异常';
+      return;
+    }
+    this.modelLoadError = '';
+    this.modelConfigs = raw.map((item: Record<string, Object>): ModelConfigOption => parseModelConfig(item));
+    if (!this.modelConfigs.some((item: ModelConfigOption): boolean => item.id === this.selectedModelConfigId)) {
+      this.selectedModelConfigId = this.modelConfigs.length > 0 ? this.modelConfigs[0].id : 0;
+    }
   }
 
   async loadSegments(): Promise<void> {
     const res = await HttpUtil.get(`/workspaces/${this.workspaceId}/segments`);
     if (res.code !== 0 || !res.data) {
-      this.segments = [];
+      this.segmentLoadError = res.message || '无法加载视频片段，请重试。';
       return;
     }
-    const raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+    let raw: Array<Record<string, Object>>;
+    try {
+      raw = JSON.parse(res.data) as Array<Record<string, Object>>;
+      if (!Array.isArray(raw)) throw new Error('invalid segments');
+    } catch (_error) {
+      this.segmentLoadError = '视频片段响应异常，请稍后重试。';
+      return;
+    }
+    this.segmentLoadError = '';
     const mapped: Array<AgentSegmentChoice> = [];
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i];
@@ -108,6 +300,8 @@ export struct AgentConversationPanel {
       segment.id = item['id'] as number;
       segment.title = (item['remark'] as string) || '未命名片段';
       segment.videoName = (item['video_name'] as string) || '监控录像';
+      segment.filePath = (item['filepath'] as string) || '';
+      segment.thumbnailUrl = (item['thumbnail_url'] as string) || '';
       const start = (item['start_offset'] as number) || 0;
       const end = (item['end_offset'] as number) || 0;
       segment.durationText = `${start.toFixed(0)}s – ${end.toFixed(0)}s`;
@@ -119,30 +313,59 @@ export struct AgentConversationPanel {
 
   async openConversation(conversationId: string, scrollToEnd: boolean = true): Promise<void> {
     this.stopPolling();
-    this.selectedConversationId = conversationId;
-    this.creatingInvestigation = false;
+    const epoch = this.pollEpoch;
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+      this.selectedConversationId = conversationId;
+      this.conversationReady = false;
+      this.messages = [];
+      this.messageSource.setItems([]);
+      this.creatingInvestigation = false;
+    });
+    this.currentTaskId = '';
+    this.isSending = false;
+    this.isStopping = false;
+    this.liveProgress = '';
     const res = await HttpUtil.get(`/workspaces/agent/conversations/${conversationId}/messages`);
+    if (epoch !== this.pollEpoch || conversationId !== this.selectedConversationId) {
+      return;
+    }
     if (res.code !== 0 || !res.data) {
       this.messages = [];
+      this.messageSource.setItems([]);
+      this.liveProgress = res.message || '加载调查记录失败';
       return;
     }
     const data = JSON.parse(res.data) as Record<string, Object>;
-    const rawMessages = data['messages'] as Array<Record<string, Object>>;
+    this.applyConversationData(data, scrollToEnd);
+    this.startSync();
+  }
+
+  applyConversationData(data: Record<string, Object>, scrollToEnd: boolean): void {
+    const conversation = data['conversation'] as Record<string, Object>;
+    this.conversationReady = true;
+    const conversationSegmentIds = (conversation['segment_ids'] as Array<number>) || [];
+    this.evidenceSegmentIds = conversationSegmentIds;
+    const rawMessages = (data['messages'] as Array<Record<string, Object>>) || [];
     const mapped: Array<AgentTurnItem> = [];
     let processingId = '';
     for (let i = 0; i < rawMessages.length; i++) {
       const item = rawMessages[i];
       const turn = new AgentTurnItem();
       turn.id = (item['id'] as string) || '';
+      turn.creatorId = (item['creator_id'] as string) || '';
+      turn.modelConfigLabel = (item['model_config_label'] as string) || '';
       turn.question = (item['question'] as string) || '';
       turn.answer = (item['answer'] as string) || '';
       turn.status = (item['status'] as string) || 'processing';
       turn.turnIndex = (item['turn_index'] as number) || (i + 1);
       turn.createdAt = (item['created_at'] as string) || '';
+      const selections = (item['selections'] as Array<Record<string, Object>>) || [];
+      turn.segmentIds = conversationSegmentIds.length > 0 ? conversationSegmentIds :
+        selections.map((selection: Record<string, Object>): number => selection['segment_id'] as number)
+          .filter((segmentId: number): boolean => segmentId > 0);
       const rawCalls = (item['tool_calls'] as Array<Record<string, Object>>) || [];
       for (let callIndex = 0; callIndex < rawCalls.length; callIndex++) {
-        const call = new AgentToolCall();
-        call.name = (rawCalls[callIndex]['name'] as string) || '';
+        const call = this.mapToolCall(rawCalls[callIndex]);
         if (call.name.length > 0) {
           turn.toolCalls.push(call);
         }
@@ -152,14 +375,73 @@ export struct AgentConversationPanel {
       }
       mapped.push(turn);
     }
-    this.messages = mapped;
+    if (this.messages.length > 0 && mapped.length > this.messages.length) {
+      this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+        this.messages = mapped;
+        this.messageSource.setItems(mapped);
+      });
+    } else {
+      this.messages = mapped;
+      this.messageSource.setItems(mapped);
+    }
     if (processingId.length > 0) {
       this.currentTaskId = processingId;
       this.isSending = true;
-      this.startPolling(processingId);
+      const activeTurn = mapped.find((turn: AgentTurnItem): boolean => turn.id === processingId);
+      if (activeTurn) this.showLiveTrace(processingId, activeTurn.toolCalls.length);
+      this.startPolling(processingId, activeTurn ? activeTurn.createdAt : '');
+    } else {
+      this.currentTaskId = '';
+      this.isSending = false;
+      this.isStopping = false;
     }
+    if (mapped.length > 0) this.publishCard(mapped[mapped.length - 1]);
     if (scrollToEnd) {
       setTimeout((): void => this.messageScroller.scrollEdge(Edge.Bottom), 120);
+    }
+  }
+
+  startSync(): void {
+    if (this.syncTimer > 0) return;
+    this.syncTimer = setInterval(async (): Promise<void> => {
+      const conversationId = this.selectedConversationId;
+      if (!conversationId && !this.creatingInvestigation && !this.syncing) {
+        this.syncing = true;
+        try {
+          await this.loadConversations();
+        } catch (_error) {
+          // Keep the last known list while connectivity recovers.
+        } finally {
+          this.syncing = false;
+        }
+        return;
+      }
+      if (!conversationId || !this.conversationReady || this.currentTaskId || this.isSending || this.syncing) return;
+      this.syncing = true;
+      try {
+        const res = await HttpUtil.get(`/workspaces/agent/conversations/${conversationId}/messages`);
+        if (conversationId !== this.selectedConversationId || res.code !== 0 || !res.data) return;
+        const data = JSON.parse(res.data) as Record<string, Object>;
+        const rawMessages = (data['messages'] as Array<Record<string, Object>>) || [];
+        const last = rawMessages.length > 0 ? rawMessages[rawMessages.length - 1] : null;
+        const current = this.messages.length > 0 ? this.messages[this.messages.length - 1] : null;
+        if (rawMessages.length !== this.messages.length ||
+            (last && current && (last['id'] !== current.id || last['status'] !== current.status))) {
+          this.applyConversationData(data, true);
+          await this.loadConversations();
+        }
+      } catch (_error) {
+        // Transient sync failures should not disturb the conversation.
+      } finally {
+        this.syncing = false;
+      }
+    }, 1500);
+  }
+
+  stopSync(): void {
+    if (this.syncTimer > 0) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = 0;
     }
   }
 
@@ -168,36 +450,105 @@ export struct AgentConversationPanel {
   }
 
   toggleSegment(segmentId: number): void {
-    const index = this.selectedSegmentIds.indexOf(segmentId);
-    if (index >= 0) {
-      this.selectedSegmentIds.splice(index, 1);
-    } else {
-      this.selectedSegmentIds.push(segmentId);
+    const segment = this.segments.find((item: AgentSegmentChoice): boolean => item.id === segmentId);
+    if (!segment || segment.status === 'pending' || segment.status === 'processing') {
+      this.liveProgress = '该片段仍在预处理中，请完成后再选择。';
+      return;
     }
-    this.selectedSegmentIds = [...this.selectedSegmentIds];
+    if (!this.isSelected(segmentId) && this.selectedSegmentIds.length >= 20) {
+      this.liveProgress = '一次调查最多选择 20 个片段。';
+      return;
+    }
+    this.liveProgress = '';
+    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseOut }, (): void => {
+      const index = this.selectedSegmentIds.indexOf(segmentId);
+      if (index >= 0) {
+        this.selectedSegmentIds.splice(index, 1);
+      } else {
+        this.selectedSegmentIds.push(segmentId);
+      }
+      this.selectedSegmentIds = [...this.selectedSegmentIds];
+    });
   }
 
   startInvestigation(): void {
     this.stopPolling();
-    this.selectedConversationId = '';
-    this.messages = [];
-    this.selectedSegmentIds = [];
-    this.composerText = '';
-    this.liveProgress = '';
-    this.creatingInvestigation = true;
+    this.stopSync();
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+      this.selectedConversationId = '';
+      this.conversationReady = false;
+      this.evidenceSegmentIds = [];
+      this.messages = [];
+      this.messageSource.setItems([]);
+      this.selectedSegmentIds = [];
+      this.composerText = '';
+      this.liveProgress = '';
+      this.currentTaskId = '';
+      this.isSending = false;
+      this.isStopping = false;
+      this.creatingInvestigation = true;
+    });
+  }
+
+  showConversationList(): void {
+    this.stopPolling();
+    this.stopSync();
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+      this.selectedConversationId = '';
+      this.conversationReady = false;
+      this.evidenceSegmentIds = [];
+      this.currentTaskId = '';
+      this.messages = [];
+      this.messageSource.setItems([]);
+      this.isSending = false;
+      this.isStopping = false;
+      this.liveProgress = '';
+      this.creatingInvestigation = false;
+    });
+    this.loadConversations();
+    this.startSync();
+  }
+
+  canContinue(): boolean {
+    return this.selectedConversationId.length > 0 && this.conversationReady;
+  }
+
+  evidenceScopeLabel(): string {
+    const names: Array<string> = [];
+    for (let i = 0; i < this.evidenceSegmentIds.length; i++) {
+      const segment = this.segments.find((choice: AgentSegmentChoice): boolean => choice.id === this.evidenceSegmentIds[i]);
+      names.push(segment ? segment.title : `片段 ${this.evidenceSegmentIds[i]}`);
+    }
+    return names.length > 0 ? `证据范围：${names.join('、')}` : '正在加载证据范围…';
+  }
+
+  activeConversationTitle(): string {
+    const active = this.conversations.find((item: AgentConversationItem): boolean =>
+      item.id === this.selectedConversationId);
+    return active ? active.title : '调查记录';
   }
 
   async submitTurn(): Promise<void> {
     const question = this.composerText.trim();
-    if (!question || this.isSending) {
+    if (!question || this.isSending || this.currentTaskId.length > 0 ||
+        (this.selectedConversationId.length > 0 && !this.canContinue())) {
       return;
     }
     if (this.creatingInvestigation && this.selectedSegmentIds.length === 0) {
       this.liveProgress = '先选择至少一个视频片段，再开始调查。';
       return;
     }
+    if (this.creatingInvestigation && this.selectedSegmentIds.length > 20) {
+      this.liveProgress = '一次调查最多选择 20 个片段。';
+      return;
+    }
+    if (!this.selectedModelConfigId) {
+      this.liveProgress = '请先到「我的 → 模型 API」创建配置，然后在这里选择。';
+      return;
+    }
     const payload = new AgentTurnPayload();
     payload.question = question;
+    payload.model_config_id = this.selectedModelConfigId;
     if (this.selectedConversationId.length > 0) {
       payload.conversation_id = this.selectedConversationId;
     } else {
@@ -206,10 +557,31 @@ export struct AgentConversationPanel {
 
     this.isSending = true;
     this.liveProgress = '正在建立证据链…';
+    const epoch = this.pollEpoch;
+    if (this.selectedConversationId.length > 0) {
+      const latest = await HttpUtil.get(`/workspaces/agent/conversations/${this.selectedConversationId}/messages`);
+      if (epoch !== this.pollEpoch) return;
+      if (latest.code === 0 && latest.data) {
+        const snapshot = JSON.parse(latest.data) as Record<string, Object>;
+        const turns = (snapshot['messages'] as Array<Record<string, Object>>) || [];
+        if (turns.some((turn: Record<string, Object>): boolean => turn['status'] === 'processing')) {
+          this.applyConversationData(snapshot, true);
+          return;
+        }
+      }
+    }
     const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/qa`, payload);
+    if (epoch !== this.pollEpoch) {
+      return;
+    }
     if (res.code !== 0 || !res.data) {
       this.isSending = false;
-      this.liveProgress = res.message || '提交调查失败';
+      const errorMessage = res.message || '提交调查失败';
+      if (this.selectedConversationId.length > 0) {
+        await this.openConversation(this.selectedConversationId, true);
+      }
+      if (!this.currentTaskId) this.liveProgress = errorMessage;
+      if (res.code === 6105) await this.loadModelConfigs();
       return;
     }
     const data = JSON.parse(res.data) as Record<string, Object>;
@@ -218,287 +590,1005 @@ export struct AgentConversationPanel {
     this.composerText = '';
     this.creatingInvestigation = false;
     await this.loadConversations();
-    await this.openConversation(this.selectedConversationId, true);
-    if (this.currentTaskId.length > 0) {
-      this.startPolling(this.currentTaskId);
+    if (epoch !== this.pollEpoch) {
+      return;
     }
+    await this.openConversation(this.selectedConversationId, true);
   }
 
-  startPolling(taskId: string): void {
+  formatDuration(seconds: number): string {
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`;
+  }
+
+  stageLabel(stage: string, phase: string): string {
+    if (stage === 'slicing' || stage === 'metadata') return '准备证据';
+    if (stage === 'model_initialization') return '启动分析';
+    if (stage === 'jit_ingestion') return '建立视频索引';
+    if (stage === 'reasoning') {
+      if (phase === 'action') return '调用工具';
+      if (phase === 'observation') return '核验线索';
+      return '分析线索';
+    }
+    if (stage === 'answering') return '整理结论';
+    return '正在调查';
+  }
+
+  startClock(createdAt: string): void {
+    if (this.clockTimer > 0) clearInterval(this.clockTimer);
+    this.liveStage = '准备调查';
+    const parsed = Date.parse(createdAt);
+    this.activeStartedAtMs = Number.isFinite(parsed) ? parsed : Date.now();
+    this.lastProgressAtMs = Date.now();
+    this.lastProgressCount = 0;
+    this.elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.activeStartedAtMs) / 1000));
+    this.quietSeconds = 0;
+    this.clockTimer = setInterval((): void => {
+      this.elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.activeStartedAtMs) / 1000));
+      this.quietSeconds = Math.max(0, Math.floor((Date.now() - this.lastProgressAtMs) / 1000));
+    }, 1000);
+  }
+
+  startPolling(taskId: string, createdAt: string = ''): void {
     this.stopPolling();
+    this.startClock(createdAt);
+    const epoch = this.pollEpoch;
+    let polling = false;
     this.pollTimer = setInterval(async (): Promise<void> => {
-      if (this.polling) {
+      if (polling || epoch !== this.pollEpoch) {
         return;
       }
-      this.polling = true;
+      polling = true;
       try {
         const res = await HttpUtil.get(`/workspaces/qa/${taskId}/status`);
+        if (epoch !== this.pollEpoch || taskId !== this.currentTaskId) {
+          return;
+        }
         if (res.code !== 0 || !res.data) {
+          this.liveProgress = res.message || '暂时无法获取调查进度，正在重试…';
           return;
         }
         const data = JSON.parse(res.data) as Record<string, Object>;
         const progress = (data['progress'] as Array<Record<string, Object>>) || [];
-        if (progress.length > 0) {
-          const last = progress[progress.length - 1];
-          this.liveProgress = (last['message'] as string) || '正在整理证据…';
+        this.updateLiveTurn(taskId, progress);
+        const last = progress.length > 0 ? progress[progress.length - 1] : null;
+        this.liveProgress = last ? ((last['message'] as string) || '正在整理证据…') : '正在整理证据…';
+        if (last) {
+          const detail = (last['data'] as Record<string, Object>) || {};
+          this.liveStage = this.stageLabel((last['stage'] as string) || '', (detail['phase'] as string) || '');
+          const recordedAt = Date.parse((last['at'] as string) || '');
+          if (Number.isFinite(recordedAt)) {
+            this.lastProgressAtMs = recordedAt;
+          } else if (progress.length !== this.lastProgressCount) {
+            this.lastProgressAtMs = Date.now();
+          }
+          this.lastProgressCount = progress.length;
         }
         const status = (data['status'] as string) || 'processing';
-        if (status === 'completed' || status === 'failed') {
+        const activeTurn = this.messages.find((turn: AgentTurnItem): boolean => turn.id === taskId);
+        if (activeTurn && status === 'processing') this.publishCard(activeTurn, this.liveStage);
+        if (status === 'completed' || status === 'failed' || status === 'stopped') {
+          if (status === 'completed') this.signalTaskCompleted();
           this.stopPolling();
           this.isSending = false;
           await this.loadConversations();
-          await this.openConversation(this.selectedConversationId, true);
-          this.liveProgress = status === 'completed' ? '' : '本轮调查未完成，请检查模型配置后重试。';
+          if (epoch + 1 !== this.pollEpoch || !this.selectedConversationId) {
+            return;
+          }
+          const conversationId = this.selectedConversationId;
+          await this.openConversation(conversationId, true);
+        }
+      } catch (error) {
+        if (epoch === this.pollEpoch) {
+          this.liveProgress = '暂时无法获取调查进度，正在重试…';
         }
       } finally {
-        this.polling = false;
+        polling = false;
       }
     }, 1000);
   }
 
   stopPolling(): void {
+    this.pollEpoch += 1;
     if (this.pollTimer > 0) {
       clearInterval(this.pollTimer);
       this.pollTimer = 0;
     }
-    this.polling = false;
+    if (this.clockTimer > 0) {
+      clearInterval(this.clockTimer);
+      this.clockTimer = 0;
+    }
+  }
+
+  retryTurn(turn: AgentTurnItem): void {
+    if (this.isSending || this.currentTaskId || !this.canContinue()) return;
+    this.composerText = turn.question;
+    this.submitTurn();
+  }
+
+  async stopTask(): Promise<void> {
+    const taskId = this.currentTaskId;
+    if (!taskId || this.isStopping) return;
+    this.isStopping = true;
+    const conversationId = this.selectedConversationId;
+    const res = await HttpUtil.post(`/workspaces/qa/${taskId}/stop`, new EmptyRequestPayload());
+    if (taskId !== this.currentTaskId || conversationId !== this.selectedConversationId) return;
+    this.isStopping = false;
+    if (res.code !== 0) {
+      this.liveProgress = res.message || '停止失败，请重试。';
+      return;
+    }
+    await this.openConversation(conversationId, true);
+    await this.loadConversations();
+  }
+
+  mapToolCall(raw: Record<string, Object>): AgentToolCall {
+    const call = new AgentToolCall();
+    call.name = (raw['name'] as string) || '';
+    call.summary = (raw['summary'] as string) || '';
+    call.times = (raw['times'] as Array<number>) || [];
+    call.details = (raw['details'] as Array<string>) || [];
+    call.status = (raw['status'] as string) || 'running';
+    call.iteration = (raw['iteration'] as number) || 0;
+    const rawEvidence = (raw['evidence'] as Array<Record<string, Object>>) || [];
+    call.evidence = rawEvidence.map((item: Record<string, Object>): AgentToolEvidence => {
+      const evidence = new AgentToolEvidence();
+      evidence.segmentId = (item['segment_id'] as number) || 0;
+      evidence.timestampSec = (item['timestamp_sec'] as number) || 0;
+      evidence.label = (item['label'] as string) || '查看证据';
+      return evidence;
+    });
+    const params = (raw['params'] as Record<string, Object>) || {};
+    call.videoId = (params['video_id'] as string) || (params['video_path'] as string) || '';
+    const query = params['query_text'] || params['track_id'];
+    call.query = (typeof query === 'string' ? query : (query ? String(query) : '')).substring(0, 120);
+    if (call.name === 'read_frames') {
+      const frames = (params['frames'] as Array<Record<string, Object>>) || [];
+      call.query = `${frames.length} 张画面`;
+      for (let i = 0; i < frames.length; i++) {
+        const videoId = (frames[i]['video_id'] as string) || '';
+        if (videoId && call.videoIds.indexOf(videoId) < 0) call.videoIds.push(videoId);
+      }
+    }
+    if (call.name === 'search_visual_semantics_batch') {
+      const queries = (params['queries'] as Array<string>) || [];
+      call.query = queries.join(' · ').substring(0, 200);
+    }
+    call.queryType = (params['query_type'] as string) || '';
+    const timestamp = params['timestamp_sec'];
+    const numericTimestamp = Number(timestamp);
+    call.timestampSec = timestamp !== undefined && !isNaN(numericTimestamp) ? numericTimestamp : -1;
+    return call;
+  }
+
+  updateLiveTurn(taskId: string, progress: Array<Record<string, Object>>): void {
+    const calls: Array<AgentToolCall> = [];
+    for (let i = 0; i < progress.length; i++) {
+      const entry = progress[i];
+      if (entry['stage'] !== 'reasoning') {
+        continue;
+      }
+      const data = (entry['data'] as Record<string, Object>) || {};
+      if (data['phase'] === 'action') {
+        const raw = JSON.parse('{}') as Record<string, Object>;
+        raw['name'] = (data['tool_name'] as string) || '';
+        raw['params'] = (data['tool_params'] as Record<string, Object>) || JSON.parse('{}') as Record<string, Object>;
+        raw['iteration'] = (data['iteration'] as number) || 0;
+        raw['status'] = 'running';
+        calls.push(this.mapToolCall(raw));
+      } else if (data['phase'] === 'observation') {
+        for (let j = calls.length - 1; j >= 0; j--) {
+          if (calls[j].iteration === (data['iteration'] as number)) {
+            calls[j].summary = (data['summary'] as string) || '';
+            calls[j].times = (data['times'] as Array<number>) || [];
+            calls[j].details = (data['details'] as Array<string>) || [];
+            calls[j].status = (data['result_status'] as string) || (entry['status'] as string) || 'completed';
+            const rawEvidence = (data['evidence'] as Array<Record<string, Object>>) || [];
+            calls[j].evidence = rawEvidence.map((item: Record<string, Object>): AgentToolEvidence => {
+              const evidence = new AgentToolEvidence();
+              evidence.segmentId = (item['segment_id'] as number) || 0;
+              evidence.timestampSec = (item['timestamp_sec'] as number) || 0;
+              evidence.label = (item['label'] as string) || '查看证据';
+              return evidence;
+            });
+            break;
+          }
+        }
+      }
+    }
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id === taskId) {
+        const newStep = calls.length > this.messages[i].toolCalls.length;
+        const update = (): void => {
+          this.showLiveTrace(taskId, calls.length);
+          this.messages[i].toolCalls = calls;
+          this.messages = [...this.messages];
+          this.messageSource.updateItem(i, this.messages[i]);
+        };
+        if (newStep) {
+          this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, update);
+        } else {
+          update();
+        }
+        break;
+      }
+    }
+  }
+
+  toolVideoLabel(turn: AgentTurnItem, videoId: string): string {
+    if (!videoId) return '';
+    const filename = videoId.split('/').pop() || videoId;
+    for (let i = 0; i < turn.segmentIds.length; i++) {
+      const segment = this.segments.find((choice: AgentSegmentChoice): boolean => choice.id === turn.segmentIds[i]);
+      if (segment && segment.filePath.split('/').pop() === filename) {
+        return `视频${i + 1} · ${segment.title}`;
+      }
+    }
+    return filename;
+  }
+
+  toolSegmentId(turn: AgentTurnItem, videoId: string): number {
+    if (!videoId && turn.segmentIds.length === 1) return turn.segmentIds[0];
+    const filename = videoId.split('/').pop() || videoId;
+    for (let i = 0; i < turn.segmentIds.length; i++) {
+      const segment = this.segments.find((choice: AgentSegmentChoice): boolean => choice.id === turn.segmentIds[i]);
+      if (segment && segment.filePath.split('/').pop() === filename) return segment.id;
+    }
+    return 0;
+  }
+
+  evidenceVideoLabel(turn: AgentTurnItem, segmentId: number): string {
+    const index = turn.segmentIds.indexOf(segmentId);
+    return index >= 0 ? `视频 ${index + 1}` : '视频证据';
+  }
+
+  evidenceVideoCount(call: AgentToolCall): number {
+    const ids: Array<number> = [];
+    for (let i = 0; i < call.evidence.length; i++) {
+      const id = call.evidence[i].segmentId;
+      if (id > 0 && ids.indexOf(id) < 0) ids.push(id);
+    }
+    return ids.length;
+  }
+
+  toolScopeLabel(turn: AgentTurnItem, call: AgentToolCall): string {
+    const labels: Array<string> = [];
+    const ids = call.videoIds.length > 0 ? call.videoIds : (call.videoId ? [call.videoId] : []);
+    for (let i = 0; i < ids.length; i++) {
+      const segmentId = this.toolSegmentId(turn, ids[i]);
+      const label = segmentId > 0 ? this.evidenceVideoLabel(turn, segmentId) : this.toolVideoLabel(turn, ids[i]);
+      if (label && labels.indexOf(label) < 0) labels.push(label);
+    }
+    if (labels.length === 0) {
+      for (let i = 0; i < call.evidence.length; i++) {
+        const label = this.evidenceVideoLabel(turn, call.evidence[i].segmentId);
+        if (labels.indexOf(label) < 0) labels.push(label);
+      }
+    }
+    return labels.length > 0 ? labels.join(' · ') : '调查视频';
+  }
+
+  formatTimestamp(seconds: number): string {
+    const whole = Math.floor(seconds);
+    const minutes = Math.floor(whole / 60);
+    const secs = whole % 60;
+    return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 
   toolLabel(progressText: string): string {
-    if (progressText.indexOf('search_objects') >= 0) return '查找目标';
+    if (progressText.indexOf('search_objects') >= 0 || progressText.indexOf('spatiotemporal_search') >= 0) return '查找目标';
     if (progressText.indexOf('search_visual_semantics') >= 0) return '检索画面语义';
     if (progressText.indexOf('search_video_text') >= 0) return '检索画面文字';
     if (progressText.indexOf('track_target') >= 0) return '追踪轨迹';
     if (progressText.indexOf('search_face_tracks') >= 0) return '查询人脸线索';
-    if (progressText.indexOf('read_frame_image') >= 0) return '核验画面';
+    if (progressText.indexOf('read_frame_image') >= 0 || progressText.indexOf('read_frames') >= 0) return '核验画面';
+    // Earlier conversations may still contain the retired metadata tool.
+    if (progressText.indexOf('get_video_metadata') >= 0) return '读取视频信息';
     return '正在推理';
   }
 
   toolNameLabel(toolName: string): string {
     if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '查找目标';
-    if (toolName === 'search_visual_semantics') return '画面语义';
+    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '画面语义';
     if (toolName === 'search_video_text') return '画面文字';
     if (toolName === 'track_target') return '追踪轨迹';
     if (toolName === 'search_face_tracks') return '人脸线索';
-    if (toolName === 'read_frame_image') return '核验画面';
+    if (toolName === 'read_frame_image' || toolName === 'read_frames') return '核验画面';
     if (toolName === 'get_video_metadata') return '读取元数据';
     return '工具调用';
   }
 
-  @Builder ConversationRail() {
-    List({ space: 8 }) {
-      ForEach(this.conversations, (item: AgentConversationItem): void => {
-        ListItem() {
-          Column({ space: 6 }) {
-            Row() {
-              Text(item.title)
-                .fontSize(14)
+  toolAccent(_toolName: string): ResourceColor {
+    return $r('app.color.app_primary');
+  }
+
+  toolSoft(_toolName: string): ResourceColor {
+    return $r('app.color.app_primary_soft');
+  }
+
+  toolKind(toolName: string): string {
+    if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '目标索引';
+    if (toolName === 'track_target') return '轨迹追踪';
+    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '语义检索';
+    if (toolName === 'search_video_text') return '文字识别';
+    if (toolName === 'search_face_tracks') return '人脸索引';
+    if (toolName === 'read_frame_image' || toolName === 'read_frames') return '视觉核验';
+    if (toolName === 'get_video_metadata') return '视频信息';
+    return '工具';
+  }
+
+  isCallExpanded(key: string): boolean {
+    return this.expandedCallKeys.indexOf(key) >= 0;
+  }
+
+  toggleCall(key: string): void {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+      const index = this.expandedCallKeys.indexOf(key);
+      if (index >= 0) {
+        this.expandedCallKeys.splice(index, 1);
+      } else {
+        this.expandedCallKeys.push(key);
+      }
+      this.expandedCallKeys = [...this.expandedCallKeys];
+    });
+  }
+
+  isTraceExpanded(turnId: string): boolean {
+    return this.expandedTraceTurns.indexOf(turnId) >= 0;
+  }
+
+  showLiveTrace(turnId: string, callCount: number): void {
+    if (callCount > 0 && this.expandedTraceTurns.indexOf(turnId) < 0 &&
+        this.collapsedTraceTurns.indexOf(turnId) < 0) {
+      this.expandedTraceTurns = [...this.expandedTraceTurns, turnId];
+    }
+  }
+
+  toggleTrace(turnId: string): void {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+      const index = this.expandedTraceTurns.indexOf(turnId);
+      if (index >= 0) {
+        this.expandedTraceTurns.splice(index, 1);
+        this.collapsedTraceTurns = [...this.collapsedTraceTurns, turnId];
+      } else {
+        this.expandedTraceTurns.push(turnId);
+        this.collapsedTraceTurns = this.collapsedTraceTurns.filter((id: string): boolean => id !== turnId);
+      }
+      this.expandedTraceTurns = [...this.expandedTraceTurns];
+    });
+  }
+
+  @Builder ToolTrace(turn: AgentTurnItem) {
+    Column({ space: 7 }) {
+      Row({ space: 7 }) {
+        Text('工具调用链')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+        Text(`${turn.toolCalls.length} 步 · 按执行顺序`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_muted'))
+          .layoutWeight(1)
+          .textAlign(TextAlign.End)
+        Text(this.isTraceExpanded(turn.id) ? '收起' : '查看')
+          .fontSize(11)
+          .fontColor($r('app.color.app_primary'))
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .backgroundColor($r('app.color.app_page_bg'))
+      .borderRadius(9)
+      .onClick((): void => { this.toggleTrace(turn.id); })
+      if (this.isTraceExpanded(turn.id)) {
+        ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
+          Column({ space: 7 }) {
+            Row({ space: 9 }) {
+              Text(`${index + 1}`)
+                .fontSize(12)
                 .fontWeight(FontWeight.Medium)
-                .fontColor(this.selectedConversationId === item.id ? '#17324D' : '#38536A')
+                .fontColor(this.toolAccent(call.name))
+                .textAlign(TextAlign.Center)
+                .width(28)
+                .height(28)
+                .backgroundColor(this.toolSoft(call.name))
+                .borderRadius(14)
+              Column({ space: 2 }) {
+                Text(this.toolNameLabel(call.name))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.app_text_primary'))
+                Text(`${this.toolKind(call.name)} · ${this.toolScopeLabel(turn, call)}`)
+                  .fontSize(10)
+                  .fontColor($r('app.color.app_text_muted'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              Text(call.status === 'running' ? '进行中' : (call.status === 'failed' ? '未完成' : '已完成'))
+                .fontSize(10)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') :
+                  (call.status === 'running' ? $r('app.color.app_warning') : $r('app.color.app_success')))
+                .padding({ left: 7, right: 7, top: 4, bottom: 4 })
+                .backgroundColor(call.status === 'failed' ? $r('app.color.app_danger_soft') :
+                  (call.status === 'running' ? $r('app.color.app_warning_soft') : $r('app.color.app_success_soft')))
+                .borderRadius(6)
+            }
+            .width('100%')
+            .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
+
+            Text(call.summary || (call.status === 'running' ? '正在等待工具返回…' : '工具已执行'))
+                .fontSize(12)
+                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') : $r('app.color.app_text_secondary'))
+                .maxLines(this.isCallExpanded(`${turn.id}-${index}`) ? 8 : 3)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            if (call.query) {
+              Text(`检索 · ${call.query}`)
+                .fontSize(10)
+                .fontColor($r('app.color.app_text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
-              Text(`${item.turnCount}`)
-                .fontSize(11)
-                .fontColor('#5D7992')
+                .width('100%')
             }
-            Text(item.latestStatus === 'processing' ? '正在核验线索' : '可继续追问')
-              .fontSize(11)
-              .fontColor(item.latestStatus === 'processing' ? '#C77818' : '#64819A')
+            if (call.evidence.length > 0) {
+              Text(this.evidenceVideoCount(call) > 1 ?
+                `跨 ${this.evidenceVideoCount(call)} 段视频 · ${call.evidence.length} 处可查看证据` :
+                `${call.evidence.length} 处可查看证据`)
+                .fontSize(10)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.app_primary'))
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(call.evidence.slice(0, this.isCallExpanded(`${turn.id}-${index}`) ?
+                  call.evidence.length : 3), (evidence: AgentToolEvidence, evidenceIndex: number): void => {
+                  Text(`${this.evidenceVideoLabel(turn, evidence.segmentId)} · ${this.formatTimestamp(evidence.timestampSec)} ↗`)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_primary'))
+                    .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .borderRadius(7)
+                    .margin({ right: 6, bottom: 4 })
+                    .onClick((): void => {
+                      if (turn.segmentIds.indexOf(evidence.segmentId) >= 0) {
+                        this.onTimestampClick(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
+                      }
+                    })
+                }, (evidence: AgentToolEvidence, evidenceIndex: number): string =>
+                  `${turn.id}-${index}-evidence-${evidenceIndex}`)
+                if (call.evidence.length > 3 && !this.isCallExpanded(`${turn.id}-${index}`)) {
+                  Text(`还有 ${call.evidence.length - 3} 处 · 展开`)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_secondary'))
+                    .padding({ top: 6, bottom: 6 })
+                    .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
+                }
+              }
+              .width('100%')
+            }
+            Row() {
+              Blank()
+              Text(this.isCallExpanded(`${turn.id}-${index}`) ? '收起参数与结果  ⌃' : '查看参数与结果  ⌄')
+                .fontSize(11)
+                .fontColor(this.toolAccent(call.name))
+            }
+            .width('100%')
+            .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
+            if (this.isCallExpanded(`${turn.id}-${index}`)) {
+                Column({ space: 8 }) {
+                  Text(`工具标识 · ${call.name}`)
+                    .fontSize(10)
+                    .fontColor($r('app.color.app_text_muted'))
+                  if (call.query || call.videoId || call.timestampSec >= 0 || call.queryType) {
+                    Text('调用参数')
+                      .fontSize(10)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_text_muted'))
+                    if (call.query) {
+                      Text(call.query).fontSize(12).fontWeight(FontWeight.Medium).fontColor($r('app.color.app_text_primary'))
+                    }
+                    if (call.queryType) {
+                      Text(`检索类型：${call.queryType === 'identity' ? '同一目标' : '语义分类'}`)
+                        .fontSize(11).fontColor($r('app.color.app_text_secondary'))
+                    }
+                    if (call.videoId) {
+                      Text(this.toolVideoLabel(turn, call.videoId)).fontSize(11).fontColor($r('app.color.app_text_secondary'))
+                    }
+                    if (call.timestampSec >= 0 && this.toolSegmentId(turn, call.videoId) > 0) {
+                      Text(`打开核验画面 · ${this.formatTimestamp(call.timestampSec)} ↗`)
+                        .fontSize(11)
+                        .fontColor($r('app.color.app_selection'))
+                        .padding({ left: 9, right: 9, top: 7, bottom: 7 })
+                        .backgroundColor($r('app.color.app_primary_soft'))
+                        .borderRadius(6)
+                        .onClick((): void => {
+                          this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(call.timestampSec));
+                        })
+                    }
+                  }
+                  if (call.details.length > 0 || (call.evidence.length === 0 && call.times.length > 0)) {
+                    Divider().color($r('app.color.app_border'))
+                    Text('观察结果')
+                      .fontSize(10)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.app_text_muted'))
+                  }
+                  ForEach(call.details, (detail: string, detailIndex: number): void => {
+                    Row({ space: 6 }) {
+                      Text('•').fontSize(12).fontColor(this.toolAccent(call.name))
+                      Text(detail).fontSize(11).fontColor($r('app.color.app_text_secondary')).layoutWeight(1)
+                    }.width('100%')
+                  }, (detail: string, detailIndex: number): string => `${turn.id}-${index}-detail-${detailIndex}`)
+                  if (call.evidence.length === 0 && call.times.length > 0 &&
+                      this.toolSegmentId(turn, call.videoId) > 0) {
+                    Flex({ wrap: FlexWrap.Wrap }) {
+                      ForEach(call.times, (seconds: number, timeIndex: number): void => {
+                        Text(`${this.formatTimestamp(seconds)} ↗`)
+                          .fontSize(11)
+                          .fontColor(this.toolAccent(call.name))
+                          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+                          .backgroundColor(this.toolSoft(call.name))
+                          .borderRadius(6)
+                          .margin({ right: 6, bottom: 5 })
+                          .onClick((): void => {
+                            this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(seconds));
+                          })
+                      }, (seconds: number, timeIndex: number): string => `${turn.id}-${index}-time-${timeIndex}`)
+                    }
+                  }
+                }
+                .width('100%')
+                .padding({ left: 10, right: 0, top: 7, bottom: 3 })
+                .border({ width: { left: 2 }, color: $r('app.color.app_border') })
+                .transition(TransitionEffect.OPACITY
+                  .combine(TransitionEffect.translate({ y: -8 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }))
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding({ left: 12, right: 8, top: 11, bottom: 11 })
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .border({ width: { left: 2, bottom: 1 }, color: $r('app.color.app_border') })
+          .transition(TransitionEffect.OPACITY
+            .combine(TransitionEffect.translate({ y: -8 }))
+            .animation({ duration: 220, curve: Curve.EaseOut }))
+        }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ top: 3 })
+  }
+
+  @Builder ConversationRail() {
+    List({ space: 0 }) {
+      ForEach(this.conversations, (item: AgentConversationItem): void => {
+        ListItem() {
+          Column() {
+            Row({ space: 12 }) {
+              Text('✦')
+                .fontSize(16)
+                .fontColor(item.latestStatus === 'processing' ? $r('app.color.app_warning') : $r('app.color.app_primary'))
+                .textAlign(TextAlign.Center)
+                .width(34)
+                .height(34)
+                .backgroundColor(item.latestStatus === 'processing' ? $r('app.color.app_warning_soft') : $r('app.color.app_primary_soft'))
+                .borderRadius(10)
+                .geometryTransition(`investigation-${item.id}`)
+                .transition(TransitionEffect.OPACITY)
+              Column({ space: 5 }) {
+                Row({ space: 8 }) {
+                  Text(item.title)
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.app_text_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                  Text(`${item.turnCount} 轮`)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_muted'))
+                }
+                Text(item.latestQuestion || '打开调查记录')
+                  .fontSize(12)
+                  .fontColor($r('app.color.app_text_muted'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (item.latestStatus === 'processing') {
+                  Text('● 正在运行')
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_warning'))
+                } else if (item.latestStatus === 'stopped') {
+                  Text('已停止 · 可以追问')
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_muted'))
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Top)
+            .padding({ top: 15, bottom: 15 })
+            .onClick((): void => { this.openConversation(item.id); })
           }
           .width('100%')
-          .padding(12)
-          .backgroundColor(this.selectedConversationId === item.id ? '#E7F3FA' : '#F8FBFD')
-          .border({ width: 1, color: this.selectedConversationId === item.id ? '#90C8E6' : '#E4EDF3' })
-          .borderRadius(10)
-          .onClick((): void => { this.openConversation(item.id); })
+          .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
         }
-      })
+      }, (item: AgentConversationItem): string => item.id)
     }
     .layoutWeight(1)
     .width('100%')
+    .padding({ left: 18, right: 18 })
+    .backgroundColor($r('app.color.app_card_bg'))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: -16 }))
+      .animation({ duration: 260, curve: Curve.EaseOut }))
   }
 
   @Builder MessageStream() {
-    List({ space: 18, scroller: this.messageScroller }) {
-      ForEach(this.messages, (turn: AgentTurnItem): void => {
+    List({ space: 0, scroller: this.messageScroller }) {
+      LazyForEach(this.messageSource, (turn: AgentTurnItem): void => {
         ListItem() {
-          Column({ space: 10 }) {
+          Column({ space: 13 }) {
             Row({ space: 8 }) {
-              Text(`调查轮次 ${turn.turnIndex}`)
+              Text(`第 ${turn.turnIndex} 轮`)
                 .fontSize(11)
-                .fontColor('#5C7992')
-              Text(turn.status === 'processing' ? '正在查证' : (turn.status === 'failed' ? '未完成' : '已形成结论'))
+                .fontColor($r('app.color.app_text_muted'))
+                .layoutWeight(1)
+              Text(turn.status === 'processing' ? '运行中' :
+                (turn.status === 'stopped' ? '已停止' : (turn.status === 'failed' ? '未完成' : '已完成')))
                 .fontSize(11)
-                .fontColor(turn.status === 'failed' ? '#BA4A4A' : (turn.status === 'processing' ? '#C77818' : '#298066'))
+                .fontColor(turn.status === 'failed' || turn.status === 'stopped' ? $r('app.color.app_danger') :
+                  (turn.status === 'processing' ? $r('app.color.app_warning') : $r('app.color.app_success')))
             }
-            Text(turn.question)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#17324D')
-              .lineHeight(24)
+            Column({ space: 6 }) {
+              Text(turn.creatorId ? `${turn.creatorId} · 提问` : '组员提问')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_muted'))
+              if (turn.modelConfigLabel) {
+                Text(turn.modelConfigLabel)
+                  .fontSize(10)
+                  .fontColor($r('app.color.app_text_secondary'))
+              }
+              Text(turn.question)
+                .fontSize(15)
+                .fontColor($r('app.color.app_text_primary'))
+                .lineHeight(23)
+            }
+            .width('88%')
+            .alignSelf(ItemAlign.End)
+            .alignItems(HorizontalAlign.Start)
+            .padding({ left: 14, right: 14, top: 11, bottom: 11 })
+            .backgroundColor($r('app.color.app_primary_soft'))
+            .borderRadius(16)
+            Row({ space: 7 }) {
+              Text('✦').fontSize(16).fontColor($r('app.color.app_selection'))
+              Text('调查 Agent')
+                .fontSize(12)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.app_text_secondary'))
+            }
             if (turn.status === 'processing') {
-              Row({ space: 8 }) {
-                LoadingProgress().width(16).height(16).color('#2788B8')
-                Text(this.liveProgress || 'Agent 正在调取视频证据与轨迹索引…')
-                  .fontSize(13)
-                  .fontColor('#5D7992')
-                  .maxLines(2)
-              }
-              .padding(12)
-              .backgroundColor('#F0F8FC')
-              .borderRadius(8)
-            } else {
-              Text(turn.answer || '没有生成可用结论。')
-                .fontSize(14)
-                .fontColor(turn.status === 'failed' ? '#9C3D3D' : '#38536A')
-                .lineHeight(22)
-                .copyOption(CopyOptions.InApp)
-              if (turn.toolCalls.length > 0) {
-                Flex({ wrap: FlexWrap.Wrap }) {
-                  Text('本轮查证')
-                    .fontSize(11)
-                    .fontColor('#6B8499')
-                    .margin({ right: 6, top: 4, bottom: 4 })
-                  ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
-                    Text(this.toolNameLabel(call.name))
-                      .fontSize(11)
-                      .fontColor('#2A688C')
-                      .padding({ left: 7, right: 7, top: 4, bottom: 4 })
-                      .backgroundColor('#EAF5FA')
-                      .borderRadius(6)
-                      .margin({ right: 6, top: 3, bottom: 3 })
-                  }, (call: AgentToolCall, index: number): string => `${call.name}-${index}`)
+              Column({ space: 7 }) {
+                Row({ space: 8 }) {
+                  LoadingProgress().width(16).height(16).color($r('app.color.app_selection'))
+                  Text(turn.id === this.currentTaskId ?
+                    `${this.liveStage} · 已运行 ${this.formatDuration(this.elapsedSeconds)}` : '调查任务仍在运行…')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.app_primary'))
                 }
-                .width('100%')
+                Text(turn.id === this.currentTaskId ?
+                  (this.liveProgress || 'Agent 正在调取视频证据与轨迹索引…') : '正在等待最新进度…')
+                  .fontSize(13).fontColor($r('app.color.app_text_secondary')).maxLines(2)
+                if (turn.id === this.currentTaskId && this.quietSeconds >= 90) {
+                  Text(`已有 ${this.formatDuration(this.quietSeconds)} 没有新步骤，可能仍在等待模型或工具。可停止本轮后重试。`)
+                    .fontSize(11).fontColor($r('app.color.app_warning'))
+                }
               }
+              .padding({ left: 0, right: 0, top: 4, bottom: 4 })
+            }
+            if (turn.toolCalls.length > 0) {
+              this.ToolTrace(turn)
+            }
+            if (turn.status !== 'processing') {
+              Column({ space: 9 }) {
+                MarkdownAnswer({
+                  markdown: turn.answer || '没有生成可用结论。',
+                  failed: turn.status === 'failed' || turn.status === 'stopped',
+                  onTimestampClick: (video: number, time: string): void => {
+                    if (video <= turn.segmentIds.length) {
+                      this.onTimestampClick(turn.segmentIds[video - 1], time);
+                    }
+                  }
+                })
+                  .width('100%')
+                if (turn.status === 'completed' && turn.answer.trim().length > 0) {
+                  Button('分享结论')
+                    .fontSize(12)
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .fontColor($r('app.color.app_primary'))
+                    .borderRadius(8)
+                    .onClick((): void => { this.shareConclusion(turn); })
+                  if (this.shareErrorTurnId === turn.id) {
+                    Text('无法打开系统分享面板，请稍后重试。')
+                      .fontSize(11)
+                      .fontColor($r('app.color.app_danger'))
+                  }
+                }
+                if (turn.status === 'failed' && turn.id === this.messages[this.messages.length - 1].id) {
+                  Button('重新尝试这一问  ↗')
+                    .fontSize(12)
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .fontColor($r('app.color.app_primary'))
+                    .borderRadius(8)
+                    .enabled(!this.isSending && this.canContinue())
+                    .onClick((): void => { this.retryTurn(turn); })
+                }
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
             }
           }
           .width('100%')
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .border({ width: { left: 3, top: 1, right: 1, bottom: 1 }, color: turn.status === 'processing' ? '#7DC2E8' : '#E2ECF2' })
-          .borderRadius(12)
+          .alignItems(HorizontalAlign.Start)
+          .padding({ left: 18, right: 18, top: 20, bottom: 23 })
+          .backgroundColor($r('app.color.app_card_bg'))
+          .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }
-      })
+      }, (turn: AgentTurnItem): string => turn.id)
     }
     .width('100%')
     .layoutWeight(1)
+    .cachedCount(1)
+    .backgroundColor($r('app.color.app_card_bg'))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 16 }))
+      .animation({ duration: 260, curve: Curve.EaseOut }))
   }
 
   @Builder Composer() {
-    Column({ space: 8 }) {
-      if (this.liveProgress.length > 0 && !this.isSending) {
-        Text(this.liveProgress)
-          .fontSize(12)
-          .fontColor('#A24B32')
+    Column({ space: 6 }) {
+      if (this.currentTaskId.length > 0) {
+        Row({ space: 10 }) {
+          LoadingProgress().width(16).height(16).color($r('app.color.app_selection'))
+          Text('正在调查 · 组员可查看进度')
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+            .maxLines(1)
+            .layoutWeight(1)
+          Button(this.isStopping ? '停止中…' : '停止本轮')
+            .enabled(!this.isStopping)
+            .fontSize(12)
+            .backgroundColor($r('app.color.app_danger_soft'))
+            .fontColor($r('app.color.app_danger'))
+            .borderRadius(8)
+            .onClick((): void => { this.stopTask(); })
+        }
+        .width('100%')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+      } else if (this.isSending) {
+        Row({ space: 8 }) {
+          LoadingProgress().width(17).height(17).color($r('app.color.app_selection'))
+          Text('正在提交调查…').fontSize(13).fontColor($r('app.color.app_text_muted'))
+        }
+        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+      } else {
+        if (this.liveProgress.length > 0) {
+          Text(this.liveProgress)
+            .fontSize(12)
+            .fontColor($r('app.color.app_danger'))
+        }
+        TextArea({ placeholder: '请输入追问', text: this.composerText })
+          .height(52)
+          .fontSize(14)
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_page_bg'))
+          .border({ width: 1, color: this.composerFocused ? $r('app.color.app_selection') : $r('app.color.app_border') })
+          .borderRadius(16)
+          .padding(10)
+          .animation({ duration: 160, curve: Curve.EaseOut })
+          .onFocus((): void => {
+            this.composerFocused = true;
+            setTimeout((): void => this.messageScroller.scrollEdge(Edge.Bottom), 250);
+          })
+          .onBlur((): void => { this.composerFocused = false; })
+          .onChange((value: string): void => { this.composerText = value; })
+        Row({ space: 8 }) {
+          this.CompactModelSelector()
+          Button('发送')
+            .enabled(this.canContinue() && this.composerText.trim().length > 0)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .height(36)
+            .backgroundColor($r('app.color.app_action_bg'))
+            .fontColor(Color.White)
+            .borderRadius(9)
+            .onClick((): void => { this.submitTurn(); })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
       }
-      TextArea({ placeholder: '继续追问，Agent 会继承本次调查的证据范围与已确认结论', text: this.composerText })
-        .height(82)
-        .fontSize(14)
-        .fontColor('#17324D')
-        .backgroundColor('#F8FBFD')
-        .border({ width: 1, color: '#CFE0EA' })
-        .borderRadius(12)
-        .padding(10)
-        .onChange((value: string): void => { this.composerText = value; })
-      Row() {
-        Text('可查找目标、相似画面、画面文字、人脸线索，并核验单帧。')
-          .fontSize(11)
-          .fontColor('#6B8499')
-          .layoutWeight(1)
-        Button(this.isSending ? '查证中' : '发送追问')
-          .enabled(!this.isSending && this.composerText.trim().length > 0)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .backgroundColor('#173D59')
-          .fontColor(Color.White)
-          .borderRadius(9)
-          .onClick((): void => { this.submitTurn(); })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(14)
-    .backgroundColor('#FFFFFF')
-    .border({ width: { top: 1 }, color: '#E0EBF1' })
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .backgroundColor($r('app.color.app_card_bg'))
+    .border({ width: { top: 1 }, color: $r('app.color.app_border') })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+  }
+
+  @Builder ModelSelector() {
+    Row({ space: 4 }) {
+      Text('模型').fontSize(11).fontColor($r('app.color.app_text_muted'))
+      Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
+        const option = new ConfigSelectItem();
+        option.value = `${item.scope === 'group' ? '小组' : '个人'} · ${item.name} (${item.model})`;
+        return option as SelectOption;
+      }))
+        .selected(Math.max(0, this.modelConfigs.findIndex((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)))
+        .value(this.modelConfigs.find((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)?.name || '选择配置')
+        .font({ size: 11 })
+        .backgroundColor($r('app.color.app_primary_soft'))
+        .onSelect((index: number): void => {
+          if (this.modelConfigs[index]) this.selectedModelConfigId = this.modelConfigs[index].id;
+        })
+        .layoutWeight(1)
+      Button('刷新').fontSize(11).backgroundColor(Color.Transparent).fontColor($r('app.color.app_selection'))
+        .onClick((): void => { this.loadModelConfigs(); })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.End)
+  }
+
+  @Builder CompactModelSelector() {
+    Row({ space: 4 }) {
+      Text('模型').fontSize(11).fontColor($r('app.color.app_text_muted'))
+      Select(this.modelConfigs.map((item: ModelConfigOption): SelectOption => {
+        const option = new ConfigSelectItem();
+        option.value = `${item.scope === 'group' ? '小组' : '个人'} · ${item.name} (${item.model})`;
+        return option as SelectOption;
+      }))
+        .selected(Math.max(0, this.modelConfigs.findIndex((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)))
+        .value(this.modelConfigs.find((item: ModelConfigOption): boolean =>
+          item.id === this.selectedModelConfigId)?.name || '选择配置')
+        .font({ size: 11 })
+        .backgroundColor($r('app.color.app_primary_soft'))
+        .onSelect((index: number): void => {
+          if (this.modelConfigs[index]) this.selectedModelConfigId = this.modelConfigs[index].id;
+        })
+        .layoutWeight(1)
+    }
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Start)
   }
 
   @Builder NewInvestigation() {
     Column({ space: 14 }) {
-      Text('建立一条调查线')
+      Text('新建调查')
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#17324D')
-      Text('先圈定证据范围。后续追问会沿用这些录像，并将确认过的结论带入下一轮核验。')
+        .fontColor($r('app.color.app_text_primary'))
+      Text('选择视频片段并提问，后续可以继续追问。')
         .fontSize(13)
-        .fontColor('#5D7992')
+        .fontColor($r('app.color.app_text_secondary'))
         .lineHeight(20)
-      Text('选择相关片段')
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#38536A')
+      Row() {
+        Text('选择相关片段')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(`已选 ${this.selectedSegmentIds.length}/20`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_muted'))
+      }.width('100%')
+      if (this.segmentLoadError) {
+        Row({ space: 8 }) {
+          Text(this.segmentLoadError).fontSize(12).fontColor($r('app.color.app_danger')).layoutWeight(1)
+          Button('重试').fontSize(12).backgroundColor($r('app.color.app_danger_soft')).fontColor($r('app.color.app_danger'))
+            .onClick((): void => { this.loadSegments(); })
+        }.width('100%')
+      }
       List({ space: 8 }) {
         ForEach(this.segments, (segment: AgentSegmentChoice): void => {
           ListItem() {
             Row({ space: 10 }) {
               Text(this.isSelected(segment.id) ? '✓' : '')
                 .fontSize(16)
-                .fontColor('#FFFFFF')
+                .fontColor($r('app.color.app_text_on_inverted'))
                 .textAlign(TextAlign.Center)
                 .width(22)
                 .height(22)
-                .backgroundColor(this.isSelected(segment.id) ? '#2788B8' : '#D8E5EC')
+                .backgroundColor(this.isSelected(segment.id) ? $r('app.color.app_selection') : $r('app.color.app_primary_soft'))
                 .borderRadius(11)
+                .scale({ x: this.isSelected(segment.id) ? 1 : 0.88,
+                  y: this.isSelected(segment.id) ? 1 : 0.88 })
+              if (segment.thumbnailUrl) {
+                Image(BASE_HOST + segment.thumbnailUrl)
+                  .width(56)
+                  .height(48)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(7)
+              }
               Column({ space: 3 }) {
+                Text(segment.videoName)
+                  .fontSize(10)
+                  .fontColor($r('app.color.app_text_muted'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
                 Text(segment.title)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#17324D')
+                  .fontColor($r('app.color.app_text_primary'))
                   .maxLines(1)
-                Text(`${segment.videoName} · ${segment.durationText}`)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(segment.durationText)
                   .fontSize(11)
-                  .fontColor('#668198')
+                  .fontColor($r('app.color.app_text_muted'))
               }
               .layoutWeight(1)
-              Text(segment.status === 'completed' ? '已索引' : '待索引')
+              Text(segment.status === 'pending' || segment.status === 'processing' ? '处理中' :
+                (segment.status === 'completed' ? '已索引' : '按需索引'))
                 .fontSize(11)
-                .fontColor(segment.status === 'completed' ? '#2A8268' : '#C77818')
+                .fontColor(segment.status === 'pending' || segment.status === 'processing' ? $r('app.color.app_warning') :
+                  (segment.status === 'completed' ? $r('app.color.app_success') : $r('app.color.app_primary')))
             }
             .width('100%')
             .padding(12)
-            .backgroundColor(this.isSelected(segment.id) ? '#EDF8FD' : '#FFFFFF')
-            .border({ width: 1, color: this.isSelected(segment.id) ? '#8BC8E7' : '#E2ECF2' })
+            .backgroundColor(this.isSelected(segment.id) ? $r('app.color.app_primary_soft') :
+              (segment.status === 'pending' || segment.status === 'processing' ? $r('app.color.app_input_bg') :
+                $r('app.color.app_card_bg')))
+            .border({ width: 1, color: this.isSelected(segment.id) ? $r('app.color.app_selection') : $r('app.color.app_border') })
             .borderRadius(10)
+            .animation({ duration: 160, curve: Curve.EaseOut })
             .onClick((): void => { this.toggleSegment(segment.id); })
           }
-        })
+        }, (segment: AgentSegmentChoice): string => `${segment.id}`)
+        if (this.segments.length === 0 && !this.segmentLoadError) {
+          ListItem() {
+            Text('暂无视频片段，请先在「片段」页面添加。')
+              .fontSize(12).fontColor($r('app.color.app_text_muted')).padding(16)
+          }
+        }
       }
       .width('100%')
       .layoutWeight(1)
-      TextArea({ placeholder: '例如：这个穿深色上衣的人先后出现在哪里？', text: this.composerText })
+      TextArea({ placeholder: '请输入问题', text: this.composerText })
         .height(88)
         .fontSize(14)
-        .backgroundColor('#F8FBFD')
-        .border({ width: 1, color: '#CFE0EA' })
+        .backgroundColor($r('app.color.app_input_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(12)
         .padding(10)
         .onChange((value: string): void => { this.composerText = value; })
+      this.ModelSelector()
+      if (this.modelLoadError) {
+        Text(this.modelLoadError).fontSize(11).fontColor($r('app.color.app_danger'))
+      }
+      if (this.liveProgress) {
+        Text(this.liveProgress).fontSize(11).fontColor($r('app.color.app_danger'))
+      }
       Row({ space: 10 }) {
         Button('返回')
           .layoutWeight(1)
           .height(42)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#38536A')
-          .border({ width: 1, color: '#CFE0EA' })
+          .backgroundColor($r('app.color.app_card_bg'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .border({ width: 1, color: $r('app.color.app_border') })
           .borderRadius(9)
-          .onClick((): void => { this.creatingInvestigation = false; })
+          .onClick((): void => { this.showConversationList(); })
         Button('开始调查')
           .layoutWeight(1)
           .height(42)
           .enabled(!this.isSending && this.composerText.trim().length > 0 && this.selectedSegmentIds.length > 0)
-          .backgroundColor('#173D59')
+          .backgroundColor($r('app.color.app_action_bg'))
           .fontColor(Color.White)
           .borderRadius(9)
           .onClick((): void => { this.submitTurn(); })
@@ -508,71 +1598,162 @@ export struct AgentConversationPanel {
     .width('100%')
     .layoutWeight(1)
     .padding(18)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 16 }))
+      .animation({ duration: 260, curve: Curve.EaseOut }))
+  }
+
+  @Builder ConversationSkeletonRow() {
+    Row({ space: 12 }) {
+      Blank().width(34).height(34).backgroundColor($r('app.color.app_primary_soft')).borderRadius(10)
+      Column({ space: 8 }) {
+        Blank().width('65%').height(12).backgroundColor($r('app.color.app_border')).borderRadius(6)
+        Blank().width('85%').height(10).backgroundColor($r('app.color.app_card_subtle_bg')).borderRadius(5)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding({ top: 15, bottom: 15 })
+    .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
   }
 
   build() {
     Column() {
       Row() {
+        if (this.selectedConversationId || this.creatingInvestigation) {
+          Button('‹')
+            .width(36)
+            .height(36)
+            .fontSize(23)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ right: 8 })
+            .onClick((): void => { this.showConversationList(); })
+        }
+        if (this.selectedConversationId) {
+          Text('✦')
+            .fontSize(16)
+            .fontColor($r('app.color.app_primary'))
+            .textAlign(TextAlign.Center)
+            .width(34)
+            .height(34)
+            .backgroundColor($r('app.color.app_primary_soft'))
+            .borderRadius(10)
+            .margin({ right: 8 })
+            .geometryTransition(`investigation-${this.selectedConversationId}`)
+            .transition(TransitionEffect.OPACITY)
+        }
         Column({ space: 3 }) {
-          Text('调查 Agent')
-            .fontSize(18)
+          Text(this.selectedConversationId ? this.activeConversationTitle() : '调查 Agent')
+            .fontSize(17)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#17324D')
-          Text(this.selectedConversationId ? '证据优先 · 支持连续追问' : '从一段录像开始建立可核验的调查线 · 目标、语义与文字均可追溯')
+            .fontColor($r('app.color.app_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.selectedConversationId ? this.evidenceScopeLabel() : '视频调查与组员协作')
             .fontSize(11)
-            .fontColor('#668198')
+            .fontColor($r('app.color.app_text_muted'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
-        Button('+ 新调查')
+        Button('+ 新建')
+          .enabled(this.currentTaskId.length === 0 && !this.isSending)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .backgroundColor('#E7F3FA')
-          .fontColor('#1C628C')
-          .border({ width: 1, color: '#9CCDE5' })
+          .backgroundColor($r('app.color.app_card_subtle_bg'))
+          .fontColor($r('app.color.app_primary'))
           .borderRadius(8)
           .onClick((): void => { this.startInvestigation(); })
       }
       .width('100%')
-      .padding({ left: 18, right: 18, top: 15, bottom: 12 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: { bottom: 1 }, color: '#E0EBF1' })
+      .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+      .backgroundColor($r('app.color.app_card_bg'))
+      .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
 
       if (this.isLoading) {
         Column({ space: 12 }) {
-          LoadingProgress().width(28).height(28).color('#2788B8')
-          Text('正在整理调查记录…').fontSize(13).fontColor('#668198')
+          Text('正在载入调查记录').fontSize(13).fontColor($r('app.color.app_text_muted'))
+          this.ConversationSkeletonRow()
+          this.ConversationSkeletonRow()
+          this.ConversationSkeletonRow()
         }
         .width('100%')
         .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
+        .padding({ left: 20, right: 20, top: 22 })
+        .alignItems(HorizontalAlign.Start)
       } else if (this.creatingInvestigation) {
         this.NewInvestigation()
       } else if (!this.selectedConversationId) {
-        Column({ space: 14 }) {
+        Column({ space: 10 }) {
+          if (this.conversationLoadError) {
+            Row({ space: 8 }) {
+              Text(this.conversationLoadError)
+                .fontSize(12).fontColor($r('app.color.app_danger')).layoutWeight(1)
+              Button('重试')
+                .fontSize(12).backgroundColor($r('app.color.app_danger_soft')).fontColor($r('app.color.app_danger'))
+                .onClick((): void => { this.loadConversations(); })
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor($r('app.color.app_danger_soft'))
+            .borderRadius(9)
+          }
           if (this.conversations.length > 0) {
-            Text('继续一条调查').fontSize(13).fontColor('#668198')
+            Row() {
+              Text('调查记录')
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.app_text_primary'))
+                .layoutWeight(1)
+              Text(`${this.conversations.length} 条`)
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_muted'))
+            }
+            .width('100%')
             this.ConversationRail()
-          } else {
-            Text('还没有调查线').fontSize(18).fontWeight(FontWeight.Medium).fontColor('#17324D')
-            Text('选择相关视频并提出第一个问题，Agent 会持续保存这条调查的证据范围和结论。')
-              .fontSize(13).fontColor('#668198').textAlign(TextAlign.Center).lineHeight(20)
-            Button('开始第一条调查')
-              .backgroundColor('#173D59').fontColor(Color.White).borderRadius(9)
+          } else if (!this.conversationLoadError) {
+            Text('✦')
+              .fontSize(30)
+              .fontColor($r('app.color.app_selection'))
+              .textAlign(TextAlign.Center)
+              .width(64)
+              .height(64)
+              .backgroundColor($r('app.color.app_primary_soft'))
+              .borderRadius(18)
+            Text('开始视频调查')
+              .fontSize(21).fontWeight(FontWeight.Bold).fontColor($r('app.color.app_text_primary'))
+            Text('选择视频片段并提问，组员也可以继续追问。')
+              .fontSize(13).fontColor($r('app.color.app_text_muted')).textAlign(TextAlign.Center).lineHeight(21)
+            Button('新建调查  ↗')
+              .height(44)
+              .backgroundColor($r('app.color.app_action_bg')).fontColor(Color.White).borderRadius(10)
               .onClick((): void => { this.startInvestigation(); })
           }
         }
         .width('100%')
         .layoutWeight(1)
-        .padding(22)
+        .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+        .alignItems(HorizontalAlign.Center)
         .justifyContent(FlexAlign.Center)
       } else {
         this.MessageStream()
-        this.Composer()
+        if (this.canContinue()) {
+          this.Composer()
+        } else {
+          Text('调查记录尚未加载，暂时无法追问。')
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_muted'))
+            .width('100%')
+            .padding(15)
+            .backgroundColor($r('app.color.app_card_bg'))
+        }
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F9FB')
+    .backgroundColor($r('app.color.app_page_bg'))
   }
 }

@@ -2,23 +2,23 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#0A1116"
+      "value": "#0B1424"
     },
     {
       "name": "app_page_bg",
-      "value": "#0A1116"
+      "value": "#0B1424"
     },
     {
       "name": "app_top_bar_bg",
-      "value": "#0E171D"
+      "value": "#101B2E"
     },
     {
       "name": "app_nav_bar_bg",
-      "value": "#0E171D"
+      "value": "#101B2E"
     },
     {
       "name": "app_nav_item_bg",
-      "value": "#1B2A32"
+      "value": "#1C2D47"
     },
     {
       "name": "app_nav_icon",
@@ -26,7 +26,7 @@
     },
     {
       "name": "app_nav_icon_selected",
-      "value": "#F3F7F9"
+      "value": "#A9C8FF"
     },
     {
       "name": "app_nav_text",
@@ -34,7 +34,7 @@
     },
     {
       "name": "app_nav_text_selected",
-      "value": "#F3F7F9"
+      "value": "#A9C8FF"
     },
     {
       "name": "app_nav_shadow",
@@ -42,15 +42,15 @@
     },
     {
       "name": "app_card_bg",
-      "value": "#111C22"
+      "value": "#142137"
     },
     {
       "name": "app_card_subtle_bg",
-      "value": "#19262D"
+      "value": "#1B2B45"
     },
     {
       "name": "app_input_bg",
-      "value": "#152229"
+      "value": "#192940"
     },
     {
       "name": "app_text_primary",
@@ -66,7 +66,7 @@
     },
     {
       "name": "app_border",
-      "value": "#2C3B42"
+      "value": "#344865"
     },
     {
       "name": "app_shadow",
@@ -74,27 +74,39 @@
     },
     {
       "name": "app_primary",
-      "value": "#79A8C7"
+      "value": "#83B4FF"
+    },
+    {
+      "name": "app_action_bg",
+      "value": "#2459B8"
     },
     {
       "name": "app_primary_soft",
-      "value": "#1B3342"
+      "value": "#203B61"
     },
     {
       "name": "app_accent",
-      "value": "#F2B13B"
+      "value": "#83B4FF"
     },
     {
       "name": "app_accent_soft",
-      "value": "#463619"
+      "value": "#203B61"
     },
     {
       "name": "app_success",
       "value": "#5DC6A8"
     },
     {
+      "name": "app_success_soft",
+      "value": "#1C3C38"
+    },
+    {
       "name": "app_danger",
       "value": "#FF8D8D"
+    },
+    {
+      "name": "app_danger_soft",
+      "value": "#422A36"
     },
     {
       "name": "app_live",
@@ -102,7 +114,7 @@
     },
     {
       "name": "app_selection",
-      "value": "#78A9EA"
+      "value": "#83B4FF"
     },
     {
       "name": "app_surface_inverted",
@@ -114,11 +126,15 @@
     },
     {
       "name": "app_track",
-      "value": "#33434A"
+      "value": "#3D5270"
     },
     {
       "name": "app_warning",
       "value": "#F2B13B"
+    },
+    {
+      "name": "app_warning_soft",
+      "value": "#43351F"
     }
   ]
 }

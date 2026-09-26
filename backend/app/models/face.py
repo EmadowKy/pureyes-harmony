@@ -25,6 +25,8 @@ class WorkspaceFaceGroup(db.Model):
                 path_scope(self.avatar_path),
             ) if self.avatar_path else "",
             'record_count': len(self.records),
+            'is_legacy': any(record.classification_backend == 'legacy' for record in self.records),
+            'needs_classification': any(record.classification_backend == 'harmony_pending' for record in self.records),
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else ''
         }
 
@@ -37,6 +39,8 @@ class WorkspaceFaceRecord(db.Model):
     segment_id = db.Column(db.Integer, db.ForeignKey('workspace_video_segments.id'), nullable=True)
     
     crop_path = db.Column(db.String(255), nullable=False)
+    embedding_json = db.Column(db.Text, nullable=True)
+    classification_backend = db.Column(db.String(24), nullable=False, default='legacy')
     video_name = db.Column(db.String(255), nullable=False, default='')
     start_time_offset = db.Column(db.Float, nullable=False, default=0.0)
     end_time_offset = db.Column(db.Float, nullable=False, default=0.0)
@@ -58,6 +62,7 @@ class WorkspaceFaceRecord(db.Model):
             'id': self.id,
             'workspace_id': self.workspace_id,
             'group_id': self.group_id,
+            'classification_backend': self.classification_backend,
             'segment_id': self.segment_id,
             'segment_filepath': seg_filepath,
             'segment_media_url': build_media_url(

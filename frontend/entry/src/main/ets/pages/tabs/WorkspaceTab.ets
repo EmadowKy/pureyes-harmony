@@ -184,7 +184,7 @@ export struct WorkspaceTab {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
 
-          Text(this.workspaces.length > 0 ? `${this.workspaces.length} 个进行中的调查` : '把相关视频、片段和问答归入同一条调查线')
+          Text(this.workspaces.length > 0 ? `${this.workspaces.length} 个工作区` : '在工作区整理视频和调查记录')
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
         }
@@ -236,7 +236,7 @@ export struct WorkspaceTab {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
 
-          Text('导入视频、截取片段，然后围绕画面发起问答。')
+          Text('导入视频、截取片段，再用 Agent 串联证据与追问。')
             .fontSize(13)
             .fontColor($r('app.color.app_text_secondary'))
             .textAlign(TextAlign.Center)
@@ -281,7 +281,7 @@ export struct WorkspaceTab {
                       .width(16)
                       .height(16)
                       .objectFit(ImageFit.Contain)
-                    Text(`${ws.qa_count} 条问答记录`)
+                    Text(`${ws.qa_count} 轮调查问答`)
                       .fontSize(12)
                       .fontColor($r('app.color.app_text_secondary'))
                   }

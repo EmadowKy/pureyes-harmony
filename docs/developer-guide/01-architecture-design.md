@@ -6,7 +6,7 @@
 
 ## 1. 全局分层架构图
 
-系统采用标准的前后端分离 + 大模型集中推理三层架构设计，AI 视觉引擎已全面升级为 **MVA_v2 (ReAct Multi-Agent 架构)**：
+系统采用前后端分离与云端大模型 API 的分层架构。工作区调查由 MVA_v2 的 ReAct 工具调用运行器驱动，前端展示多轮会话与公开执行记录：
 
 ```mermaid
 graph TB
@@ -20,11 +20,11 @@ graph TB
         API[Flask RESTful API 路由分发]
         Auth[Auth / JWT 校验 & 黑名单熔断]
         ORM[SQLAlchemy ORM 数据访问]
-        DB[(SQLite / MySQL 数据库 user.db)]
+        DB[(SQLite / PostgreSQL / MySQL)]
     end
 
     subgraph "AI 多模态分析层 MVA_v2 (PyTorch CUDA)"
-        MVA2[MVA_v2 ReAct Multi-Agent 思考引擎]
+        MVA2[MVA_v2 ReAct 工具调用运行器]
         LLM[多模态视觉大语言模型 API]
         YOLO[YOLOv8 + ByteTrack 跨帧跟踪引擎]
         VectorDB[OSNet / CLIP 时空特征向量数据库]
@@ -57,21 +57,19 @@ sequenceDiagram
     participant Engine as MVA_v2 Engine (pipeline & agents)
     participant LLM as 多模态视觉大模型 API
 
-    Dev->>Backend: POST /api/workspaces/:id/upload-video (上传视频源)
-    Dev->>Backend: POST /api/workspaces/:id/segments (创建切片)
-    Backend->>Engine: 异步启动采样切片 (Sample FPS=1.0, 1080P)
-    Engine->>Engine: FFmpeg 抽帧 + YOLOv8/ByteTrack 生成 TrackID 与向量库
-    Engine->>DB: 更新 WorkspaceVideoSegment 状态为 completed
-    Dev->>Backend: GET /api/workspaces/:id/segments (刷新预处理进度)
-    Backend-->>Dev: 返回切片就绪 (status: completed)
-
-    Dev->>Backend: POST /api/workspaces/:id/qa (包含 segment_ids, question)
-    Backend->>Engine: 启动 ReAct Agent (Thought -> Tool Call -> Observation)
-    Engine->>LLM: 图像序列/TrackID + System Prompt 输入大模型
-    LLM-->>Engine: 生成结构化 JSON (时间戳、片段描述、置信度)
-    Engine->>DB: 保存问答记录 QARecord
-    Backend-->>Dev: 返回 task_id，客户端轮询状态并展示文本回答
-    Dev->>Dev: 高亮关键帧与时间轴，点击自动跳帧播放
+    Dev->>Backend: GET /api/workspaces/:id/video-sources
+    Dev->>Backend: POST /api/workspaces/:id/segments (截取片段、可选预处理)
+    Backend->>Engine: 预处理目标、人脸、语义和文字索引（若启用）
+    Engine->>DB: 更新片段状态与进度
+    Dev->>Backend: POST /api/workspaces/:id/qa (片段 ID 与问题)
+    Backend->>DB: 保存调查会话与 processing 轮次
+    Backend-->>Dev: task_id、conversation_id、turn_index
+    Backend->>Engine: 启动限定视频范围的 Agent 轮次
+    Engine->>LLM: 提问、有限历史上下文与工具观察
+    LLM-->>Engine: 工具请求或最终回答
+    Engine->>DB: 保存公开进度和终态
+    Dev->>Backend: 查询状态及会话消息
+    Backend-->>Dev: 工具调用记录、Markdown 结论与时间标记
 ```
 
 ---
@@ -79,7 +77,7 @@ sequenceDiagram
 ## 3. 通信协议与数据格式
 
 - **传输协议**：HTTP/1.1 与 HTTP/2；生产部署必须在反向代理层启用 HTTPS。
-- **数据交互格式**：全站使用标准 `application/json` 规范。
+- **数据交互格式**：主要接口使用 JSON；视频上传使用 `multipart/form-data`，进度流使用 SSE。
 - **静态资源与流媒体**：
   - 抓拍快照与缩略图：使用服务端签发的限时 `media_token` 地址。
   - 视频切片流：`/api/video/...` 支持 HTTP Range 请求；每次访问同时校验签名范围和当前小组成员关系。

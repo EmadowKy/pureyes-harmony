@@ -1,6 +1,27 @@
 import { HttpUtil } from '../../utils/http'
 import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { SecurityUtil } from '../../utils/security'
+import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
+import { common } from '@kit.AbilityKit';
+
+class ConfigGroupOption {
+  id: number = 0;
+  name: string = '';
+  isCreator: boolean = false;
+}
+
+class ConfigGroupSelectItem {
+  value: string = '';
+}
+
+class ModelConfigPayload {
+  scope: string = 'personal';
+  group_id?: number;
+  name: string = '';
+  api_key?: string;
+  base_url: string = '';
+  model: string = '';
+}
 
 interface ToastOptions {
   message: string;
@@ -93,7 +114,7 @@ export struct CreateUserDialog {
         .width('100%')
         .textAlign(TextAlign.Start)
 
-      TextInput({ placeholder: '工号', text: this.empId })
+      TextInput({ placeholder: '请输入工号', text: this.empId })
         .width('100%')
         .onChange((val: string): void => {
           this.empId = val;
@@ -104,7 +125,7 @@ export struct CreateUserDialog {
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      TextInput({ placeholder: '姓名，可选', text: this.name })
+      TextInput({ placeholder: '请输入姓名（选填）', text: this.name })
         .width('100%')
         .onChange((val: string): void => {
           this.name = val;
@@ -115,7 +136,7 @@ export struct CreateUserDialog {
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      TextInput({ placeholder: '手机号，可选', text: this.phone })
+      TextInput({ placeholder: '请输入手机号（选填）', text: this.phone })
         .width('100%')
         .onChange((val: string): void => {
           this.phone = val;
@@ -126,7 +147,7 @@ export struct CreateUserDialog {
         .border({ width: 1, color: $r('app.color.app_border') })
         .borderRadius(8)
 
-      TextInput({ placeholder: '初始密码，至少6位', text: this.pass })
+      TextInput({ placeholder: '请输入初始密码（至少 6 位）', text: this.pass })
         .width('100%')
         .type(InputType.Password)
         .onChange((val: string): void => {
@@ -216,8 +237,12 @@ export struct ProfileTab {
   @State llmApiKey: string = '';
   @State llmBaseUrl: string = '';
   @State llmModel: string = '';
-  @State isApiKeyConfigured: boolean = false;
-  @State clearApiKeyRequested: boolean = false;
+  @State llmConfigName: string = '';
+  @State llmConfigScope: string = 'personal';
+  @State llmConfigGroupId: number = 0;
+  @State editingConfigId: number = 0;
+  @State modelConfigs: Array<ModelConfigOption> = [];
+  @State configGroups: Array<ConfigGroupOption> = [];
 
   showToast(options: ToastOptions): void {
     try {
@@ -295,11 +320,6 @@ export struct ProfileTab {
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       this.user = this.parseUser(dataObj);
-      this.llmApiKey = '';
-      this.isApiKeyConfigured = this.user.llm_api_key_configured;
-      this.clearApiKeyRequested = false;
-      this.llmBaseUrl = this.user.llm_base_url || '';
-      this.llmModel = this.user.llm_model || '';
     }
   }
 
@@ -409,11 +429,8 @@ export struct ProfileTab {
       this.searchKeyword = '';
       this.adminUsers = [];
     } else if (page === PAGE_API_CONFIG) {
-      this.llmApiKey = '';
-      this.isApiKeyConfigured = this.user.llm_api_key_configured;
-      this.clearApiKeyRequested = false;
-      this.llmBaseUrl = this.user.llm_base_url || '';
-      this.llmModel = this.user.llm_model || '';
+      this.resetModelConfigEditor();
+      this.loadModelConfigs();
     }
   }
 
@@ -529,51 +546,102 @@ export struct ProfileTab {
     }
   }
 
-  confirmResetApiKey(): void {
+  async submitSaveApiConfig(): Promise<void> {
+    const payload = new ModelConfigPayload();
+    payload.name = this.llmConfigName.trim();
+    payload.base_url = this.llmBaseUrl.trim();
+    payload.model = this.llmModel.trim();
+    if (this.llmApiKey.trim()) payload.api_key = this.llmApiKey.trim();
+    if (!this.editingConfigId) {
+      payload.scope = this.llmConfigScope;
+      if (payload.scope === 'group') payload.group_id = this.llmConfigGroupId;
+    }
+    const res = this.editingConfigId ?
+      await HttpUtil.put(`/model-configs/${this.editingConfigId}`, this.updateConfigPayload(payload)) :
+      await HttpUtil.post('/model-configs', payload);
+    if (res.code === 0) {
+      this.showToast({ message: 'API 配置保存成功', duration: 2000 });
+      this.resetModelConfigEditor();
+      await this.loadModelConfigs();
+    } else {
+      this.showToast({ message: res.message || 'API 配置保存失败', duration: 2000 });
+    }
+  }
+
+  updateConfigPayload(payload: ModelConfigPayload): Object {
+    class UpdatePayload {
+      name: string = '';
+      base_url: string = '';
+      model: string = '';
+      api_key?: string;
+    }
+    const update = new UpdatePayload();
+    update.name = payload.name;
+    update.base_url = payload.base_url;
+    update.model = payload.model;
+    if (payload.api_key) update.api_key = payload.api_key;
+    return update;
+  }
+
+  resetModelConfigEditor(): void {
+    this.editingConfigId = 0;
+    this.llmConfigScope = 'personal';
+    this.llmConfigGroupId = 0;
+    this.llmConfigName = '';
+    this.llmApiKey = '';
+    this.llmBaseUrl = '';
+    this.llmModel = '';
+  }
+
+  async loadModelConfigs(): Promise<void> {
+    const results = await Promise.all([HttpUtil.get('/model-configs'), HttpUtil.get('/groups/')]);
+    const configs = results[0];
+    const groups = results[1];
+    if (configs.code === 0 && configs.data) {
+      const rows = JSON.parse(configs.data) as Array<Record<string, Object>>;
+      this.modelConfigs = rows.map((row: Record<string, Object>): ModelConfigOption => parseModelConfig(row));
+    }
+    if (groups.code === 0 && groups.data) {
+      const rows = JSON.parse(groups.data) as Array<Record<string, Object>>;
+      this.configGroups = rows.map((row: Record<string, Object>): ConfigGroupOption => {
+        const group = new ConfigGroupOption();
+        group.id = (row['id'] as number) || 0;
+        group.name = (row['name'] as string) || '';
+        group.isCreator = row['is_creator'] === true;
+        return group;
+      }).filter((group: ConfigGroupOption): boolean => group.isCreator);
+    }
+  }
+
+  editModelConfig(config: ModelConfigOption): void {
+    if (!config.canEdit) return;
+    this.editingConfigId = config.id;
+    this.llmConfigScope = config.scope;
+    this.llmConfigGroupId = config.groupId;
+    this.llmConfigName = config.name;
+    this.llmApiKey = '';
+    this.llmBaseUrl = config.baseUrl;
+    this.llmModel = config.model;
+  }
+
+  deleteModelConfig(config: ModelConfigOption): void {
+    if (!config.canEdit) return;
     this.getUIContext().showAlertDialog({
-      title: '重置 API Key 确认',
-      message: '重置后已保存的 API Key 将被清空，您需要重新输入新的 Key 并点击保存才能生效。是否确认重置？',
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      primaryButton: {
-        value: '取消',
-        action: (): void => {}
-      },
-      secondaryButton: {
-        value: '确认重置',
-        fontColor: Color.Red,
-        action: (): void => {
-          this.llmApiKey = '';
-          this.isApiKeyConfigured = false;
-          this.clearApiKeyRequested = true;
-          this.showToast({ message: '已清空 API Key，请输入新 Key 后点击保存', duration: 2000 });
-        }
-      }
+      title: '删除模型配置',
+      message: `确定删除「${config.name}」？正在运行的调查仍使用提交时的配置。`,
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: { value: '删除', fontColor: Color.Red, action: (): void => {
+        this.deleteModelConfigNow(config.id);
+      } }
     });
   }
 
-  async submitSaveApiConfig(): Promise<void> {
-    class ApiConfigPayload {
-      llm_api_key?: string;
-      clear_llm_api_key: boolean = false;
-      llm_base_url: string = '';
-      llm_model: string = '';
-    }
-    const payload = new ApiConfigPayload();
-    const nextApiKey = this.llmApiKey.trim();
-    if (nextApiKey.length > 0) {
-      payload.llm_api_key = nextApiKey;
-    }
-    payload.clear_llm_api_key = this.clearApiKeyRequested && nextApiKey.length === 0;
-    payload.llm_base_url = this.llmBaseUrl.trim();
-    payload.llm_model = this.llmModel.trim();
-
-    const res = await HttpUtil.put('/users/me', payload);
+  async deleteModelConfigNow(configId: number): Promise<void> {
+    const res = await HttpUtil.del(`/model-configs/${configId}`);
+    this.showToast({ message: res.code === 0 ? '已删除配置' : (res.message || '删除失败'), duration: 2000 });
     if (res.code === 0) {
-      this.showToast({ message: 'API 配置保存成功', duration: 2000 });
-      await this.loadProfile();
-    } else {
-      this.showToast({ message: res.message || 'API 配置保存失败', duration: 2000 });
+      if (this.editingConfigId === configId) this.resetModelConfigEditor();
+      await this.loadModelConfigs();
     }
   }
 
@@ -736,9 +804,7 @@ export struct ProfileTab {
 
   async handleLogout(): Promise<void> {
     await HttpUtil.post('/auth/logout');
-    AppStorage.setOrCreate('access_token', '');
-    AppStorage.setOrCreate('currentGroupId', 0);
-    await SecurityUtil.removeSecureProp('access_token');
+    await SecurityUtil.clearSession(this.getUIContext().getHostContext() as common.UIAbilityContext);
     try {
       this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' });
     } catch (error) {
@@ -1222,7 +1288,7 @@ export struct ProfileTab {
               .padding(18)
               .backgroundColor($r('app.color.app_card_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
-              .borderRadius(8)
+              .borderRadius(10)
           }
         }
 
@@ -1276,7 +1342,7 @@ export struct ProfileTab {
               .padding(18)
               .backgroundColor($r('app.color.app_card_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
-              .borderRadius(8)
+              .borderRadius(10)
           }
         }
 
@@ -1361,50 +1427,105 @@ export struct ProfileTab {
       Column({ space: 14 }) {
         this.PageHeader('模型 API')
 
+        Column({ space: 10 }) {
+          Text('可用配置')
+            .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.app_text_primary'))
+          Text('个人配置由本人管理；小组配置仅组长可修改，所有已加入的组员都能在问答中选择。')
+            .fontSize(12).fontColor($r('app.color.app_text_secondary'))
+          ForEach(this.modelConfigs, (config: ModelConfigOption): void => {
+            Row({ space: 10 }) {
+              Column({ space: 3 }) {
+                Text(`${config.scope === 'group' ? '小组' : '个人'} · ${config.name}`)
+                  .fontSize(14).fontWeight(FontWeight.Medium)
+                Text(`${config.model} · ${config.baseUrl}`)
+                  .fontSize(11).fontColor($r('app.color.app_text_secondary'))
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .layoutWeight(1)
+              if (config.canEdit) {
+                Button('编辑').fontSize(11).backgroundColor(Color.Transparent)
+                  .fontColor($r('app.color.app_primary'))
+                  .onClick((): void => { this.editModelConfig(config); })
+                Button('删除').fontSize(11).backgroundColor(Color.Transparent)
+                  .fontColor($r('app.color.app_danger'))
+                  .onClick((): void => { this.deleteModelConfig(config); })
+              }
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor($r('app.color.app_card_subtle_bg'))
+            .borderRadius(8)
+          }, (config: ModelConfigOption): string => `${config.id}`)
+          if (this.modelConfigs.length === 0) {
+            Text('还没有可用配置，请在下方创建。').fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+        }
+        .width('90%')
+        .padding(16)
+        .backgroundColor($r('app.color.app_card_bg'))
+        .borderRadius(8)
+
         Column({ space: 12 }) {
+          Row() {
+            Text(this.editingConfigId ? '编辑配置' : '新建配置')
+              .fontSize(16).fontWeight(FontWeight.Bold).layoutWeight(1)
+            if (this.editingConfigId) {
+              Button('取消编辑').fontSize(11).backgroundColor(Color.Transparent)
+                .onClick((): void => { this.resetModelConfigEditor(); })
+            }
+          }
+          if (!this.editingConfigId) {
+            Row({ space: 8 }) {
+              Button('个人配置')
+                .backgroundColor(this.llmConfigScope === 'personal' ? $r('app.color.app_primary') : $r('app.color.app_card_subtle_bg'))
+                .onClick((): void => { this.llmConfigScope = 'personal'; })
+              if (this.configGroups.length > 0) {
+                Button('小组配置')
+                  .backgroundColor(this.llmConfigScope === 'group' ? $r('app.color.app_primary') : $r('app.color.app_card_subtle_bg'))
+                  .onClick((): void => {
+                    this.llmConfigScope = 'group';
+                    if (!this.llmConfigGroupId) this.llmConfigGroupId = this.configGroups[0].id;
+                  })
+              }
+            }
+          }
+          if (this.llmConfigScope === 'group') {
+            Select(this.configGroups.map((group: ConfigGroupOption): SelectOption => {
+              const option = new ConfigGroupSelectItem();
+              option.value = group.name;
+              return option as SelectOption;
+            }))
+              .selected(Math.max(0, this.configGroups.findIndex((group: ConfigGroupOption): boolean =>
+                group.id === this.llmConfigGroupId)))
+              .value(this.configGroups.find((group: ConfigGroupOption): boolean =>
+                group.id === this.llmConfigGroupId)?.name || '选择小组')
+              .onSelect((index: number): void => {
+                if (this.configGroups[index]) this.llmConfigGroupId = this.configGroups[index].id;
+              })
+          }
+          TextInput({ placeholder: '请输入配置名称', text: this.llmConfigName })
+            .width('100%').height(42)
+            .onChange((val: string): void => { this.llmConfigName = val; })
           Row({ space: 8 }) {
             TextInput({
-              placeholder: 'API KEY',
-              text: this.isApiKeyConfigured ? '••••••••••••••••••••' : this.llmApiKey
+              placeholder: this.editingConfigId ? '新 API Key（留空不修改）' : '请输入 API Key',
+              text: this.llmApiKey
             })
               .type(InputType.Password)
-              .enabled(!this.isApiKeyConfigured)
               .layoutWeight(1)
               .height(42)
               .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor(this.isApiKeyConfigured ? $r('app.color.app_card_subtle_bg') : $r('app.color.app_input_bg'))
+              .backgroundColor($r('app.color.app_input_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
               .borderRadius(8)
               .onChange((val: string): void => {
-                if (!this.isApiKeyConfigured) {
-                  this.llmApiKey = val;
-                }
+                this.llmApiKey = val;
               })
-
-            if (this.isApiKeyConfigured) {
-              Button({ type: ButtonType.Normal, stateEffect: true }) {
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.trash'))
-                    .fontSize(14)
-                    .fontColor([Color.Red])
-                  Text('清空 Key')
-                    .fontSize(12)
-                    .fontColor('#EF4444')
-                }
-                .padding({ left: 8, right: 8 })
-              }
-              .height(42)
-              .backgroundColor(Color.Transparent)
-              .border({ width: 1, color: $r('app.color.app_danger') })
-              .borderRadius(8)
-              .onClick((): void => {
-                this.confirmResetApiKey();
-              })
-            }
           }
           .width('100%')
 
-          TextInput({ placeholder: 'BASE URL', text: this.llmBaseUrl })
+          TextInput({ placeholder: '请输入 API 地址', text: this.llmBaseUrl })
             .width('100%')
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
@@ -1415,7 +1536,7 @@ export struct ProfileTab {
               this.llmBaseUrl = val;
             })
 
-          TextInput({ placeholder: 'MODEL 模型名称', text: this.llmModel })
+          TextInput({ placeholder: '请输入模型名称', text: this.llmModel })
             .width('100%')
             .height(42)
             .fontColor($r('app.color.app_text_primary'))
@@ -1704,7 +1825,7 @@ export struct ProfileTab {
         this.PageHeader('用户搜索')
 
         Row({ space: 8 }) {
-          TextInput({ placeholder: '输入姓名、工号或手机号', text: this.searchKeyword })
+          TextInput({ placeholder: '搜索姓名、工号或手机号', text: this.searchKeyword })
             .layoutWeight(1)
             .height(40)
             .fontColor($r('app.color.app_text_primary'))
@@ -1794,7 +1915,7 @@ export struct ProfileTab {
         this.PageHeader('用户管理')
 
         Row({ space: 8 }) {
-          TextInput({ placeholder: '按姓名或工号搜索', text: this.searchKeyword })
+          TextInput({ placeholder: '搜索姓名或工号', text: this.searchKeyword })
             .layoutWeight(1)
             .height(40)
             .fontColor($r('app.color.app_text_primary'))

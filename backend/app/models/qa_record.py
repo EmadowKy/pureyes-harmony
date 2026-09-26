@@ -3,6 +3,13 @@ from app.core.db import db
 
 class QARecord(db.Model):
     __tablename__ = "qa_records"
+    __table_args__ = (
+        db.Index(
+            "uq_qa_active_conversation", "conversation_id", unique=True,
+            sqlite_where=db.text("status = 'processing' AND conversation_id IS NOT NULL"),
+            postgresql_where=db.text("status = 'processing' AND conversation_id IS NOT NULL"),
+        ),
+    )
 
     id = db.Column(db.String(64), primary_key=True)  # task_id as UUID
     workspace_id = db.Column(db.Integer, db.ForeignKey("workspaces.id"), nullable=False)
@@ -10,8 +17,10 @@ class QARecord(db.Model):
     
     question = db.Column(db.Text, nullable=False)
     answer = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(20), nullable=False, default="processing")  # processing, completed, failed
+    status = db.Column(db.String(20), nullable=False, default="processing")  # processing, completed, failed, stopped
     progress_json = db.Column(db.Text, nullable=True)
+    heartbeat_at = db.Column(db.DateTime, nullable=True)
+    model_config_label = db.Column(db.String(120), nullable=True)
     # New fields are nullable to preserve every historical one-shot record.
     conversation_id = db.Column(db.String(64), db.ForeignKey("agent_conversations.id"), nullable=True, index=True)
     turn_index = db.Column(db.Integer, nullable=False, default=1)
@@ -29,6 +38,7 @@ class QARecord(db.Model):
             "progress_json": self.progress_json,
             "conversation_id": self.conversation_id,
             "turn_index": self.turn_index,
+            "model_config_label": self.model_config_label,
             "created_at": self.created_at.isoformat() + "Z"
         }
 

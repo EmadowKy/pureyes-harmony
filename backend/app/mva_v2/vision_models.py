@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import gc
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -45,6 +46,7 @@ class ClipSemanticEmbedder:
     _backend: Optional[str] = None
     _loaded_path: Optional[str] = None
     _load_error: Optional[str] = None
+    _active_jobs: int = 0
 
     def __init__(self, model_path: Optional[str] = None):
         self.model_path = model_path or os.environ.get("CLIP_MODEL_PATH", "")
@@ -116,6 +118,38 @@ class ClipSemanticEmbedder:
             except Exception as exc:
                 ClipSemanticEmbedder._load_error = str(exc)
                 raise VisionModelUnavailable(f"CLIP model could not be loaded: {exc}") from exc
+
+    @classmethod
+    def begin_job(cls) -> None:
+        with cls._lock:
+            cls._active_jobs += 1
+
+    @classmethod
+    def end_job(cls) -> None:
+        """Release the heavyweight CLIP model after the last ingestion job.
+
+        The production ECS has limited RAM. Keeping Chinese-CLIP resident in
+        the web process pushes it into swap and stalls unrelated API calls.
+        Concurrent ingestion jobs share the model and only the last one frees
+        it, so one job cannot unload a model that another job is using.
+        """
+        should_release = False
+        with cls._lock:
+            cls._active_jobs = max(0, cls._active_jobs - 1)
+            should_release = cls._active_jobs == 0 and cls._model is not None
+            if should_release:
+                cls._model = None
+                cls._processor = None
+                cls._tokenizer = None
+                cls._backend = None
+                cls._loaded_path = None
+        if should_release:
+            gc.collect()
+            try:
+                import ctypes
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
 
     def _features(self, *, image: Optional[np.ndarray] = None, text: Optional[str] = None) -> np.ndarray:
         self._ensure_loaded()

@@ -77,6 +77,63 @@ class UserGroupApiTest(unittest.TestCase):
     def setUp(self):
         self.super_headers = self.auth_headers("admin", "admin")
 
+    def test_personal_and_group_model_configs_permissions(self):
+        self.create_user("cfg_leader", "Config Leader")
+        self.create_user("cfg_member", "Config Member")
+        self.create_user("cfg_outsider", "Config Outsider")
+        leader = self.auth_headers("cfg_leader", "pass1234")
+        member = self.auth_headers("cfg_member", "pass1234")
+        outsider = self.auth_headers("cfg_outsider", "pass1234")
+        group = self.client.post("/api/groups/", headers=leader, json={"name": "Config Team"})
+        self.assertEqual(group.status_code, 201, group.get_json())
+        group_id = group.get_json()["data"]["id"]
+        self.assertEqual(self.client.post(f"/api/groups/{group_id}/invite", headers=leader,
+                                          json={"emp_id": "cfg_member"}).status_code, 201)
+        self.assertEqual(self.client.post(f"/api/groups/{group_id}/respond", headers=member,
+                                          json={"action": "accept"}).status_code, 200)
+        values = {"name": "Vision", "api_key": "secret-value", "base_url": "https://example.com/v1",
+                  "model": "vision-model"}
+        personal = self.client.post("/api/model-configs", headers=member,
+                                    json={**values, "scope": "personal"})
+        shared = self.client.post("/api/model-configs", headers=leader,
+                                  json={**values, "scope": "group", "group_id": group_id})
+        self.assertEqual(personal.status_code, 201, personal.get_json())
+        self.assertEqual(shared.status_code, 201, shared.get_json())
+        personal_id = personal.get_json()["data"]["id"]
+        shared_id = shared.get_json()["data"]["id"]
+        listed = self.client.get(f"/api/model-configs?group_id={group_id}", headers=member)
+        self.assertEqual({row["id"] for row in listed.get_json()["data"]}, {personal_id, shared_id})
+        self.assertNotIn("secret-value", listed.get_data(as_text=True))
+        self.assertFalse(next(row for row in listed.get_json()["data"] if row["id"] == shared_id)["can_edit"])
+        self.assertEqual(self.client.get("/api/model-configs", headers=outsider).get_json()["data"], [])
+        workspace = self.client.post(f"/api/workspaces/{group_id}", headers=leader,
+                                     json={"name": "Config Workspace"})
+        self.assertEqual(workspace.status_code, 201, workspace.get_json())
+        workspace_id = workspace.get_json()["data"]["id"]
+        workspace_configs = self.client.get(f"/api/workspaces/{workspace_id}/model-configs", headers=member)
+        self.assertEqual({row["id"] for row in workspace_configs.get_json()["data"]},
+                         {personal_id, shared_id})
+        with self.app.app_context():
+            from app.models.workspace import WorkspaceVideoSegment
+            segment = WorkspaceVideoSegment(workspace_id=workspace_id, video_name="config.mp4",
+                                            filepath="storage/slices/config.mp4", start_offset=0,
+                                            end_offset=10, duration=10, status="completed")
+            db.session.add(segment)
+            db.session.commit()
+            segment_id = segment.id
+        self.assertEqual(self.client.post(f"/api/workspaces/{workspace_id}/qa", headers=leader,
+                                          json={"question": "test", "model_config_id": personal_id,
+                                                "segment_ids": [segment_id]}).status_code, 403)
+        self.assertEqual(self.client.put(f"/api/model-configs/{shared_id}", headers=member,
+                                         json={"name": "Changed"}).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/model-configs/{personal_id}", headers=leader).status_code, 403)
+        self.assertEqual(self.client.post("/api/model-configs", headers=member,
+                                          json={**values, "scope": "group", "group_id": group_id}).status_code, 403)
+        self.assertEqual(self.client.put(f"/api/model-configs/{shared_id}", headers=leader,
+                                         json={"name": "Updated"}).status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/model-configs/{personal_id}", headers=member).status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/model-configs/{shared_id}", headers=leader).status_code, 200)
+
     def test_admin_user_search_create_and_role_update(self):
         self.create_user("u_search", "Search Target")
 
@@ -444,9 +501,105 @@ class UserGroupApiTest(unittest.TestCase):
         )
         self.assertEqual(invalid_qa.status_code, 400, invalid_qa.get_json())
 
+    def test_segment_deletion_respects_preprocessing_and_active_investigations(self):
+        self.create_user("segment_owner", "Segment Owner")
+        headers = self.auth_headers("segment_owner", "pass1234")
+        group = self.client.post("/api/groups/", headers=headers, json={"name": "Segment Group"})
+        group_id = group.get_json()["data"]["id"]
+        workspace = self.client.post(
+            f"/api/workspaces/{group_id}", headers=headers, json={"name": "Segment Workspace"}
+        )
+        workspace_id = workspace.get_json()["data"]["id"]
+
+        with self.app.app_context():
+            from app.models.workspace import WorkspaceVideoSegment
+
+            segment = WorkspaceVideoSegment(
+                workspace_id=workspace_id, video_name="guarded.mp4", filepath="storage/slices/guarded.mp4",
+                start_offset=0, end_offset=10, duration=10, status="pending",
+            )
+            db.session.add(segment)
+            db.session.commit()
+            segment_id = segment.id
+
+        path = f"/api/workspaces/segments/{segment_id}"
+        pending_qa = self.client.post(
+            f"/api/workspaces/{workspace_id}/qa", headers=headers,
+            json={"question": "何时出现？", "segment_ids": [segment_id]},
+        )
+        self.assertEqual(pending_qa.status_code, 409, pending_qa.get_json())
+        self.assertEqual(self.client.post(f"{path}/preprocess", headers=headers).status_code, 409)
+        self.assertEqual(self.client.delete(path, headers=headers).status_code, 409)
+
+        with self.app.app_context():
+            from app.models.qa_record import QARecord, QAVideoSelection
+            from app.models.workspace import WorkspaceVideoSegment
+
+            db.session.get(WorkspaceVideoSegment, segment_id).status = "completed"
+            db.session.add(QARecord(
+                id="guarded-qa", workspace_id=workspace_id, creator_id="segment_owner",
+                question="何时出现？", status="processing",
+            ))
+            db.session.add(QAVideoSelection(
+                record_id="guarded-qa", monitor_id=0, segment_id=segment_id,
+                start_time=datetime.utcnow(), end_time=datetime.utcnow() + timedelta(seconds=10),
+            ))
+            db.session.commit()
+
+        # No entry in running_tasks: the persisted QA record still protects the clip.
+        self.assertEqual(self.client.delete(path, headers=headers).status_code, 409)
+        self.assertEqual(self.client.delete(f"{path}/features", headers=headers).status_code, 409)
+        self.assertEqual(self.client.post(f"{path}/preprocess", headers=headers).status_code, 409)
+
+        with self.app.app_context():
+            from app.models.qa_record import QARecord
+            db.session.get(QARecord, "guarded-qa").status = "completed"
+            from app.models.workspace import WorkspaceVideoSegment
+            free_segment = WorkspaceVideoSegment(
+                workspace_id=workspace_id, video_name="free.mp4", filepath="storage/slices/free.mp4",
+                start_offset=0, end_offset=10, duration=10, status="completed",
+            )
+            db.session.add(free_segment)
+            db.session.commit()
+            free_id = free_segment.id
+            from app.models.agent_conversation import AgentConversation
+            db.session.add(AgentConversation(
+                id="guarded-scope", workspace_id=workspace_id, creator_id="segment_owner",
+                title="已清理轮次的调查", segment_ids_json=json.dumps([free_id]),
+            ))
+            db.session.commit()
+
+        # Finished investigation history still refers to the original clip.
+        self.assertEqual(self.client.delete(path, headers=headers).status_code, 409)
+        # Even after its turns are gone, the saved conversation scope must remain valid.
+        self.assertEqual(
+            self.client.delete(f"/api/workspaces/segments/{free_id}", headers=headers).status_code, 409
+        )
+        with self.app.app_context():
+            from app.models.agent_conversation import AgentConversation
+            db.session.delete(db.session.get(AgentConversation, "guarded-scope"))
+            db.session.commit()
+
+        from app.mva_v2.database import SpatiotemporalDB
+        from app.workspaces import routes as workspace_routes
+        with patch.object(SpatiotemporalDB, "delete_video", return_value=1) as delete_features, \
+                patch.object(workspace_routes, "_remove_backend_file") as delete_file:
+            removed = self.client.delete(f"/api/workspaces/segments/{free_id}", headers=headers)
+        self.assertEqual(removed.status_code, 200, removed.get_json())
+        delete_features.assert_called_once_with("free.mp4", workspace_id=workspace_id)
+        self.assertEqual(delete_file.call_count, 2)
+        with self.app.app_context():
+            from app.models.workspace import WorkspaceVideoSegment
+            self.assertIsNone(db.session.get(WorkspaceVideoSegment, free_id))
+            self.assertIsNotNone(db.session.get(WorkspaceVideoSegment, segment_id))
+
     def test_agent_conversation_keeps_evidence_scope_and_turn_memory(self):
         self.create_user("agent_owner", "Agent Owner")
+        self.create_user("agent_member", "Agent Member")
+        self.create_user("agent_outsider", "Agent Outsider")
         owner_headers = self.auth_headers("agent_owner", "pass1234")
+        member_headers = self.auth_headers("agent_member", "pass1234")
+        outsider_headers = self.auth_headers("agent_outsider", "pass1234")
         group_response = self.client.post(
             "/api/groups/", headers=owner_headers, json={"name": "Agent Conversation Group"}
         )
@@ -456,10 +609,18 @@ class UserGroupApiTest(unittest.TestCase):
             json={"name": "Agent Conversation Workspace"},
         )
         workspace_id = workspace_response.get_json()["data"]["id"]
+        config_response = self.client.post("/api/model-configs", headers=owner_headers, json={
+            "scope": "group", "group_id": group_id, "name": "Agent Test",
+            "api_key": "test-secret", "base_url": "https://example.com/v1", "model": "test-model",
+        })
+        self.assertEqual(config_response.status_code, 201, config_response.get_json())
+        config_id = config_response.get_json()["data"]["id"]
 
         with self.app.app_context():
+            from app.models.group import GroupMember
             from app.models.workspace import WorkspaceVideoSegment
 
+            db.session.add(GroupMember(group_id=group_id, emp_id="agent_member", status="accepted"))
             segment = WorkspaceVideoSegment(
                 workspace_id=workspace_id,
                 video_name="agent-evidence.mp4",
@@ -470,8 +631,19 @@ class UserGroupApiTest(unittest.TestCase):
                 status="completed",
             )
             db.session.add(segment)
+            other_segment = WorkspaceVideoSegment(
+                workspace_id=workspace_id,
+                video_name="unrelated.mp4",
+                start_offset=0,
+                end_offset=10,
+                duration=10,
+                filepath="storage/slices/unrelated.mp4",
+                status="completed",
+            )
+            db.session.add(other_segment)
             db.session.commit()
             segment_id = segment.id
+            other_segment_id = other_segment.id
 
         from app.workspaces import routes as workspace_routes
 
@@ -486,12 +658,18 @@ class UserGroupApiTest(unittest.TestCase):
             first_turn = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa",
                 headers=owner_headers,
-                json={"question": "入口处有什么人？", "segment_ids": [segment_id]},
+                json={"question": "入口处有什么人？", "segment_ids": [segment_id],
+                      "model_config_id": config_id},
             )
         self.assertEqual(first_turn.status_code, 200, first_turn.get_json())
         first_data = first_turn.get_json()["data"]
         conversation_id = first_data["conversation_id"]
         self.assertEqual(first_data["turn_index"], 1)
+        first_status = self.client.get(
+            f"/api/workspaces/qa/{first_data['task_id']}/status", headers=member_headers,
+        )
+        self.assertEqual(first_status.get_json()["data"]["status"], "processing")
+        self.assertTrue(first_status.get_json()["data"]["progress"][0]["at"])
 
         with self.app.app_context():
             from app.models.qa_record import QARecord
@@ -501,32 +679,218 @@ class UserGroupApiTest(unittest.TestCase):
             record.answer = "一名行人经过入口。"
             db.session.commit()
             memory = workspace_routes._conversation_context(conversation_id, 2)
-            self.assertIn("入口处有什么人", memory)
-            self.assertIn("一名行人经过入口", memory)
+            self.assertEqual(memory["turns"][0]["question"], "入口处有什么人？")
+            self.assertEqual(memory["turns"][0]["answer"], "一名行人经过入口。")
 
         with patch.object(workspace_routes.threading, "Thread", NoopThread):
             follow_up = self.client.post(
                 f"/api/workspaces/{workspace_id}/qa",
                 headers=owner_headers,
-                json={"question": "他后来去了哪里？", "conversation_id": conversation_id},
+                json={"question": "他后来去了哪里？", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
             )
         self.assertEqual(follow_up.status_code, 200, follow_up.get_json())
         self.assertEqual(follow_up.get_json()["data"]["conversation_id"], conversation_id)
         self.assertEqual(follow_up.get_json()["data"]["turn_index"], 2)
 
+        busy = self.client.post(
+            f"/api/workspaces/{workspace_id}/qa",
+            headers=member_headers,
+            json={"question": "现在能追问吗？", "conversation_id": conversation_id},
+        )
+        self.assertEqual(busy.status_code, 409, busy.get_json())
+        with self.app.app_context():
+            from sqlalchemy import inspect
+            from sqlalchemy.exc import IntegrityError
+            index_names = {item["name"] for item in inspect(db.engine).get_indexes("qa_records")}
+            self.assertIn("uq_qa_active_conversation", index_names)
+            db.session.add(QARecord(
+                id="duplicate-active-test", workspace_id=workspace_id, creator_id="agent_member",
+                conversation_id=conversation_id, turn_index=3, question="并发提交", status="processing",
+            ))
+            with self.assertRaises(IntegrityError):
+                db.session.commit()
+            db.session.rollback()
+
+        with self.app.app_context():
+            record = db.session.get(QARecord, follow_up.get_json()["data"]["task_id"])
+            record.status = "completed"
+            record.answer = "随后经过走廊。"
+            record.progress_json = json.dumps([
+                {"stage": "reasoning", "status": "running", "data": {
+                    "phase": "action", "iteration": 1, "tool_name": "search_video_text",
+                    "tool_params": {"query_text": "走廊"},
+                }},
+                {"stage": "reasoning", "status": "completed", "data": {
+                    "phase": "observation", "iteration": 1, "summary": "找到走廊画面",
+                    "details": ["03:12 · 经过走廊"], "times": [192],
+                    "evidence_cards": [{"video_index": 1, "video_id": "corridor.mp4",
+                                        "segment_id": segment_id, "timestamp_sec": 192.0,
+                                        "source": "search_video_text", "kind": "index_candidate",
+                                        "description": "OCR 候选文字：走廊出口"}],
+                }},
+            ], ensure_ascii=False)
+            db.session.commit()
+            context = workspace_routes._conversation_context(conversation_id, 3, "走廊之后呢？")
+            self.assertEqual([turn["turn_index"] for turn in context["turns"]], [1, 2])
+            self.assertIn("03:12", context["turns"][1]["observations"][0])
+            self.assertIn("走廊出口", context["evidence_memory"])
+            self.assertIn("192.00s", context["evidence_memory"])
+            self.assertNotIn("private reasoning", json.dumps(context, ensure_ascii=False))
+
+        denied = self.client.post(
+            f"/api/workspaces/{workspace_id}/qa",
+            headers=outsider_headers,
+            json={"question": "我能加入吗？", "conversation_id": conversation_id},
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            member_turn = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa",
+                headers=member_headers,
+                json={"question": "这个人后来出现在哪里？", "conversation_id": conversation_id,
+                      "segment_ids": [other_segment_id], "model_config_id": config_id},
+            )
+        self.assertEqual(member_turn.status_code, 200, member_turn.get_json())
+        self.assertEqual(member_turn.get_json()["data"]["conversation_id"], conversation_id)
+        self.assertEqual(member_turn.get_json()["data"]["turn_index"], 3)
+
         conversations = self.client.get(
-            f"/api/workspaces/{workspace_id}/agent/conversations", headers=owner_headers
+            f"/api/workspaces/{workspace_id}/agent/conversations", headers=member_headers
         )
         self.assertEqual(conversations.status_code, 200, conversations.get_json())
-        self.assertEqual(conversations.get_json()["data"][0]["turn_count"], 2)
+        self.assertEqual(conversations.get_json()["data"][0]["turn_count"], 3)
 
         messages = self.client.get(
-            f"/api/workspaces/agent/conversations/{conversation_id}/messages", headers=owner_headers
+            f"/api/workspaces/agent/conversations/{conversation_id}/messages", headers=member_headers
         )
         self.assertEqual(messages.status_code, 200, messages.get_json())
         loaded = messages.get_json()["data"]["messages"]
-        self.assertEqual([item["turn_index"] for item in loaded], [1, 2])
+        self.assertEqual([item["turn_index"] for item in loaded], [1, 2, 3])
         self.assertEqual(loaded[1]["question"], "他后来去了哪里？")
+        self.assertEqual(loaded[2]["creator_id"], "agent_member")
+        self.assertEqual([item["segment_id"] for item in loaded[2]["selections"]], [segment_id])
+
+        # Simulate a worker restart: saved progress remains visible, and a stale
+        # processing turn becomes retryable without leaking raw model thought.
+        with self.app.app_context():
+            record = db.session.get(QARecord, member_turn.get_json()["data"]["task_id"])
+            record.heartbeat_at = datetime.utcnow() - timedelta(minutes=5)
+            record.progress_json = json.dumps([
+                {"stage": "reasoning", "status": "running", "message": "private reasoning",
+                 "data": {"phase": "action", "iteration": 1, "thought": "private reasoning",
+                          "tool_name": "search_video_text", "tool_params": {"query_text": "入口"}}},
+                {"stage": "reasoning", "status": "completed", "message": "找到 1 条线索",
+                 "data": {"phase": "observation", "iteration": 1, "summary": "找到 1 条线索",
+                          "details": ["02:33 · 入口"], "times": [153]}},
+            ], ensure_ascii=False)
+            db.session.commit()
+        stale_task_id = member_turn.get_json()["data"]["task_id"]
+        workspace_routes.running_tasks.pop(stale_task_id, None)
+        status = self.client.get(f"/api/workspaces/qa/{stale_task_id}/status", headers=member_headers)
+        self.assertEqual(status.status_code, 200, status.get_json())
+        self.assertEqual(status.get_json()["data"]["status"], "failed")
+        self.assertNotIn("private reasoning", json.dumps(status.get_json()["data"]["progress"]))
+        messages = self.client.get(
+            f"/api/workspaces/agent/conversations/{conversation_id}/messages", headers=member_headers
+        )
+        last_message = messages.get_json()["data"]["messages"][-1]
+        self.assertNotIn("progress_json", last_message)
+        self.assertEqual(last_message["tool_calls"][0]["details"], ["02:33 · 入口"])
+
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            retry = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa", headers=member_headers,
+                json={"question": "重新核验入口", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
+            )
+        self.assertEqual(retry.status_code, 200, retry.get_json())
+        self.assertEqual(retry.get_json()["data"]["turn_index"], 4)
+
+        retry_task_id = retry.get_json()["data"]["task_id"]
+        outsider_stop = self.client.post(
+            f"/api/workspaces/qa/{retry_task_id}/stop", headers=outsider_headers,
+        )
+        self.assertEqual(outsider_stop.status_code, 403, outsider_stop.get_json())
+        owner_status = self.client.get(
+            f"/api/workspaces/qa/{retry_task_id}/status", headers=owner_headers,
+        )
+        self.assertEqual(owner_status.get_json()["data"]["status"], "processing")
+        stopped = self.client.post(
+            f"/api/workspaces/qa/{retry_task_id}/stop", headers=owner_headers,
+        )
+        self.assertEqual(stopped.status_code, 200, stopped.get_json())
+        self.assertEqual(stopped.get_json()["data"]["status"], "stopped")
+        member_status = self.client.get(
+            f"/api/workspaces/qa/{retry_task_id}/status", headers=member_headers,
+        )
+        self.assertEqual(member_status.get_json()["data"]["status"], "stopped")
+        self.assertTrue(workspace_routes.running_tasks[retry_task_id]["cancel_event"].is_set())
+        workspace_routes.running_tasks.pop(retry_task_id, None)
+        remote_status = self.client.get(
+            f"/api/workspaces/qa/{retry_task_id}/status", headers=member_headers,
+        )
+        self.assertEqual(remote_status.get_json()["data"]["status"], "stopped")
+        with self.app.app_context():
+            context = workspace_routes._conversation_context(conversation_id, 5, "继续追问")
+            self.assertEqual(context["turns"][-1]["status"], "stopped")
+            self.assertEqual(context["turns"][-1]["answer"], "")
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            after_stop = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa", headers=member_headers,
+                json={"question": "停止后继续追问", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
+            )
+        self.assertEqual(after_stop.status_code, 200, after_stop.get_json())
+        self.assertEqual(after_stop.get_json()["data"]["turn_index"], 5)
+        with self.app.app_context():
+            record = db.session.get(QARecord, after_stop.get_json()["data"]["task_id"])
+            record.status = "completed"
+            record.answer = "再次确认走廊中的目标。"
+            db.session.commit()
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            sixth = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa", headers=owner_headers,
+                json={"question": "检查出口", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
+            )
+        self.assertEqual(sixth.status_code, 200, sixth.get_json())
+        with self.app.app_context():
+            record = db.session.get(QARecord, sixth.get_json()["data"]["task_id"])
+            record.status = "completed"
+            record.answer = "出口没有匹配目标。"
+            db.session.commit()
+            context = workspace_routes._conversation_context(conversation_id, 7, "入口处有什么人？")
+            self.assertIn(1, [turn["turn_index"] for turn in context["turns"]])
+            self.assertEqual(context["turns"][-1]["turn_index"], 6)
+            self.assertLessEqual(len(json.dumps(context["turns"], ensure_ascii=False)) +
+                                 len(context["summary"]), workspace_routes.MAX_AGENT_HISTORY_CHARS)
+
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            timed_turn = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa", headers=member_headers,
+                json={"question": "这轮故意超时", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
+            )
+        self.assertEqual(timed_turn.status_code, 200, timed_turn.get_json())
+        timed_id = timed_turn.get_json()["data"]["task_id"]
+        with self.app.app_context():
+            record = db.session.get(QARecord, timed_id)
+            record.created_at = datetime.utcnow() - timedelta(
+                seconds=workspace_routes.AGENT_TASK_TIMEOUT_SECONDS + 1)
+            record.heartbeat_at = datetime.utcnow()
+            db.session.commit()
+        timeout_status = self.client.get(f"/api/workspaces/qa/{timed_id}/status", headers=owner_headers)
+        self.assertEqual(timeout_status.get_json()["data"]["status"], "failed")
+        self.assertIn("自动停止", timeout_status.get_json()["data"]["error"])
+        with patch.object(workspace_routes.threading, "Thread", NoopThread):
+            after_timeout = self.client.post(
+                f"/api/workspaces/{workspace_id}/qa", headers=owner_headers,
+                json={"question": "超时后继续追问", "conversation_id": conversation_id,
+                      "model_config_id": config_id},
+            )
+        self.assertEqual(after_timeout.status_code, 200, after_timeout.get_json())
 
     def test_spatiotemporal_database_replaces_records_atomically(self):
         from app.mva_v2 import database as database_module

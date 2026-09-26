@@ -9,6 +9,7 @@ Desktop.ini
 
 # Node / VitePress
 node_modules/
+dist/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 
@@ -26,6 +27,9 @@ frontend/.appanalyzer/
 frontend/build/
 **/build/
 **/.test/
+# DevEco Studio 本机签名配置与私钥（使用 build-profile.example.json5 作参考）
+frontend/build-profile.json5
+frontend/SigningConfig/
 
 # Python Backend
 backend/__pycache__/
@@ -38,11 +42,16 @@ backend/venv/
 backend/env/
 backend/.env
 backend/.runtime/
+.env
+.env.*
+!.env.example
 
 # Backend Databases & State
 backend/user.db
 backend/*.db
 backend/*.sqlite3
+*.sqlite
+*.sqlite3
 
 # Backend Media Storage & Transcode Caches (Runtime data)
 backend/storage/live/
@@ -51,15 +60,31 @@ backend/storage/slices/
 backend/storage/faces/
 backend/temp/
 backend/uploads/
+backend/storage/
+models/
+backend/models/
 # Local backend runtime environment
 .venv39/
 .wheelhouse39/
 backend/backend_stdout.log
 backend/backend_stderr.log
 backend/logs/
+models/*.onnx
 backend/storage/monitor_covers/
 
 # Temporary Debug Logs & Cache
 __pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.workbuddy/
 *.pyc
+*.pyo
+*.pyd
+*.log
+*.pth
+*.pt
+*.ckpt
+*.onnx
 scratch/*.txt

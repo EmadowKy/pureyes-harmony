@@ -12,7 +12,7 @@ try {
 }
 
 export function normalizeServerUrl(rawUrl: string): string {
-  let url = rawUrl.trim();
+  let url = rawUrl.trim().replace(/\/+$/, '');
   if (!url) {
     return OFFICIAL_SERVER_URL;
   }
@@ -20,7 +20,7 @@ export function normalizeServerUrl(rawUrl: string): string {
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     url = `http://${url}`;
   }
-  return url;
+  return url.endsWith('/api') ? url : `${url}/api`;
 }
 
 export function getBaseUrl(): string {
@@ -52,6 +52,7 @@ export function updateBaseHost(): void {
 
 export class HttpResult {
   code: number = -1;
+  httpStatus: number = 0;
   message: string = '';
   data?: string; // stringified JSON to avoid 'any'
 }
@@ -64,7 +65,8 @@ export class TestServerResult {
 const REQUEST_TIMEOUT = 10000;
 
 export class HttpUtil {
-  static async request(url: string, method: http.RequestMethod, data?: Object): Promise<HttpResult> {
+  static async request(url: string, method: http.RequestMethod, data?: Object,
+    authToken?: string): Promise<HttpResult> {
     const httpRequest = http.createHttp();
     let currentBaseUrl = getBaseUrl().replace(/\/+$/, '');
     
@@ -75,25 +77,33 @@ export class HttpUtil {
         method: method,
         header: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${AppStorage.get<string>('access_token') || ''}`
+          'Authorization': url === '/auth/login' ? '' :
+            `Bearer ${authToken !== undefined ? authToken : (AppStorage.get<string>('access_token') || '')}`
         },
         extraData: data ? JSON.stringify(data) : undefined,
         connectTimeout: REQUEST_TIMEOUT,
         readTimeout: REQUEST_TIMEOUT,
       });
-      const resObj = JSON.parse(response.result as string) as Object;
       const result = new HttpResult();
-      result.code = (resObj as Record<string, Object>)['code'] as number;
-      result.message = (resObj as Record<string, Object>)['message'] as string;
-      if ((resObj as Record<string, Object>)['data'] !== undefined) {
-        result.data = JSON.stringify((resObj as Record<string, Object>)['data']);
+      result.httpStatus = response.responseCode;
+      let resObj: Record<string, Object>;
+      try {
+        resObj = JSON.parse(response.result as string) as Record<string, Object>;
+      } catch (parseError) {
+        result.message = `服务器响应异常（HTTP ${response.responseCode}）`;
+        return result;
+      }
+      result.code = typeof resObj['code'] === 'number' ? resObj['code'] as number : -1;
+      result.message = (resObj['message'] as string) || '';
+      if (resObj['data'] !== undefined) {
+        result.data = JSON.stringify(resObj['data']);
       }
       return result;
     } catch (err) {
       console.error('HTTP Request Error', JSON.stringify(err));
       const errRes = new HttpResult();
       errRes.code = -1;
-      errRes.message = 'Network Error';
+      errRes.message = '无法连接服务器，请检查网络或服务器地址';
       return errRes;
     } finally {
       httpRequest.destroy();
@@ -118,7 +128,15 @@ export class HttpUtil {
         connectTimeout: 5000,
         readTimeout: 5000,
       });
-      if (response.responseCode === 200) {
+      let validBackend = false;
+      try {
+        const body = JSON.parse(response.result as string) as Record<string, Object>;
+        const data = body['data'] as Record<string, Object>;
+        validBackend = body['code'] === 0 && !!data && data['service'] === 'backend';
+      } catch (parseError) {
+        validBackend = false;
+      }
+      if (response.responseCode === 200 && validBackend) {
         res.success = true;
         res.message = '服务器连接成功';
       } else {
@@ -141,6 +159,10 @@ export class HttpUtil {
 
   static post(url: string, data?: Object): Promise<HttpResult> {
     return HttpUtil.request(url, http.RequestMethod.POST, data);
+  }
+
+  static postWithToken(url: string, token: string): Promise<HttpResult> {
+    return HttpUtil.request(url, http.RequestMethod.POST, undefined, token);
   }
 
   static put(url: string, data?: Object): Promise<HttpResult> {

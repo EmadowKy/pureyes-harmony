@@ -3,7 +3,7 @@ import time
 import re
 import math
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import request, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.core.db import db
@@ -13,6 +13,7 @@ from app.models.qa_record import QARecord, QAVideoSelection
 from app.models.agent_conversation import AgentConversation
 from app.core.response import success, fail
 from app.core.media_auth import build_media_url, path_scope
+from sqlalchemy.exc import IntegrityError
 from . import workspaces_bp
 
 @workspaces_bp.post("/<int:group_id>")
@@ -54,14 +55,16 @@ def get_workspaces(group_id):
 
 import os
 import threading
-from queue import Queue
 from flask import current_app
 
 # Global in-memory running tasks registry
 running_tasks = {}
 TASK_MEMORY_RETENTION_SECONDS = 3600
-MAX_AGENT_HISTORY_TURNS = 4
-MAX_AGENT_HISTORY_CHARS = 6000
+TASK_STALE_AFTER = timedelta(minutes=3)
+AGENT_TASK_TIMEOUT_SECONDS = max(60, int(os.environ.get("AGENT_TASK_TIMEOUT_SECONDS", "1200")))
+MAX_AGENT_RECENT_TURNS = 4
+MAX_AGENT_RELEVANT_TURNS = 3
+MAX_AGENT_HISTORY_CHARS = 16000
 
 
 def _prune_running_tasks():
@@ -89,26 +92,146 @@ def _require_workspace_member(workspace_id, emp_id=None):
     return workspace, None
 
 
-def _conversation_context(conversation_id, before_turn):
-    """Build a bounded, answer-only memory window for a follow-up turn."""
+def _segment_has_active_qa(segment_id):
+    """The database, rather than this worker's task cache, owns QA state."""
+    active_records = (QARecord.query.join(QAVideoSelection, QAVideoSelection.record_id == QARecord.id)
+                      .filter(QAVideoSelection.segment_id == segment_id,
+                              QARecord.status == "processing").all())
+    for record in active_records:
+        _recover_stalled_record(record)
+        if record.status == "processing":
+            return True
+    return False
+
+
+def _context_keywords(value):
+    """Small local relevance signal; no extra model request before a turn starts."""
+    normalized = re.sub(r"[^\w\u4e00-\u9fff]+", "", (value or "").lower())
+    return {normalized[i:i + 2] for i in range(len(normalized) - 1)}
+
+
+def _context_turn(record, compact=False):
+    question = (record.question or "").strip()
+    answer = (record.answer or "").strip() if record.status == "completed" else ""
+    calls = _tool_calls_from_progress(record.progress_json)
+    observations = []
+    for call in calls[-(2 if compact else 5):]:
+        if call.get("status") not in ("completed", "success"):
+            continue
+        detail = "; ".join(str(item)[:100] for item in call.get("details", [])[:2])
+        evidence = ", ".join(
+            f"片段 {item.get('segment_id')} @ {item.get('timestamp_sec')}s"
+            for item in call.get("evidence", [])[:3] if isinstance(item, dict)
+        )
+        observations.append(" | ".join(part for part in (
+            str(call.get("name") or "工具")[:50], str(call.get("summary") or "")[:180],
+            detail, evidence,
+        ) if part))
+    return {
+        "turn_index": record.turn_index,
+        "status": record.status,
+        "question": question[:350 if compact else 700],
+        "answer": answer[:650 if compact else 1800],
+        "observations": observations,
+    }
+
+
+def _conversation_context(conversation_id, before_turn, question=""):
+    """Rebuild shared memory from persisted turns, with a bounded recent/relevant window."""
     if not conversation_id:
-        return ""
+        return {"summary": "", "turns": [], "omitted": 0}
     records = (QARecord.query.filter(
         QARecord.conversation_id == conversation_id,
         QARecord.turn_index < before_turn,
-        QARecord.status == "completed",
-    ).order_by(QARecord.turn_index.desc()).limit(MAX_AGENT_HISTORY_TURNS).all())
-    records.reverse()
-    parts = []
+        QARecord.status.in_(("completed", "failed", "stopped")),
+    ).order_by(QARecord.turn_index.asc()).all())
+    from app.mva_v2.evidence_memory import select_memory, format_memory
+    evidence_cards = []
     for record in records:
-        answer = (record.answer or "").strip()
-        if not answer:
+        if record.status != "completed":
             continue
-        if len(answer) > 1200:
-            answer = answer[:1200] + "…"
-        parts.append(f"第 {record.turn_index} 轮问题：{record.question}\n第 {record.turn_index} 轮结论：{answer}")
-    context = "\n\n".join(parts)
-    return context[-MAX_AGENT_HISTORY_CHARS:]
+        try:
+            progress = json.loads(record.progress_json or "[]")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(progress, list):
+            continue
+        for entry in progress:
+            if not isinstance(entry, dict) or entry.get("status") != "completed":
+                continue
+            data = entry.get("data") or {}
+            if not isinstance(data, dict):
+                continue
+            for card in data.get("evidence_cards") or []:
+                if isinstance(card, dict):
+                    evidence_cards.append({**card, "turn_index": record.turn_index,
+                                           "question": record.question or ""})
+    evidence_memory = format_memory(select_memory(evidence_cards, question))
+    history_budget = MAX_AGENT_HISTORY_CHARS - len(evidence_memory)
+    older, recent = records[:-MAX_AGENT_RECENT_TURNS], records[-MAX_AGENT_RECENT_TURNS:]
+    query_terms = _context_keywords(question)
+
+    def relevance(record):
+        evidence = (record.question or "") + " " + (record.answer or "")[:800]
+        return len(query_terms & _context_keywords(evidence))
+
+    relevant = sorted(sorted(older, key=lambda record: (relevance(record), record.turn_index),
+                             reverse=True)[:MAX_AGENT_RELEVANT_TURNS],
+                      key=lambda record: record.turn_index)
+    chosen = {record.id for record in relevant}
+    remaining = [record for record in older if record.id not in chosen]
+    # Older turns remain in the database; this short chronological index avoids
+    # silently treating the latest window as the entire investigation.
+    index_lines = [
+        f"第 {record.turn_index} 轮（{record.status}）：{record.question[:110]}"
+        + (f" → {(record.answer or '')[:160]}" if record.status == "completed" else "")
+        for record in remaining
+    ]
+    summary = "\n".join(index_lines)
+    omitted = 0
+    if len(summary) > 3000:
+        selected_lines = []
+        used = 0
+        for line in reversed(index_lines):
+            if used + len(line) + 1 > 3000:
+                break
+            selected_lines.append(line)
+            used += len(line) + 1
+        omitted = len(index_lines) - len(selected_lines)
+        summary = "\n".join(reversed(selected_lines))
+    turns = [_context_turn(record, compact=record.id in chosen) for record in
+             sorted(relevant + recent, key=lambda record: record.turn_index)]
+    # Preserve recent turns first if a long answer or tool trace exceeds the budget.
+    while len(json.dumps(turns, ensure_ascii=False)) + len(summary) > history_budget and relevant:
+        dropped = relevant.pop(0)
+        turns = [turn for turn in turns if turn["turn_index"] != dropped.turn_index]
+        omitted += 1
+    if len(json.dumps(turns, ensure_ascii=False)) + len(summary) > history_budget:
+        available = max(0, history_budget - len(json.dumps(turns, ensure_ascii=False)))
+        kept_lines = []
+        used = 0
+        for line in reversed(summary.splitlines()):
+            if used + len(line) + 1 > available:
+                break
+            kept_lines.append(line)
+            used += len(line) + 1
+        omitted += len(summary.splitlines()) - len(kept_lines)
+        summary = "\n".join(reversed(kept_lines))
+    while len(json.dumps(turns, ensure_ascii=False)) + len(summary) > history_budget:
+        reduced = False
+        for turn in turns:
+            if turn["observations"]:
+                turn["observations"].pop(0)
+                reduced = True
+                break
+            if len(turn["answer"]) > 800:
+                turn["answer"] = turn["answer"][:800]
+                reduced = True
+                break
+        if not reduced:
+            break
+    return {"summary": summary, "turns": turns, "omitted": omitted,
+            "evidence_memory": evidence_memory}
 
 
 def _conversation_segments(conversation):
@@ -126,9 +249,88 @@ def _serialize_conversation(conversation):
     data["turn_count"] = QARecord.query.filter_by(conversation_id=conversation.id).count()
     latest = (QARecord.query.filter_by(conversation_id=conversation.id)
               .order_by(QARecord.turn_index.desc()).first())
+    _recover_stalled_record(latest)
     data["latest_status"] = latest.status if latest else "idle"
     data["latest_question"] = latest.question if latest else ""
     return data
+
+
+def _recover_stalled_record(record):
+    """Release a lost worker or a task that exceeded its total runtime."""
+    if not record or record.status != "processing":
+        return
+    elapsed = datetime.utcnow() - record.created_at
+    timed_out = elapsed.total_seconds() >= AGENT_TASK_TIMEOUT_SECONDS
+    if not timed_out and datetime.utcnow() - (record.heartbeat_at or record.created_at) < TASK_STALE_AFTER:
+        return
+    reason = (f"本轮运行超过 {AGENT_TASK_TIMEOUT_SECONDS // 60} 分钟，已自动停止。"
+              if timed_out else "调查任务已中断，请重新追问。")
+    try:
+        progress = json.loads(record.progress_json or "[]")
+    except (TypeError, ValueError):
+        progress = []
+    if not isinstance(progress, list):
+        progress = []
+    progress.append({"stage": "system", "status": "failed", "message": reason,
+                     "at": datetime.utcnow().isoformat() + "Z", "data": {}})
+    changed = QARecord.query.filter_by(id=record.id, status="processing").update({
+        "status": "failed", "answer": reason,
+        "progress_json": json.dumps(progress, ensure_ascii=False),
+    }, synchronize_session=False)
+    if changed:
+        db.session.commit()
+    else:
+        db.session.rollback()
+    db.session.refresh(record)
+
+
+def _safe_tool_params(params):
+    if not isinstance(params, dict):
+        return {}
+    safe = {key: params[key] for key in ("video_id", "video_path", "query_text", "track_id",
+                                        "query_type", "timestamp_sec") if key in params}
+    if isinstance(params.get("frames"), list):
+        safe["frames"] = [
+            {key: frame[key] for key in ("video_id", "timestamp_sec") if key in frame}
+            for frame in params["frames"][:4] if isinstance(frame, dict)
+        ]
+    if isinstance(params.get("queries"), list):
+        safe["queries"] = [query[:120] for query in params["queries"][:4]
+                           if isinstance(query, str)]
+    return safe
+
+
+def _public_progress(progress):
+    """Never expose model thought or unbounded tool output to the client."""
+    public = []
+    if not isinstance(progress, list):
+        return public
+    for entry in progress:
+        if not isinstance(entry, dict):
+            continue
+        data = entry.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        phase = data.get("phase")
+        if entry.get("stage") == "reasoning":
+            clean = {"iteration": data.get("iteration"), "phase": phase}
+            if phase == "action":
+                clean.update(tool_name=data.get("tool_name"),
+                             tool_params=_safe_tool_params(data.get("tool_params")))
+                message = f"正在调用 {data.get('tool_name') or '工具'} 核验线索"
+            elif phase == "observation":
+                clean.update(tool_name=data.get("tool_name"), summary=data.get("summary") or "",
+                             times=data.get("times") or [], evidence=data.get("evidence") or [],
+                             details=data.get("details") or [], result_status=data.get("result_status") or entry.get("status"))
+                message = clean["summary"]
+            else:
+                message = "正在整理证据链" if phase == "completed" else "正在分析视频线索"
+        else:
+            clean = {}
+            message = str(entry.get("message") or "")[:180]
+        public.append({"stage": entry.get("stage"), "status": entry.get("status"),
+                       "message": message, "at": entry.get("at"), "data": clean})
+    return public
 
 
 def _tool_calls_from_progress(progress_json):
@@ -136,22 +338,42 @@ def _tool_calls_from_progress(progress_json):
     if not progress_json:
         return []
     try:
-        progress = json.loads(progress_json)
+        progress = _public_progress(json.loads(progress_json))
     except (TypeError, ValueError, json.JSONDecodeError):
         return []
     calls = []
     for entry in progress:
         data = entry.get("data") or {}
-        if entry.get("stage") != "reasoning" or data.get("phase") != "action":
+        if entry.get("stage") != "reasoning":
+            continue
+        if data.get("phase") == "observation":
+            for call in reversed(calls):
+                if call["iteration"] == data.get("iteration"):
+                    call["summary"] = data.get("summary") or ""
+                    call["times"] = data.get("times") or []
+                    call["evidence"] = data.get("evidence") or []
+                    call["details"] = data.get("details") or []
+                    call["status"] = data.get("result_status") or entry.get("status")
+                    break
+            continue
+        if data.get("phase") != "action":
             continue
         tool_name = data.get("tool_name")
         if not tool_name:
             continue
         calls.append({
             "name": tool_name,
-            "params": data.get("tool_params") or {},
+            "params": _safe_tool_params(data.get("tool_params")),
+            "iteration": data.get("iteration"),
+            "summary": "",
+            "times": [],
+            "evidence": [],
+            "details": [],
+            "status": "running",
         })
-    return calls[-12:]
+    # A native model may issue several calls in one round. Keep the entire
+    # persisted chain so revisiting an investigation shows its early evidence.
+    return calls
 
 
 def _parse_preprocess_options(data):
@@ -295,243 +517,223 @@ def extract_segment_features_bg(app, filepath, video_id, duration, sample_fps=1.
             db.session.commit()
 
 def process_segment_face_recognition(workspace_id, segment_id, abs_filepath, video_name, sample_fps=1.0):
-    """
-    预处理工序：人脸识别分类与连贯时间段聚合
-    1. 逐帧检测截取人脸
-    2. 将连续或间隔很短 (<= 3.5s) 的检测帧合成为一条包含起止时间段的轨迹记录
-    3. 与工作区现有人脸库进行归类聚类 (Group Classifier)
-    """
-    stale_face_paths = []
-    created_face_paths = []
+    """Index aligned face embeddings, with one assignment per face/track per frame."""
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    from .face_engine import (FaceEmbeddingModel, ProvisionalFaceDetector, GROUP_SIMILARITY,
+                              assign_frame, assign_frame_by_bbox, configured_face_backend, cosine)
+
+    if not os.path.isfile(abs_filepath):
+        raise RuntimeError("人脸预处理视频不存在")
+    import cv2
+
+    mode = configured_face_backend()
+    model = FaceEmbeddingModel() if mode == "server" else ProvisionalFaceDetector()
+    cap = cv2.VideoCapture(abs_filepath)
+    if not cap.isOpened():
+        cap.release()
+        raise RuntimeError("无法打开视频进行人脸预处理")
+
+    created_paths = []
+    old_paths = []
+    root = _backend_root()
+    face_dir = os.path.join(root, "storage", "faces")
+    os.makedirs(face_dir, exist_ok=True)
+    tracks = []
     try:
-        import cv2
-        import numpy as np
-        import os
-        from datetime import datetime
-        from app.core.db import db
-        from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
-
-        if not os.path.exists(abs_filepath):
-            return
-
-        BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        face_storage_dir = os.path.join(BACKEND_DIR, "storage", "faces")
-        os.makedirs(face_storage_dir, exist_ok=True)
-
-        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        face_cascade = cv2.CascadeClassifier(cascade_path)
-        if face_cascade.empty():
-            raise RuntimeError("unable to load face detector")
-
-        cap = cv2.VideoCapture(abs_filepath)
-        if not cap.isOpened():
-            cap.release()
-            raise RuntimeError("unable to open segment for face preprocessing")
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps <= 0:
-            fps = 30.0
-
-        frame_interval = max(1, int(fps / sample_fps))
-        frame_idx = 0
-
-        raw_hits = []
-
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret or frame is None:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        interval = max(1, round(fps / sample_fps))
+        frame_index = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
                 break
-
-            if frame_idx % frame_interval == 0:
-                timestamp = frame_idx / fps
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
-
-                for (x, y, w, h) in faces:
-                    pad_w = int(w * 0.15)
-                    pad_h = int(h * 0.15)
-                    h_img, w_img = frame.shape[:2]
-
-                    x1 = max(0, x - pad_w)
-                    y1 = max(0, y - pad_h)
-                    x2 = min(w_img, x + w + pad_w)
-                    y2 = min(h_img, y + h + pad_h)
-
-                    face_crop = frame[y1:y2, x1:x2]
-                    if face_crop.shape[0] < 10 or face_crop.shape[1] < 10:
-                        continue
-
-                    hsv = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
-                    hist = cv2.calcHist([hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
-                    cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-
-                    raw_hits.append({
-                        'timestamp': timestamp,
-                        'crop_img': face_crop,
-                        'hist': hist
-                    })
-
-            frame_idx += 1
-
+            if frame_index % interval == 0:
+                timestamp = frame_index / fps
+                detections = model.detect(frame)
+                assignments = (assign_frame(tracks, detections, timestamp) if mode == "server"
+                               else assign_frame_by_bbox(tracks, detections, timestamp))
+                for detection_index, detection in enumerate(detections):
+                    if detection_index in assignments:
+                        track = tracks[assignments[detection_index]]
+                        track["last_time"] = timestamp
+                        if mode == "server":
+                            track["embedding"] = detection["embedding"]
+                        else:
+                            track["bbox"] = detection["bbox"]
+                        if detection["crop_img"].size > track["crop_img"].size:
+                            track["crop_img"] = detection["crop_img"]
+                            if mode == "server":
+                                track["best_embedding"] = detection["embedding"]
+                    else:
+                        track = {"start_time": timestamp, "last_time": timestamp,
+                                 "crop_img": detection["crop_img"]}
+                        if mode == "server":
+                            track.update(embedding=detection["embedding"],
+                                         best_embedding=detection["embedding"])
+                        else:
+                            track["bbox"] = detection["bbox"]
+                        tracks.append(track)
+            frame_index += 1
         cap.release()
 
-        # 重跑时先清除该片段旧的人脸轨迹，避免重复记录和孤立裁图。
-        stale_face_paths = _clear_segment_face_records(segment_id)
-        if not raw_hits:
-            db.session.commit()
-            for stale_path in stale_face_paths:
-                _remove_backend_file(stale_path)
-            return
+        old_paths = _clear_segment_face_records(segment_id)
+        gallery = {}
+        for group in WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).all() if mode == "server" else []:
+            embeddings = []
+            for record in group.records:
+                try:
+                    value = json.loads(record.embedding_json or "null")
+                    if isinstance(value, list) and value:
+                        embeddings.append(value)
+                except (TypeError, ValueError):
+                    pass
+            if embeddings:
+                gallery[group.id] = embeddings
 
-        # 连贯时间段聚合算法
-        aggregated_tracks = []
-        if raw_hits:
-            curr_track = [raw_hits[0]]
-            for i in range(1, len(raw_hits)):
-                prev_hit = curr_track[-1]
-                hit = raw_hits[i]
-
-                sim = cv2.compareHist(prev_hit['hist'], hit['hist'], cv2.HISTCMP_CORREL)
-                if (hit['timestamp'] - prev_hit['timestamp'] <= 3.5) and (sim >= 0.40):
-                    curr_track.append(hit)
-                else:
-                    aggregated_tracks.append(curr_track)
-                    curr_track = [hit]
-            if curr_track:
-                aggregated_tracks.append(curr_track)
-
-        # 聚类归类
-        existing_groups = WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).all()
-        group_hists = {}
-        for g in existing_groups:
-            if g.avatar_path:
-                full_avatar_path = os.path.join(BACKEND_DIR, g.avatar_path)
-                if os.path.exists(full_avatar_path):
-                    av_img = cv2.imread(full_avatar_path)
-                    if av_img is not None:
-                        av_hsv = cv2.cvtColor(av_img, cv2.COLOR_BGR2HSV)
-                        av_hist = cv2.calcHist([av_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
-                        cv2.normalize(av_hist, av_hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
-                        group_hists[g.id] = av_hist
-
-        for track in aggregated_tracks:
-            start_sec = track[0]['timestamp']
-            end_sec = track[-1]['timestamp']
-            
-            if end_sec == start_sec:
-                end_sec = start_sec + 1.5
-
-            def format_time_str(sec):
-                m = int(sec // 60)
-                s = int(sec % 60)
-                return f"{m:02d}:{s:02d}"
-
-            start_str = format_time_str(start_sec)
-            end_str = format_time_str(end_sec)
-
-            best_hit = track[len(track) // 2]
-            crop_filename = f"crop_ws{workspace_id}_seg{segment_id}_{int(start_sec)}_{uuid.uuid4().hex[:6]}.jpg"
-            rel_crop_path = os.path.join("storage", "faces", crop_filename)
-            abs_crop_path = os.path.join(BACKEND_DIR, rel_crop_path)
-            if not cv2.imwrite(abs_crop_path, best_hit['crop_img']):
-                raise RuntimeError("unable to save face crop")
-            created_face_paths.append(rel_crop_path)
-
-            matched_group_id = None
-            max_sim = -1.0
-            for g_id, av_hist in group_hists.items():
-                sim = cv2.compareHist(best_hit['hist'], av_hist, cv2.HISTCMP_CORREL)
-                if sim > max_sim:
-                    max_sim = sim
-                    matched_group_id = g_id
-
-            if matched_group_id is None or max_sim < 0.55:
-                next_num = len(WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).all()) + 1
-                group_name = f"人脸 #{next_num}"
-                
-                avatar_filename = f"avatar_ws{workspace_id}_g{next_num}_{uuid.uuid4().hex[:6]}.jpg"
-                rel_avatar_path = os.path.join("storage", "faces", avatar_filename)
-                abs_avatar_path = os.path.join(BACKEND_DIR, rel_avatar_path)
-                if not cv2.imwrite(abs_avatar_path, best_hit['crop_img']):
-                    raise RuntimeError("unable to save face avatar")
-                created_face_paths.append(rel_avatar_path)
-
-                new_group = WorkspaceFaceGroup(
-                    workspace_id=workspace_id,
-                    name=group_name,
-                    avatar_path=rel_avatar_path
-                )
-                db.session.add(new_group)
+        occupied = {}
+        for track in sorted(tracks, key=lambda item: item["start_time"]):
+            embedding = track.get("best_embedding")
+            group_id, best_score = None, GROUP_SIMILARITY
+            for candidate_id, vectors in gallery.items() if mode == "server" else []:
+                intervals = occupied.get(candidate_id, [])
+                if any(track["start_time"] <= end and track["last_time"] >= start
+                       for start, end in intervals):
+                    continue
+                score = max(cosine(embedding, vector) for vector in vectors)
+                if score >= best_score:
+                    group_id, best_score = candidate_id, score
+            if group_id is None:
+                group = WorkspaceFaceGroup(workspace_id=workspace_id, name="待命名人脸")
+                db.session.add(group)
                 db.session.flush()
+                group.name = f"人脸 #{group.id}"
+                avatar_path = f"storage/faces/avatar_ws{workspace_id}_g{group.id}_{uuid.uuid4().hex[:6]}.jpg"
+                if not cv2.imwrite(os.path.join(root, avatar_path), track["crop_img"]):
+                    raise RuntimeError("无法保存人脸头像")
+                created_paths.append(avatar_path)
+                group.avatar_path = avatar_path
+                group_id = group.id
+                gallery[group_id] = []
+            if mode == "server":
+                gallery[group_id].append(embedding)
+            occupied.setdefault(group_id, []).append((track["start_time"], track["last_time"]))
 
-                matched_group_id = new_group.id
-                group_hists[matched_group_id] = best_hit['hist']
+            crop_path = f"storage/faces/crop_ws{workspace_id}_seg{segment_id}_{uuid.uuid4().hex[:8]}.jpg"
+            if not cv2.imwrite(os.path.join(root, crop_path), track["crop_img"]):
+                raise RuntimeError("无法保存人脸抓拍")
+            created_paths.append(crop_path)
+            start = track["start_time"]
+            end = max(track["last_time"], start + 1 / sample_fps)
+            def time_label(seconds):
+                minutes, secs = divmod(int(seconds), 60)
+                return f"{minutes:02d}:{secs:02d}"
 
-            record = WorkspaceFaceRecord(
-                workspace_id=workspace_id,
-                group_id=matched_group_id,
-                segment_id=segment_id,
-                crop_path=rel_crop_path,
+            db.session.add(WorkspaceFaceRecord(
+                workspace_id=workspace_id, group_id=group_id, segment_id=segment_id,
+                crop_path=crop_path, embedding_json=json.dumps(embedding) if embedding else None,
+                classification_backend="server" if mode == "server" else "harmony_pending",
                 video_name=video_name,
-                start_time_offset=round(start_sec, 2),
-                end_time_offset=round(end_sec, 2),
-                start_time_str=start_str,
-                end_time_str=end_str
-            )
-            db.session.add(record)
-
+                start_time_offset=round(start, 2), end_time_offset=round(end, 2),
+                start_time_str=time_label(start), end_time_str=time_label(end),
+            ))
         db.session.commit()
-        for stale_path in stale_face_paths:
-            _remove_backend_file(stale_path)
-        print(f"[FACE RECOGNITION] Successfully processed face recognition for segment {segment_id}. Detected {len(aggregated_tracks)} tracks.")
-
-    except Exception as err:
-        try:
-            cap.release()
-        except (NameError, UnboundLocalError):
-            pass
+        for old_path in old_paths:
+            _remove_backend_file(old_path)
+    except Exception:
+        cap.release()
         db.session.rollback()
-        for created_path in created_face_paths:
+        for created_path in created_paths:
             _remove_backend_file(created_path)
-        print(f"[FACE RECOGNITION ERROR] Failed to process face recognition: {err}")
-        raise RuntimeError("face recognition preprocessing failed") from err
+        raise
+
 
 def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, conversation_context=""):
     with app.app_context():
+        heartbeat_stop = threading.Event()
+        task_info = running_tasks[task_id]
+        cancel_event = task_info["cancel_event"]
+        last_cancel_check = 0.0
+
+        def is_cancelled():
+            nonlocal last_cancel_check
+            if cancel_event.is_set():
+                return True
+            now = time.monotonic()
+            if now - last_cancel_check >= 1:
+                last_cancel_check = now
+                db.session.expire_all()
+                active = db.session.get(QARecord, task_id)
+                if not active or active.status != "processing":
+                    cancel_event.set()
+                    return True
+            return False
+
+        def ensure_active():
+            if is_cancelled():
+                raise RuntimeError("调查已停止")
+
+        def heartbeat():
+            while not heartbeat_stop.wait(20):
+                with app.app_context():
+                    try:
+                        current = db.session.get(QARecord, task_id)
+                        if not current or current.status != "processing":
+                            cancel_event.set()
+                            break
+                        if (datetime.utcnow() - current.created_at).total_seconds() >= AGENT_TASK_TIMEOUT_SECONDS:
+                            _recover_stalled_record(current)
+                            cancel_event.set()
+                            break
+                        QARecord.query.filter_by(id=task_id, status="processing").update(
+                            {"heartbeat_at": datetime.utcnow()})
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+
+        threading.Thread(target=heartbeat, daemon=True).start()
         try:
+            ensure_active()
             # Stage 1: Video Slicing
             init_msg = {
                 "stage": "slicing",
                 "status": "started",
-                "message": "检测到预剪切视频片段，准备模型推理"
+                "message": "检测到预剪切视频片段，准备模型推理",
+                "at": datetime.utcnow().isoformat() + "Z",
             }
             running_tasks[task_id]['progress'].append(init_msg)
-            running_tasks[task_id]['progress_queue'].put(init_msg)
 
             slice_completed = {
                 "stage": "slicing",
                 "status": "completed",
-                "message": "视频时间段高精度物理裁剪完成，切片已就绪"
+                "message": "视频时间段高精度物理裁剪完成，切片已就绪",
+                "at": datetime.utcnow().isoformat() + "Z",
             }
             running_tasks[task_id]['progress'].append(slice_completed)
-            running_tasks[task_id]['progress_queue'].put(slice_completed)
 
             # Stage 2: MVA V2 Engine Initialization
             model_init = {
                 "stage": "model_initialization",
                 "status": "started",
-                "message": "MVA V2 按需分析引擎初始化中..."
+                "message": "MVA V2 按需分析引擎初始化中...",
+                "at": datetime.utcnow().isoformat() + "Z",
             }
             running_tasks[task_id]['progress'].append(model_init)
-            running_tasks[task_id]['progress_queue'].put(model_init)
+
+            updated = QARecord.query.filter_by(id=task_id, status="processing").update({
+                "progress_json": json.dumps(task_info['progress'], ensure_ascii=False),
+                "heartbeat_at": datetime.utcnow(),
+            }, synchronize_session=False)
+            if not updated:
+                db.session.rollback()
+                cancel_event.set()
+                return
+            db.session.commit()
 
             record = db.session.get(QARecord, task_id)
             if not record:
                 raise RuntimeError("QA 记录未找到。")
 
-            from app.models.user import User
-            creator = User.query.filter_by(emp_id=record.creator_id).first()
-            if not creator or not creator.llm_api_key or not creator.llm_base_url:
-                raise RuntimeError("未配置大模型 API 参数，请先到‘我的’页面配置 API KEY 和 BASE URL。")
+            settings = task_info["llm_settings"]
 
             # 配置 api_config 供后端的 Qwen_VL 调用
             import sys
@@ -540,11 +742,12 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
             sys.modules['utils'] = mva_utils
             
             api_config = mva_utils.api_config
-            api_config.api_key = creator.llm_api_key
-            api_config.base_url = creator.llm_base_url
-            api_config.model = creator.llm_model
+            api_config.api_key = settings["api_key"]
+            api_config.base_url = settings["base_url"]
+            api_config.model = settings["model"]
             api_config.task_id = task_id
             api_config.is_final_answer = True
+            api_config.should_cancel = is_cancelled
 
             # Import MVA V2 ask_model (interface contract identical to old version)
             try:
@@ -555,6 +758,7 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
             config_path = os.path.join(app.root_path, "../configs/model.yaml")
             
             def progress_callback(item):
+                ensure_active()
                 msg = item
                 stage = "processing"
                 status = "running"
@@ -569,10 +773,19 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
                     "stage": stage,
                     "status": status,
                     "message": msg,
-                    "data": data_val
+                    "data": data_val,
+                    "at": datetime.utcnow().isoformat() + "Z",
                 }
                 running_tasks[task_id]['progress'].append(prog_entry)
-                running_tasks[task_id]['progress_queue'].put(prog_entry)
+                updated = QARecord.query.filter_by(id=task_id, status="processing").update({
+                    "progress_json": json.dumps(task_info['progress'], ensure_ascii=False),
+                    "heartbeat_at": datetime.utcnow(),
+                }, synchronize_session=False)
+                if not updated:
+                    db.session.rollback()
+                    cancel_event.set()
+                    raise RuntimeError("调查已停止")
+                db.session.commit()
 
             # Call MVA V2 ask_model
             result = ask_model(
@@ -583,6 +796,7 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
                 segment_metas=segment_metas,
                 conversation_context=conversation_context,
             )
+            ensure_active()
 
             if result.get("success", True) is False:
                 raise Exception(result.get("error", "多视频大模型推理失败。"))
@@ -596,29 +810,36 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
                 "stage": "answering",
                 "status": "completed",
                 "message": "生成最终回答完成",
-                "data": {}
+                "data": {},
+                "at": datetime.utcnow().isoformat() + "Z",
             }
             running_tasks[task_id]['progress'].append(complete_entry)
-            running_tasks[task_id]['progress_queue'].put(complete_entry)
 
             # Save to Database
-            record = db.session.get(QARecord, task_id)
-            if record:
-                record.status = "completed"
-                record.answer = answer
-                import json
-                record.progress_json = json.dumps(running_tasks[task_id]['progress'])
-                if record.conversation_id:
-                    conversation = db.session.get(AgentConversation, record.conversation_id)
-                    if conversation:
-                        conversation.updated_at = datetime.utcnow()
-                db.session.commit()
+            updated = QARecord.query.filter_by(id=task_id, status="processing").update({
+                "status": "completed", "answer": answer,
+                "progress_json": json.dumps(task_info['progress'], ensure_ascii=False),
+            }, synchronize_session=False)
+            if not updated:
+                db.session.rollback()
+                cancel_event.set()
+                return
+            if record.conversation_id:
+                conversation = db.session.get(AgentConversation, record.conversation_id)
+                if conversation:
+                    conversation.updated_at = datetime.utcnow()
+            db.session.commit()
 
             running_tasks[task_id]['status'] = "completed"
             running_tasks[task_id]['answer'] = answer
             running_tasks[task_id]['finished_at'] = time.time()
 
         except Exception as e:
+            db.session.rollback()
+            if is_cancelled():
+                task_info['status'] = "stopped"
+                task_info['finished_at'] = time.time()
+                return
             import traceback
             tb_str = traceback.format_exc()
             print(f"[QA THREAD ERROR] {tb_str}")
@@ -627,23 +848,31 @@ def process_qa_thread(app, task_id, question, video_paths, segment_metas=None, c
                 "stage": "system",
                 "status": "failed",
                 "message": f"分析发生错误：{str(e)}",
-                "data": {}
+                "data": {},
+                "at": datetime.utcnow().isoformat() + "Z",
             }
             running_tasks[task_id]['progress'].append(error_entry)
-            running_tasks[task_id]['progress_queue'].put(error_entry)
 
             # Save failure to Database
-            record = db.session.get(QARecord, task_id)
-            if record:
-                record.status = "failed"
-                record.answer = f"分析发生错误：{str(e)}"
-                import json
-                record.progress_json = json.dumps(running_tasks[task_id]['progress'])
-                db.session.commit()
+            updated = QARecord.query.filter_by(id=task_id, status="processing").update({
+                "status": "failed", "answer": f"分析发生错误：{str(e)}",
+                "progress_json": json.dumps(task_info['progress'], ensure_ascii=False),
+            }, synchronize_session=False)
+            if not updated:
+                db.session.rollback()
+                cancel_event.set()
+                return
+            db.session.commit()
 
             running_tasks[task_id]['status'] = "failed"
             running_tasks[task_id]['error'] = str(e)
             running_tasks[task_id]['finished_at'] = time.time()
+        finally:
+            heartbeat_stop.set()
+            task_info.pop("llm_settings", None)
+            if 'api_config' in locals():
+                api_config.should_cancel = None
+                api_config.api_key = None
 
 
 def _get_video_duration(video_path):
@@ -720,6 +949,7 @@ def submit_qa(workspace_id):
     question = data.get("question")
     segment_ids = data.get("segment_ids", [])
     conversation_id = data.get("conversation_id")
+    config_id = data.get("model_config_id")
 
     if not isinstance(question, str) or not question.strip():
         return fail(message="question is required", code=5004, http_status=400)
@@ -734,10 +964,13 @@ def submit_qa(workspace_id):
         conversation = db.session.get(AgentConversation, conversation_id)
         if not conversation or conversation.workspace_id != workspace_id:
             return fail(message="conversation not found in this workspace", code=5026, http_status=404)
-        if conversation.creator_id != emp_id:
-            return fail(message="only the conversation creator can continue this investigation", code=5027, http_status=403)
-        if not segment_ids:
-            segment_ids = conversation.segment_ids()
+        processing = QARecord.query.filter_by(conversation_id=conversation.id, status="processing").first()
+        _recover_stalled_record(processing)
+        if processing and processing.status == "processing":
+            return fail(message="this investigation is still processing a turn", code=5028, http_status=409)
+        # Every accepted workspace member may continue the shared investigation.
+        # Follow-up turns always use its original evidence scope.
+        segment_ids = conversation.segment_ids()
 
     if not isinstance(segment_ids, list) or not segment_ids:
         return fail(message="select at least one video segment", code=5004, http_status=400)
@@ -750,9 +983,17 @@ def submit_qa(workspace_id):
         segment = WorkspaceVideoSegment.query.filter_by(id=seg_id, workspace_id=workspace_id).first()
         if not segment:
             return fail(message=f"segment {seg_id} not found in this workspace", code=5011, http_status=404)
-        if segment.status == "processing":
+        if segment.status in ("pending", "processing"):
             return fail(message=f"segment {seg_id} preprocessing is still running", code=5021, http_status=409)
         selected_segments.append(segment)
+
+    from app.models.llm_config import LLMConfig
+    from app.model_configs.routes import available_config
+    config = db.session.get(LLMConfig, config_id) if type(config_id) is int else None
+    if not config or not available_config(config, emp_id, workspace.group_id):
+        return fail(message="请选择当前可用的模型配置", code=6105, http_status=403)
+    # Freeze credentials for this turn before another member can edit/delete the entry.
+    llm_settings = {"api_key": config.api_key, "base_url": config.base_url, "model": config.model}
 
     if conversation is None:
         conversation = AgentConversation(
@@ -763,6 +1004,8 @@ def submit_qa(workspace_id):
             segment_ids_json=json.dumps(segment_ids, ensure_ascii=False),
         )
         db.session.add(conversation)
+    else:
+        conversation.updated_at = datetime.utcnow()
 
     last_turn = (db.session.query(db.func.max(QARecord.turn_index))
                  .filter_by(conversation_id=conversation.id).scalar() or 0)
@@ -774,8 +1017,10 @@ def submit_qa(workspace_id):
         creator_id=emp_id,
         question=question,
         status="processing",
+        heartbeat_at=datetime.utcnow(),
         conversation_id=conversation.id,
         turn_index=turn_index,
+        model_config_label=("个人 · " if config.scope == "personal" else "小组 · ") + config.name,
     )
     db.session.add(record)
     
@@ -796,29 +1041,37 @@ def submit_qa(workspace_id):
             end_time=base_time + timedelta(seconds=segment.end_offset)
         )
         db.session.add(qvs)
-            
-    db.session.commit()
-    conversation_context = _conversation_context(conversation.id, turn_index)
+
+    initial_progress = [{
+        "stage": "metadata", "status": "completed",
+        "message": "Metadata initialization", "data": {"video_paths": video_paths},
+        "at": datetime.utcnow().isoformat() + "Z",
+    }]
+    record.progress_json = json.dumps(initial_progress, ensure_ascii=False)
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        detail = str(exc.orig)
+        if ("uq_qa_active_conversation" in detail or
+                "qa_records.conversation_id" in detail):
+            return fail(message="this investigation is still processing a turn", code=5028, http_status=409)
+        raise
+    conversation_context = _conversation_context(conversation.id, turn_index, question)
     
     # Initialize in-memory task tracker
     _prune_running_tasks()
     running_tasks[task_id] = {
         "status": "processing",
+        "cancel_event": threading.Event(),
         "created_at": time.time(),
-        "progress": [
-            {
-                "stage": "metadata",
-                "status": "completed",
-                "message": "Metadata initialization",
-                "data": {"video_paths": video_paths}
-            }
-        ],
-        "progress_queue": Queue(),
+        "progress": initial_progress,
         "answer": None,
         "error": None,
         "video_paths": video_paths,
         "conversation_id": conversation.id,
         "turn_index": turn_index,
+        "llm_settings": llm_settings,
     }
     
     # Start thread
@@ -872,6 +1125,22 @@ def list_agent_conversations(workspace_id):
     return success(data=[_serialize_conversation(item) for item in conversations])
 
 
+@workspaces_bp.get("/<int:workspace_id>/model-configs")
+@jwt_required()
+def workspace_model_configs(workspace_id):
+    workspace, error = _require_workspace_member(workspace_id)
+    if error:
+        return error
+    from app.models.group import Group
+    from app.models.llm_config import LLMConfig
+    emp_id = get_jwt_identity()
+    group = db.session.get(Group, workspace.group_id)
+    personal = LLMConfig.query.filter_by(scope="personal", owner_id=emp_id).all()
+    shared = LLMConfig.query.filter_by(scope="group", group_id=workspace.group_id).all()
+    return success(data=[config.public(emp_id, group.creator_id if group else None)
+                         for config in personal + shared])
+
+
 @workspaces_bp.get("/agent/conversations/<conversation_id>/messages")
 @jwt_required()
 def get_agent_conversation_messages(conversation_id):
@@ -885,12 +1154,57 @@ def get_agent_conversation_messages(conversation_id):
                .order_by(QARecord.turn_index.asc()).all())
     messages = []
     for record in records:
+        _recover_stalled_record(record)
         data = record.to_dict()
+        data.pop("progress_json", None)
         selections = QAVideoSelection.query.filter_by(record_id=record.id).all()
         data["selections"] = [selection.to_dict() for selection in selections]
         data["tool_calls"] = _tool_calls_from_progress(record.progress_json)
         messages.append(data)
     return success(data={"conversation": _serialize_conversation(conversation), "messages": messages})
+
+
+@workspaces_bp.post("/qa/<task_id>/stop")
+@jwt_required()
+def stop_qa(task_id):
+    record = db.session.get(QARecord, task_id)
+    if not record:
+        return fail(message="task not found", code=5005, http_status=404)
+    _, error = _require_workspace_member(record.workspace_id)
+    if error:
+        return error
+    if not record.conversation_id:
+        return fail(message="only agent investigations can be stopped here", code=5026, http_status=400)
+
+    message = "本轮已由组员停止，可继续追问。"
+    try:
+        progress = json.loads(record.progress_json or "[]")
+    except (TypeError, ValueError):
+        progress = []
+    if not isinstance(progress, list):
+        progress = []
+    progress.append({"stage": "system", "status": "stopped", "message": message,
+                     "at": datetime.utcnow().isoformat() + "Z", "data": {}})
+    updated = QARecord.query.filter_by(id=task_id, status="processing").update({
+        "status": "stopped", "answer": message,
+        "progress_json": json.dumps(progress, ensure_ascii=False),
+    }, synchronize_session=False)
+    if updated:
+        conversation = db.session.get(AgentConversation, record.conversation_id)
+        if conversation:
+            conversation.updated_at = datetime.utcnow()
+        db.session.commit()
+        task_info = running_tasks.get(task_id)
+        if task_info:
+            task_info["cancel_event"].set()
+            task_info["status"] = "stopped"
+            task_info["answer"] = message
+            task_info["progress"].append(progress[-1])
+            task_info["finished_at"] = time.time()
+        return success(data={"status": "stopped", "conversation_id": record.conversation_id})
+    db.session.rollback()
+    db.session.refresh(record)
+    return success(data={"status": record.status, "conversation_id": record.conversation_id})
 
 
 @workspaces_bp.get("/qa/<task_id>/status")
@@ -903,77 +1217,42 @@ def get_qa_status(task_id):
     _, error = _require_workspace_member(record.workspace_id, emp_id)
     if error:
         return error
-
-    # Fetch from memory if running, otherwise database
-    if task_id in running_tasks:
-        task_info = running_tasks[task_id]
-        return success(data={
-            "status": task_info["status"],
-            "progress": task_info["progress"],
-            "answer": task_info["answer"],
-            "error": task_info["error"],
-            "video_paths": task_info.get("video_paths", []),
-            "conversation_id": task_info.get("conversation_id", record.conversation_id),
-            "turn_index": task_info.get("turn_index", record.turn_index),
-        })
-    else:
+    db.session.refresh(record)
+    _recover_stalled_record(record)
+    try:
+        progress_data = json.loads(record.progress_json or "[]")
+    except (TypeError, ValueError):
         progress_data = []
-        if record.progress_json:
-            try:
-                import json
-                progress_data = json.loads(record.progress_json)
-            except:
-                pass
-        
-        if not progress_data:
-            progress_data = [{
-                "stage": "answering",
-                "status": record.status,
-                "message": record.answer or ("已完成" if record.status == "completed" else "任务失败")
-            }]
-            
-        video_paths = []
-        for entry in progress_data:
-            if entry.get("stage") == "metadata":
-                video_paths = entry.get("data", {}).get("video_paths", [])
-                break
-                
-        # Database Fallback for older historical records
-        if not video_paths:
-            from app.models.qa_record import QAVideoSelection
-            from app.models.workspace import WorkspaceVideoSegment
-            from datetime import datetime
-            base_time = datetime(2026, 6, 27, 0, 0, 0)
-            sels = QAVideoSelection.query.filter_by(record_id=task_id).all()
-            for s in sels:
-                if s.segment_id:
-                    seg = db.session.get(WorkspaceVideoSegment, s.segment_id)
-                    if seg and seg.workspace_id == record.workspace_id:
-                        video_paths.append(seg.filepath)
-                        continue
-                start_offset = (s.start_time - base_time).total_seconds()
-                end_offset = (s.end_time - base_time).total_seconds()
-                seg = WorkspaceVideoSegment.query.filter(
-                    WorkspaceVideoSegment.workspace_id == record.workspace_id,
-                    WorkspaceVideoSegment.start_offset >= start_offset - 0.5,
-                    WorkspaceVideoSegment.start_offset <= start_offset + 0.5,
-                    WorkspaceVideoSegment.end_offset >= end_offset - 0.5,
-                    WorkspaceVideoSegment.end_offset <= end_offset + 0.5
-                ).first()
-                if seg:
-                    video_paths.append(seg.filepath)
-                else:
-                    video_paths.append(f"deleted_placeholder_{s.id}")
-                    
-        return success(data={
-            "status": record.status,
-            "progress": progress_data,
-            "answer": record.answer if record.status == "completed" else None,
-            "error": record.answer if record.status == "failed" else None,
-            "video_paths": video_paths,
-            "conversation_id": record.conversation_id,
-            "turn_index": record.turn_index,
-        })
+    if not isinstance(progress_data, list):
+        progress_data = []
+    if not progress_data:
+        progress_data = [{
+            "stage": "answering", "status": record.status,
+            "message": record.answer or ("已完成" if record.status == "completed" else "任务失败"),
+        }]
+
+    video_paths = []
+    for entry in progress_data:
+        if isinstance(entry, dict) and entry.get("stage") == "metadata":
+            video_paths = (entry.get("data") or {}).get("video_paths", [])
+            break
+    if not video_paths:
+        # Historical records did not persist the metadata entry.
+        for selection in QAVideoSelection.query.filter_by(record_id=task_id).all():
+            if selection.segment_id:
+                segment = db.session.get(WorkspaceVideoSegment, selection.segment_id)
+                if segment and segment.workspace_id == record.workspace_id:
+                    video_paths.append(segment.filepath)
+
+    return success(data={
+        "status": record.status,
+        "progress": _public_progress(progress_data),
+        "answer": record.answer if record.status == "completed" else None,
+        "error": record.answer if record.status == "failed" else None,
+        "video_paths": video_paths,
+        "conversation_id": record.conversation_id,
+        "turn_index": record.turn_index,
+    })
 
 
 @workspaces_bp.get("/qa/<task_id>/stream")
@@ -987,42 +1266,28 @@ def qa_stream(task_id):
     if error:
         return error
 
-    # SSE stream endpoint
-    if task_id not in running_tasks:
-        def generate_static():
-            import json
-            yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id})}\n\n"
-            yield f"data: {json.dumps({'type': 'complete', 'status': record.status, 'answer': record.answer})}\n\n"
-        return Response(stream_with_context(generate_static()), mimetype="text/event-stream")
-        
     def generate():
-        import json
         yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id})}\n\n"
-        
-        # Yield existing progress logs
-        task_info = running_tasks[task_id]
-        for p in task_info['progress']:
-            yield f"data: {json.dumps({'type': 'progress', 'data': p})}\n\n"
-            
-        # Stream new progress logs from queue
-        q = task_info['progress_queue']
+        seen = 0
         while True:
-            if task_info['status'] in ['completed', 'failed']:
-                # Drain the queue first
-                while not q.empty():
-                    p = q.get()
-                    yield f"data: {json.dumps({'type': 'progress', 'data': p})}\n\n"
-                
-                yield f"data: {json.dumps({'type': 'complete', 'status': task_info['status'], 'answer': task_info['answer'], 'error': task_info['error']})}\n\n"
+            db.session.expire_all()
+            current = db.session.get(QARecord, task_id)
+            if not current:
                 break
-                
             try:
-                # Wait for new progress with a timeout to check if status changed
-                p = q.get(timeout=0.2)
-                yield f"data: {json.dumps({'type': 'progress', 'data': p})}\n\n"
-            except:
-                pass
-                
+                progress = json.loads(current.progress_json or "[]")
+            except (TypeError, ValueError):
+                progress = []
+            if not isinstance(progress, list):
+                progress = []
+            for entry in _public_progress(progress[seen:]):
+                yield f"data: {json.dumps({'type': 'progress', 'data': entry}, ensure_ascii=False)}\n\n"
+            seen = len(progress)
+            _recover_stalled_record(current)
+            if current.status in ("completed", "failed", "stopped"):
+                yield f"data: {json.dumps({'type': 'complete', 'status': current.status, 'answer': current.answer}, ensure_ascii=False)}\n\n"
+                break
+            time.sleep(0.75)
     return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
@@ -1038,6 +1303,8 @@ def delete_qa_record(task_id):
     member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=5001, http_status=403)
+    if record.status == "processing":
+        return fail(message="stop the running investigation before deleting it", code=5028, http_status=409)
         
     QAVideoSelection.query.filter_by(record_id=task_id).delete()
     db.session.delete(record)
@@ -1598,10 +1865,14 @@ def delete_video_segment(segment_id):
     member = GroupMember.query.filter_by(group_id=workspace.group_id, emp_id=emp_id, status="accepted").first()
     if not member:
         return fail(message="not a group member", code=5001, http_status=403)
-    if task_id in running_tasks and running_tasks[task_id].get("status") == "processing":
+    if _segment_has_active_qa(segment_id):
         return fail(message="QA task is still running", code=5024, http_status=409)
-    if segment.status == "processing":
+    if segment.status in ("pending", "processing"):
         return fail(message="segment preprocessing is still running", code=5021, http_status=409)
+    if (QAVideoSelection.query.filter_by(segment_id=segment_id).first()
+            or any(segment_id in conversation.segment_ids() for conversation in
+                   AgentConversation.query.filter_by(workspace_id=segment.workspace_id).all())):
+        return fail(message="segment is referenced by investigation history", code=5024, http_status=409)
 
     video_id = os.path.basename(segment.filepath)
     try:
@@ -1635,13 +1906,14 @@ def preprocess_segment(segment_id):
     _, error = _require_workspace_member(segment.workspace_id, emp_id)
     if error:
         return error
-    if segment.status == "processing":
-        return fail(message="segment preprocessing is already running", code=5021, http_status=409)
-    
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     sample_fps, resolution, option_error = _parse_preprocess_options(data)
     if option_error:
         return option_error
+    if segment.status in ("pending", "processing"):
+        return fail(message="segment preprocessing is already running", code=5021, http_status=409)
+    if _segment_has_active_qa(segment_id):
+        return fail(message="QA task is still running", code=5024, http_status=409)
 
     segment.sample_fps = sample_fps
     segment.resolution = resolution
@@ -1671,8 +1943,10 @@ def delete_segment_features(segment_id):
     _, error = _require_workspace_member(segment.workspace_id, emp_id)
     if error:
         return error
-    if segment.status == "processing":
+    if segment.status in ("pending", "processing"):
         return fail(message="segment preprocessing is still running", code=5021, http_status=409)
+    if _segment_has_active_qa(segment_id):
+        return fail(message="QA task is still running", code=5024, http_status=409)
 
     # 从时空特征库和人脸库中删除该片段的已知特征。
     video_id = os.path.basename(segment.filepath)
@@ -1699,6 +1973,100 @@ def delete_segment_features(segment_id):
 # 工作区人脸分类模块 API (Workspace Face Classification APIs)
 # ========================================================
 
+@workspaces_bp.get("/face-backend")
+@jwt_required()
+def get_face_backend():
+    from app.user_center.permissions import current_user
+    from .face_engine import configured_face_backend
+    if not current_user() or not current_user().is_active:
+        return fail(message="permission denied", code=5001, http_status=403)
+    try:
+        return success(data={"mode": configured_face_backend()})
+    except ValueError as exc:
+        return fail(message=str(exc), code=5020, http_status=500)
+
+
+@workspaces_bp.get("/<int:workspace_id>/faces/harmony/queue")
+@jwt_required()
+def get_harmony_face_queue(workspace_id):
+    _, error = _require_workspace_member(workspace_id, get_jwt_identity())
+    if error:
+        return error
+    from app.models.face import WorkspaceFaceRecord
+    pending_query = WorkspaceFaceRecord.query.filter_by(
+        workspace_id=workspace_id, classification_backend="harmony_pending")
+    pending = pending_query.order_by(WorkspaceFaceRecord.id).limit(30).all()
+    # A reference crop per classified group; pending groups join this gallery on the phone.
+    representative_ids = db.session.query(db.func.min(WorkspaceFaceRecord.id)).filter(
+        WorkspaceFaceRecord.workspace_id == workspace_id,
+        WorkspaceFaceRecord.classification_backend.in_(("server", "harmony"))
+    ).group_by(WorkspaceFaceRecord.group_id).all()
+    gallery = WorkspaceFaceRecord.query.filter(
+        WorkspaceFaceRecord.id.in_([record_id for (record_id,) in representative_ids])
+    ).order_by(WorkspaceFaceRecord.id).all() if representative_ids else []
+    return success(data={"pending": [record.to_dict() for record in pending],
+                         "remaining": pending_query.count(), "gallery": [record.to_dict() for record in gallery]})
+
+
+@workspaces_bp.post("/<int:workspace_id>/faces/harmony/classify")
+@jwt_required()
+def classify_harmony_faces(workspace_id):
+    error = _face_edit_guard(workspace_id)
+    if error:
+        return error
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    assignments = (request.get_json(silent=True) or {}).get("assignments")
+    if not isinstance(assignments, list) or not 1 <= len(assignments) <= 30:
+        return fail(message="provide 1 to 30 face assignments", code=5004, http_status=400)
+    seen = set()
+    records = {}
+    for item in assignments:
+        if not isinstance(item, dict) or type(item.get("record_id")) is not int or type(item.get("target_group_id")) is not int:
+            return fail(message="invalid face assignment", code=5004, http_status=400)
+        record_id, target_id = item["record_id"], item["target_group_id"]
+        if record_id in seen:
+            return fail(message="duplicate face record", code=5004, http_status=400)
+        seen.add(record_id)
+        record = WorkspaceFaceRecord.query.filter_by(id=record_id, workspace_id=workspace_id,
+                                                     classification_backend="harmony_pending").first()
+        target = WorkspaceFaceGroup.query.filter_by(id=target_id, workspace_id=workspace_id).first()
+        if not record or not target:
+            return fail(message="face record or group not found", code=5010, http_status=404)
+        records[record_id] = (record, target_id)
+    removed_avatars = []
+    # Every target must already have a classified record, or precede the current
+    # record in this batch. This prevents assigning into an untouched provisional group.
+    finalized_groups = {group_id for (group_id,) in db.session.query(WorkspaceFaceRecord.group_id).filter(
+        WorkspaceFaceRecord.workspace_id == workspace_id,
+        WorkspaceFaceRecord.classification_backend.in_(("harmony", "server"))).distinct().all()}
+    for item in assignments:
+        record, target_id = records[item["record_id"]]
+        if target_id not in finalized_groups and target_id != record.group_id:
+            db.session.rollback()
+            return fail(message="target group is not classified yet", code=5004, http_status=400)
+        if target_id != record.group_id and WorkspaceFaceRecord.query.filter(
+                WorkspaceFaceRecord.workspace_id == workspace_id,
+                WorkspaceFaceRecord.segment_id == record.segment_id,
+                WorkspaceFaceRecord.group_id == target_id,
+                WorkspaceFaceRecord.classification_backend != "harmony_pending",
+                WorkspaceFaceRecord.start_time_offset <= record.end_time_offset,
+                WorkspaceFaceRecord.end_time_offset >= record.start_time_offset).first():
+            # Two faces visible at the same time cannot be the same person.
+            target_id = record.group_id
+        old_group_id = record.group_id
+        record.group_id = target_id
+        record.classification_backend = "harmony"
+        db.session.flush()
+        finalized_groups.add(target_id)
+        if old_group_id != target_id:
+            avatar = _remove_empty_face_group(old_group_id)
+            if avatar:
+                removed_avatars.append(avatar)
+    db.session.commit()
+    for avatar in removed_avatars:
+        _remove_backend_file(avatar)
+    return success(data={"classified": len(assignments)})
+
 @workspaces_bp.get("/<int:workspace_id>/faces")
 @jwt_required()
 def get_workspace_faces(workspace_id):
@@ -1706,9 +2074,21 @@ def get_workspace_faces(workspace_id):
     _, error = _require_workspace_member(workspace_id, emp_id)
     if error:
         return error
-    from app.models.face import WorkspaceFaceGroup
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    segment_id = request.args.get("segment_id", type=int)
+    if segment_id is not None and not WorkspaceVideoSegment.query.filter_by(id=segment_id, workspace_id=workspace_id).first():
+        return fail(message="segment not found in workspace", code=5011, http_status=404)
     groups = WorkspaceFaceGroup.query.filter_by(workspace_id=workspace_id).order_by(WorkspaceFaceGroup.id.asc()).all()
-    res = [g.to_dict() for g in groups]
+    res = []
+    for group in groups:
+        if segment_id is None:
+            res.append(group.to_dict())
+        else:
+            count = WorkspaceFaceRecord.query.filter_by(group_id=group.id, segment_id=segment_id).count()
+            if count:
+                data = group.to_dict()
+                data["record_count"] = count
+                res.append(data)
     return success(data=res)
 
 
@@ -1720,6 +2100,102 @@ def get_face_group_records(workspace_id, group_id):
     if error:
         return error
     from app.models.face import WorkspaceFaceRecord
-    records = WorkspaceFaceRecord.query.filter_by(workspace_id=workspace_id, group_id=group_id).order_by(WorkspaceFaceRecord.id.asc()).all()
+    segment_id = request.args.get("segment_id", type=int)
+    records_query = WorkspaceFaceRecord.query.filter_by(workspace_id=workspace_id, group_id=group_id)
+    if segment_id is not None:
+        records_query = records_query.filter_by(segment_id=segment_id)
+    records = records_query.order_by(WorkspaceFaceRecord.start_time_offset.asc()).all()
     res = [r.to_dict() for r in records]
     return success(data=res)
+
+
+def _face_edit_guard(workspace_id):
+    _, error = _require_workspace_member(workspace_id)
+    if error:
+        return error
+    if WorkspaceVideoSegment.query.filter(
+            WorkspaceVideoSegment.workspace_id == workspace_id,
+            WorkspaceVideoSegment.status.in_(("pending", "processing"))).first():
+        return fail(message="wait for face preprocessing to finish", code=5021, http_status=409)
+    return None
+
+
+def _remove_empty_face_group(group_id):
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    group = db.session.get(WorkspaceFaceGroup, group_id)
+    if group and not WorkspaceFaceRecord.query.filter_by(group_id=group_id).first():
+        avatar = group.avatar_path
+        db.session.delete(group)
+        db.session.flush()
+        return avatar
+    return None
+
+
+@workspaces_bp.post("/<int:workspace_id>/faces/merge")
+@jwt_required()
+def merge_face_groups(workspace_id):
+    error = _face_edit_guard(workspace_id)
+    if error:
+        return error
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    data = request.get_json() or {}
+    source_id, target_id = data.get("source_group_id"), data.get("target_group_id")
+    if type(source_id) is not int or type(target_id) is not int or source_id == target_id:
+        return fail(message="select two different face groups", code=5004, http_status=400)
+    source = WorkspaceFaceGroup.query.filter_by(id=source_id, workspace_id=workspace_id).first()
+    target = WorkspaceFaceGroup.query.filter_by(id=target_id, workspace_id=workspace_id).first()
+    if not source or not target:
+        return fail(message="face group not found", code=5010, http_status=404)
+    WorkspaceFaceRecord.query.filter_by(group_id=source_id, workspace_id=workspace_id).update({"group_id": target_id})
+    avatar = _remove_empty_face_group(source_id)
+    db.session.commit()
+    if avatar:
+        _remove_backend_file(avatar)
+    return success(data=target.to_dict())
+
+
+@workspaces_bp.post("/<int:workspace_id>/faces/records/<int:record_id>/move")
+@jwt_required()
+def move_face_record(workspace_id, record_id):
+    error = _face_edit_guard(workspace_id)
+    if error:
+        return error
+    from app.models.face import WorkspaceFaceGroup, WorkspaceFaceRecord
+    record = WorkspaceFaceRecord.query.filter_by(id=record_id, workspace_id=workspace_id).first()
+    if not record:
+        return fail(message="face record not found", code=5010, http_status=404)
+    target_id = (request.get_json() or {}).get("target_group_id")
+    created_avatar = None
+    if target_id is None:
+        new_group = WorkspaceFaceGroup(workspace_id=workspace_id, name="待命名人脸")
+        db.session.add(new_group)
+        db.session.flush()
+        new_group.name = f"人脸 #{new_group.id}"
+        created_avatar = f"storage/faces/avatar_ws{workspace_id}_g{new_group.id}_{uuid.uuid4().hex[:6]}.jpg"
+        import shutil
+        try:
+            shutil.copyfile(os.path.join(_backend_root(), record.crop_path),
+                            os.path.join(_backend_root(), created_avatar))
+        except OSError:
+            db.session.rollback()
+            return fail(message="face crop not available", code=5010, http_status=404)
+        new_group.avatar_path = created_avatar
+        target_id = new_group.id
+    elif type(target_id) is not int or not WorkspaceFaceGroup.query.filter_by(id=target_id, workspace_id=workspace_id).first():
+        return fail(message="target face group not found", code=5010, http_status=404)
+    if target_id == record.group_id:
+        return fail(message="record is already in this group", code=5004, http_status=400)
+    old_group_id = record.group_id
+    record.group_id = target_id
+    db.session.flush()
+    old_avatar = _remove_empty_face_group(old_group_id)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        if created_avatar:
+            _remove_backend_file(created_avatar)
+        raise
+    if old_avatar:
+        _remove_backend_file(old_avatar)
+    return success(data={"group_id": target_id})
