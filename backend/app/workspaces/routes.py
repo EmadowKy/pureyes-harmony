@@ -294,6 +294,9 @@ def _safe_tool_params(params):
             {key: frame[key] for key in ("video_id", "timestamp_sec") if key in frame}
             for frame in params["frames"][:4] if isinstance(frame, dict)
         ]
+    if isinstance(params.get("queries"), list):
+        safe["queries"] = [query[:120] for query in params["queries"][:4]
+                           if isinstance(query, str)]
     return safe
 
 
