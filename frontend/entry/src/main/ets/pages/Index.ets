@@ -299,6 +299,8 @@ struct Index {
         .width(26)
         .height(3)
         .backgroundColor(this.currentIndex === index ? $r('app.color.app_accent') : Color.Transparent)
+        .borderRadius(2)
+        .animation({ duration: 180, curve: Curve.EaseOut })
 
       Stack() {
         this.NavIcon(iconType, this.currentIndex === index)
@@ -306,6 +308,10 @@ struct Index {
       .width(46)
       .height(34)
       .margin({ top: 4 })
+      .backgroundColor(this.currentIndex === index ? $r('app.color.app_primary_soft') : Color.Transparent)
+      .borderRadius(12)
+      .scale({ x: this.currentIndex === index ? 1 : 0.94, y: this.currentIndex === index ? 1 : 0.94 })
+      .animation({ duration: 180, curve: Curve.EaseOut })
 
       Text(label)
         .fontSize(11)
@@ -316,7 +322,10 @@ struct Index {
     .height(64)
     .justifyContent(FlexAlign.Start)
     .onClick((): void => {
-      this.currentIndex = index;
+      if (this.currentIndex === index) return;
+      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+        this.currentIndex = index;
+      });
       this.tabsController.changeIndex(index);
     })
   }
@@ -476,11 +485,16 @@ struct Index {
           }.tabBar(this.NavBarItem(3, '我的', NavIconType.Profile))
         }
         .onChange((index: number) => {
-          this.currentIndex = index;
+          if (this.currentIndex !== index) {
+            this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+              this.currentIndex = index;
+            });
+          }
         })
         .barHeight(this.isSubpageOpen() ? 0 : 66)
         .barBackgroundColor($r('app.color.app_nav_bar_bg'))
         .layoutWeight(1)
+        .animation({ duration: 180, curve: Curve.EaseOut })
       }
       .width('100%')
       .height('100%')

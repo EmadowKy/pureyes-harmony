@@ -108,6 +108,9 @@ struct CreateWorkspaceDialog {
 export struct WorkspaceTab {
   @Prop @Watch('onGroupChange') groupId: number = 0;
   @State workspaces: Array<WorkspaceInfo> = [];
+  @State isLoading: boolean = false;
+  @State pressedWorkspaceId: number = 0;
+  private loadEpoch: number = 0;
 
   showToast(options: ToastOptions): void {
     try {
@@ -136,10 +139,16 @@ export struct WorkspaceTab {
 
   async loadWorkspaces(): Promise<void> {
     if (this.groupId === 0) {
+      this.loadEpoch += 1;
       this.workspaces = [];
+      this.isLoading = false;
       return;
     }
-    const res = await HttpUtil.get(`/workspaces/${this.groupId}`);
+    const groupId = this.groupId;
+    const epoch = ++this.loadEpoch;
+    this.isLoading = true;
+    const res = await HttpUtil.get(`/workspaces/${groupId}`);
+    if (epoch !== this.loadEpoch || groupId !== this.groupId) return;
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const mapped: Array<WorkspaceInfo> = [];
@@ -151,9 +160,13 @@ export struct WorkspaceTab {
         info.qa_count = (item['qa_count'] as number) || 0;
         mapped.push(info);
       }
-      this.workspaces = mapped;
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+        this.workspaces = mapped;
+        this.isLoading = false;
+      });
     } else {
       this.workspaces = [];
+      this.isLoading = false;
     }
   }
 
@@ -217,7 +230,18 @@ export struct WorkspaceTab {
       .width('100%')
       .padding({ left: 18, right: 18, top: 22, bottom: 16 })
 
-      if (this.workspaces.length === 0) {
+      if (this.isLoading && this.workspaces.length === 0) {
+        Column({ space: 12 }) {
+          LoadingProgress().width(30).height(30).color($r('app.color.app_selection'))
+          Text('正在加载工作区')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else if (this.workspaces.length === 0) {
         Column({ space: 10 }) {
           Stack() {
             Image($r('app.media.business_workspace'))
@@ -247,6 +271,9 @@ export struct WorkspaceTab {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
         .padding({ bottom: 52 })
+        .transition(TransitionEffect.OPACITY
+          .combine(TransitionEffect.translate({ y: 8 }))
+          .animation({ duration: 220, curve: Curve.EaseOut }))
 
       } else {
         List({ space: 12 }) {
@@ -302,8 +329,16 @@ export struct WorkspaceTab {
               .padding({ left: 15, right: 14, top: 15, bottom: 15 })
               .backgroundColor($r('app.color.app_card_bg'))
               .border({ width: 1, color: $r('app.color.app_border') })
-              .borderRadius(10)
+              .borderRadius(14)
+              .scale({ x: this.pressedWorkspaceId === ws.id ? 0.985 : 1,
+                y: this.pressedWorkspaceId === ws.id ? 0.985 : 1 })
+              .animation({ duration: 130, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent): void => {
+                if (event.type === TouchType.Down) this.pressedWorkspaceId = ws.id;
+                if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.pressedWorkspaceId = 0;
+              })
               .onClick((): void => {
+                this.pressedWorkspaceId = 0;
                 this.getUIContext().getRouter().pushUrl({
                   url: 'pages/WorkspaceDetail',
                   params: {
@@ -313,7 +348,10 @@ export struct WorkspaceTab {
                 });
               })
             }
-          })
+            .transition(TransitionEffect.OPACITY
+              .combine(TransitionEffect.translate({ y: 8 }))
+              .animation({ duration: 220, curve: Curve.EaseOut }))
+          }, (ws: WorkspaceInfo): string => ws.id.toString())
         }
         .width('100%')
         .padding({ left: 18, right: 18, bottom: 24 })

@@ -219,6 +219,7 @@ export struct ProfileTab {
   onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
   @State user: UserInfo = new UserInfo();
   @State activePage: string = PAGE_HOME;
+  @State pressedMenu: string = '';
   @State invites: Array<InviteInfo> = [];
   @State sentInvites: Array<SentInviteInfo> = [];
   @State messagesCleared: boolean = false;
@@ -405,8 +406,11 @@ export struct ProfileTab {
   }
 
   openPage(page: string): void {
-    this.activePage = page;
-    this.onDetailChange(page !== PAGE_HOME);
+    this.pressedMenu = '';
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+      this.activePage = page;
+      this.onDetailChange(page !== PAGE_HOME);
+    });
     if (page === PAGE_INFO) {
       this.editName = this.user.name;
       this.editPhone = this.user.phone;
@@ -438,8 +442,10 @@ export struct ProfileTab {
   }
 
   backHome(): void {
-    this.activePage = PAGE_HOME;
-    this.onDetailChange(false);
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
+      this.activePage = PAGE_HOME;
+      this.onDetailChange(false);
+    });
     this.selectedUser = new UserInfo();
     this.showUserDetail = false;
     this.userDetailReadonly = false;
@@ -1069,8 +1075,14 @@ export struct ProfileTab {
     }
     .width('100%')
     .padding({ left: 16, right: 14, top: 14, bottom: 14 })
-    .backgroundColor($r('app.color.app_card_bg'))
+    .backgroundColor(this.pressedMenu === page ? $r('app.color.app_primary_soft') : $r('app.color.app_card_bg'))
     .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
+    .scale({ x: this.pressedMenu === page ? 0.985 : 1, y: this.pressedMenu === page ? 0.985 : 1 })
+    .animation({ duration: 130, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent): void => {
+      if (event.type === TouchType.Down) this.pressedMenu = page;
+      if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.pressedMenu = '';
+    })
     .onClick((): void => {
       this.openPage(page);
     })
@@ -1148,6 +1160,9 @@ export struct ProfileTab {
     .height('100%')
     .backgroundColor($r('app.color.app_page_bg'))
     .scrollable(ScrollDirection.Vertical)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder InfoPage() {
@@ -1216,6 +1231,9 @@ export struct ProfileTab {
     .height('100%')
     .backgroundColor($r('app.color.app_page_bg'))
     .scrollable(ScrollDirection.Vertical)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder SecurityPage() {
@@ -1261,6 +1279,9 @@ export struct ProfileTab {
     .height('100%')
     .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('app.color.app_page_bg'))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder MessagesPage() {
@@ -1424,6 +1445,9 @@ export struct ProfileTab {
     .height('100%')
     .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('app.color.app_page_bg'))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder CreateGroupPage() {
@@ -1456,6 +1480,9 @@ export struct ProfileTab {
     .height('100%')
     .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('app.color.app_page_bg'))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder ApiConfigPage() {
@@ -1600,6 +1627,9 @@ export struct ProfileTab {
     .height('100%')
     .backgroundColor($r('app.color.app_page_bg'))
     .scrollable(ScrollDirection.Vertical)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder DetailRow(label: string, value: string) {
@@ -1853,6 +1883,7 @@ export struct ProfileTab {
     }
     .width('100%')
     .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
   }
 
   @Builder UserSearchPage() {
@@ -1943,6 +1974,9 @@ export struct ProfileTab {
     }
     .width('100%')
     .height('100%')
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   @Builder AdminManagementPage() {
@@ -2037,6 +2071,9 @@ export struct ProfileTab {
     }
     .width('100%')
     .height('100%')
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
   build() {
