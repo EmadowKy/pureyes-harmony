@@ -1,5 +1,7 @@
 import { HttpUtil, updateBaseHost, OFFICIAL_SERVER_URL, getBaseUrl } from '../utils/http'
 import { SecurityUtil } from '../utils/security'
+import { openDocumentation } from '../utils/documentation'
+import { common } from '@kit.AbilityKit'
 
 @Entry
 @Component
@@ -126,6 +128,15 @@ struct Login {
       }
     } else {
       this.errorMsg = res.message.length > 0 ? res.message : '工号或密码错误';
+    }
+  }
+
+  async openGuide(): Promise<void> {
+    try {
+      await openDocumentation(this.getUIContext().getHostContext() as common.UIAbilityContext)
+    } catch (error) {
+      this.errorMsg = '无法打开使用说明，请检查浏览器是否可用'
+      console.warn('[Documentation] Failed to open guide:', JSON.stringify(error))
     }
   }
 
@@ -388,6 +399,24 @@ struct Login {
               .width('100%')
               .textAlign(TextAlign.Center)
           }
+
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.info_circle'))
+              .fontSize(17)
+              .fontColor([$r('app.color.app_primary')])
+            Text('使用说明')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_primary'))
+            Blank()
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(13)
+              .fontColor([$r('app.color.app_text_muted')])
+          }
+          .width('100%')
+          .height(44)
+          .padding({ left: 2, right: 2, top: 9 })
+          .onClick((): void => { this.openGuide() })
         }
         .width('90%')
         .padding(20)

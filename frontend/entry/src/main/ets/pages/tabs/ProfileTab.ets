@@ -3,6 +3,7 @@ import photoAccessHelper from '@ohos.file.photoAccessHelper'
 import { SecurityUtil } from '../../utils/security'
 import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
 import { common } from '@kit.AbilityKit';
+import { openDocumentation } from '../../utils/documentation'
 
 class ConfigGroupOption {
   id: number = 0;
@@ -447,6 +448,15 @@ export struct ProfileTab {
     this.loadInvites();
   }
 
+  async openGuide(): Promise<void> {
+    try {
+      await openDocumentation(this.getUIContext().getHostContext() as common.UIAbilityContext)
+    } catch (error) {
+      this.showToast({ message: '无法打开使用说明，请检查浏览器是否可用', duration: 2000 })
+      console.warn('[Documentation] Failed to open guide:', JSON.stringify(error))
+    }
+  }
+
   async chooseAvatar(): Promise<void> {
     const picker = new photoAccessHelper.PhotoViewPicker();
     const options = new photoAccessHelper.PhotoSelectOptions();
@@ -832,6 +842,10 @@ export struct ProfileTab {
       SymbolGlyph($r('sys.symbol.person'))
         .fontSize(size)
         .fontColor([color])
+    } else if (name === 'help') {
+      SymbolGlyph($r('sys.symbol.info_circle'))
+        .fontSize(size)
+        .fontColor([color])
     } else if (name === 'lock') {
       SymbolGlyph($r('sys.symbol.lock'))
         .fontSize(size)
@@ -1096,6 +1110,25 @@ export struct ProfileTab {
             .width('100%')
             .padding({ left: 2, top: 18, bottom: 5 })
           this.MenuItem('模型 API', PAGE_API_CONFIG, '', 'api')
+
+          Row({ space: 12 }) {
+            Stack() {
+              this.AppSymbol('help', $r('app.color.app_primary'), 19)
+            }
+            .width(28)
+            .height(34)
+            Text('使用说明')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .layoutWeight(1)
+            this.AppSymbol('next', $r('app.color.app_text_muted'), 16)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 14, top: 14, bottom: 14 })
+          .backgroundColor($r('app.color.app_card_bg'))
+          .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
+          .onClick((): void => { this.openGuide() })
         }
         .width('90%')
 
