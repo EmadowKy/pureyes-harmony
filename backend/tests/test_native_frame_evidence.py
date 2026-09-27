@@ -163,7 +163,9 @@ class NativeFrameEvidenceTests(unittest.TestCase):
                     "name": "read_frames", "arguments": json.dumps({"frames": [
                         {"video_id": "a.mp4", "timestamp_sec": 3},
                         {"video_id": "b.mp4", "timestamp_sec": 8}]})}}]},
-                {"content": "根据画面，两处均有人员。", "tool_calls": []},
+                {"content": "根据画面，两处均有人员。\n"
+                            "FRAME_OBSERVATION 1 3.0: 视频一有人\n"
+                            "FRAME_OBSERVATION 2 8.0: 未读取的视频二画面", "tool_calls": []},
             ])
             observed_messages = []
 
@@ -189,8 +191,12 @@ class NativeFrameEvidenceTests(unittest.TestCase):
                                                      [{"role": "system", "content": ""}],
                                                      "两个视频分别有什么", events.append)
             self.assertIn("两处均有人员", answer)
+            self.assertNotIn("FRAME_OBSERVATION", answer)
+            self.assertNotIn("未读取的视频二画面", answer)
             observations = [event for event in events if event.get("data", {}).get("phase") == "observation"]
             self.assertEqual([11], [link["segment_id"] for link in observations[0]["data"]["evidence"]])
+            memories = [event for event in events if event.get("stage") == "evidence_memory"]
+            self.assertEqual("a.mp4", memories[0]["data"]["evidence_cards"][0]["video_id"])
             guidance = [message["content"] for message in observed_messages[-1]
                         if message.get("role") == "user" and isinstance(message.get("content"), str)
                         and "逐视频探索优先级" in message["content"]][-1]

@@ -6,6 +6,7 @@ import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { InvestigationCard, InvestigationCardSnapshot } from '../../utils/investigationCard';
+import { cleanAnswerForDisplay } from '../../utils/answerFormatting';
 
 class ConfigSelectItem {
   value: string = '';
@@ -166,12 +167,13 @@ export struct AgentConversationPanel {
   }
 
   async shareConclusion(turn: AgentTurnItem): Promise<void> {
-    if (turn.status !== 'completed' || !turn.answer.trim()) return;
+    const answer = cleanAnswerForDisplay(turn.answer);
+    if (turn.status !== 'completed' || !answer) return;
     this.shareErrorTurnId = '';
     try {
       const data: systemShare.SharedData = new systemShare.SharedData({
         utd: utd.UniformDataType.TEXT,
-        content: `问题：${turn.question}\n\n调查结论：\n${turn.answer}`,
+        content: `问题：${turn.question}\n\n调查结论：\n${answer}`,
         title: '清眸调查结论'
       });
       const controller: systemShare.ShareController = new systemShare.ShareController(data);
@@ -1310,7 +1312,7 @@ export struct AgentConversationPanel {
             if (turn.status !== 'processing') {
               Column({ space: 9 }) {
                 MarkdownAnswer({
-                  markdown: turn.answer || '没有生成可用结论。',
+                  markdown: cleanAnswerForDisplay(turn.answer) || '没有生成可用结论。',
                   failed: turn.status === 'failed' || turn.status === 'stopped',
                   onTimestampClick: (video: number, time: string): void => {
                     if (video <= turn.segmentIds.length) {
@@ -1319,7 +1321,7 @@ export struct AgentConversationPanel {
                   }
                 })
                   .width('100%')
-                if (turn.status === 'completed' && turn.answer.trim().length > 0) {
+                if (turn.status === 'completed' && cleanAnswerForDisplay(turn.answer).length > 0) {
                   Button('分享结论')
                     .fontSize(12)
                     .backgroundColor($r('app.color.app_primary_soft'))

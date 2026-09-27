@@ -84,18 +84,27 @@ def frame_cards_from_text(text, video_items, read_frames):
                and isinstance(item.get("video_id"), str)
                and type(item.get("timestamp_sec")) in (int, float)}
     cards, consumed = [], set()
-    pattern = re.compile(r"^\s*FRAME_OBSERVATION\s+(\S+)\s+([0-9]+(?:\.[0-9]+)?)\s*:\s*(.+?)\s*$")
+    pattern = re.compile(r"^[ \t]*FRAME_OBSERVATION\s+(\S+)\s+([0-9]+(?:\.[0-9]+)?)\s*:\s*(.+?)\s*$", re.IGNORECASE)
+    video_ids = {item["video_id"] for item in video_items}
     lines = (text or "").splitlines()
     cleaned = []
     for line in lines:
         match = pattern.match(line)
         if not match:
-            cleaned.append(line)
+            if not re.match(r"^[ \t]*FRAME_OBSERVATION\b", line, re.IGNORECASE):
+                cleaned.append(line)
             continue
         video_id, timestamp, description = match.groups()
+        # The model sometimes uses the public 1-based video number instead of the
+        # internal video_id. Resolve it only when that exact frame was read.
+        if video_id not in video_ids and video_id.isdecimal():
+            index = int(video_id)
+            if 1 <= index <= len(video_items):
+                video_id = video_items[index - 1]["video_id"]
         key = (video_id, round(float(timestamp), 2))
         if key not in allowed or key in consumed:
-            cleaned.append(line)
+            # An unverified internal note is not evidence and must never leak
+            # into the user-facing answer.
             continue
         card = frame_card(video_items, video_id, key[1], description)
         if card:

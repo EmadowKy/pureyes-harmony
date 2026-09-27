@@ -42,7 +42,17 @@ class AgentMemoryFeatureTests(unittest.TestCase):
         rejected, untouched = frame_cards_from_text(
             "FRAME_OBSERVATION a.mp4 4.0: 未读帧的猜测", self.videos, [])
         self.assertEqual([], rejected)
-        self.assertTrue(untouched.startswith("FRAME_OBSERVATION"))
+        self.assertEqual("", untouched)
+
+    def test_public_video_number_is_resolved_only_for_read_frames(self):
+        cards, answer = frame_cards_from_text(
+            "总结：大厅里有人倒地。\nFRAME_OBSERVATION 1 15.0: 一人倒地\n"
+            "FRAME_OBSERVATION 2 5.0: 未读画面的猜测",
+            self.videos, [{"video_id": "a.mp4", "timestamp_sec": 15, "status": "image_attached"}])
+        self.assertEqual("总结：大厅里有人倒地。", answer)
+        self.assertEqual(1, len(cards))
+        self.assertEqual(("a.mp4", 15.0, "一人倒地"),
+                         (cards[0]["video_id"], cards[0]["timestamp_sec"], cards[0]["description"]))
 
     def test_video_priority_does_not_treat_metadata_as_visual_evidence(self):
         board = VideoPriorities(self.videos)
