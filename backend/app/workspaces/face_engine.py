@@ -74,15 +74,19 @@ class FaceEmbeddingModel:
             return []
         results = []
         for face in faces:
+            x, y, w, h = [int(value) for value in face[:4]]
+            # Tiny detections cannot provide a recognizable cover or a reliable
+            # identity embedding; low-resolution CCTV creates many such hits.
+            if min(w, h) < 40:
+                continue
+            x1, y1 = max(0, x), max(0, y)
+            x2, y2 = min(width, x + w), min(height, y + h)
+            if min(x2 - x1, y2 - y1) < 40:
+                continue
             aligned = self.recognizer.alignCrop(frame, face)
             feature = self.recognizer.feature(aligned).flatten()
             embedding = feature.tolist()
             if cosine(embedding, embedding) < 0.99:
-                continue
-            x, y, w, h = [int(value) for value in face[:4]]
-            x1, y1 = max(0, x), max(0, y)
-            x2, y2 = min(width, x + w), min(height, y + h)
-            if x2 <= x1 or y2 <= y1:
                 continue
             results.append({"embedding": embedding, "crop_img": frame[y1:y2, x1:x2].copy(),
                             "bbox": (x1, y1, x2, y2)})

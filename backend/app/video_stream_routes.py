@@ -296,6 +296,15 @@ def serve_video(video_path):
         if not os.path.isfile(full_path):
             abort(400, description="Not a file")
 
+        # Face avatars and crops share the signed media route with videos, but
+        # they must be returned as images rather than probed/transcoded as MP4.
+        if safe_video_path.startswith('storage/faces/'):
+            extension = os.path.splitext(safe_video_path)[1].lower()
+            image_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png'}
+            if extension not in image_types:
+                abort(400, description="Unsupported face image format")
+            return send_file(full_path, mimetype=image_types[extension])
+
         if check_only:
             is_compat, codec_info, needs_tc = _check_video_compatible(full_path)
             return {

@@ -77,6 +77,49 @@ class UserGroupApiTest(unittest.TestCase):
     def setUp(self):
         self.super_headers = self.auth_headers("admin", "admin")
 
+    def test_face_cover_is_served_as_authorized_image(self):
+        group_response = self.client.post(
+            "/api/groups/", headers=self.super_headers, json={"name": "Face Cover Group"}
+        )
+        self.assertEqual(group_response.status_code, 201, group_response.get_json())
+        group_id = group_response.get_json()["data"]["id"]
+        workspace_response = self.client.post(
+            f"/api/workspaces/{group_id}", headers=self.super_headers,
+            json={"name": "Face Cover Workspace"},
+        )
+        self.assertEqual(workspace_response.status_code, 201, workspace_response.get_json())
+        workspace_id = workspace_response.get_json()["data"]["id"]
+        avatar_path = f"storage/faces/avatar_ws{workspace_id}_test.jpg"
+        avatar_file = Path(_tmpdir.name) / avatar_path
+        avatar_file.parent.mkdir(parents=True, exist_ok=True)
+        avatar_file.write_bytes(b"\xff\xd8face-cover\xff\xd9")
+
+        with self.app.app_context():
+            from app.models.face import WorkspaceFaceGroup
+
+            face_group = WorkspaceFaceGroup(
+                workspace_id=workspace_id, name="Test Face", avatar_path=avatar_path
+            )
+            db.session.add(face_group)
+            db.session.commit()
+            face_group_id = face_group.id
+
+        response = self.client.get(
+            f"/api/workspaces/{workspace_id}/faces", headers=self.super_headers
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+        avatar_url = next(
+            item["avatar_url"] for item in response.get_json()["data"]
+            if item["id"] == face_group_id
+        )
+        self.assertIn("media_token=", avatar_url)
+        self.assertEqual(self.client.get(avatar_url.split("?", 1)[0]).status_code, 401)
+        image = self.client.get(avatar_url)
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(image.mimetype, "image/jpeg")
+        self.assertEqual(image.data, avatar_file.read_bytes())
+        image.close()
+
     def test_personal_and_group_model_configs_permissions(self):
         self.create_user("cfg_leader", "Config Leader")
         self.create_user("cfg_member", "Config Member")

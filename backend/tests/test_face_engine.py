@@ -1,6 +1,7 @@
 import unittest
 import importlib.util
 from pathlib import Path
+from unittest.mock import Mock
 
 
 module_path = Path(__file__).resolve().parents[1] / "app" / "workspaces" / "face_engine.py"
@@ -13,6 +14,22 @@ configured_face_backend = face_engine.configured_face_backend
 
 
 class FaceEngineTests(unittest.TestCase):
+    def test_tiny_detections_do_not_create_face_records(self):
+        import numpy as np
+
+        model = face_engine.FaceEmbeddingModel.__new__(face_engine.FaceEmbeddingModel)
+        model.detector = Mock()
+        model.detector.detect.return_value = (
+            None, np.array([[10, 10, 12, 15], [50, 50, 60, 60]], dtype=np.float32)
+        )
+        model.recognizer = Mock()
+        model.recognizer.feature.return_value = np.array([1.0, 0.0])
+
+        faces = model.detect(np.zeros((150, 150, 3), dtype=np.uint8))
+        self.assertEqual(len(faces), 1)
+        self.assertEqual(faces[0]["bbox"], (50, 50, 110, 110))
+        self.assertEqual(model.recognizer.alignCrop.call_count, 1)
+
     def test_face_backend_is_only_read_from_server_environment(self):
         from unittest.mock import patch
         with patch.dict("os.environ", {"FACE_RECOGNITION_BACKEND": "harmony"}):

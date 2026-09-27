@@ -3126,7 +3126,7 @@ struct WorkspaceDetail {
                     .fontSize(15)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.app_text_secondary'))
-                  Text('此范围暂无人脸线索。可检查片段预处理状态和所选归类方式；识别结果仅供人工核对。')
+                  Text('此范围未检出可辨认的人脸。远距离或低分辨率画面可能无法提供有效抓拍，可使用清晰度更高的视频测试。')
                     .fontSize(12)
                     .fontColor($r('app.color.app_text_muted'))
                     .textAlign(TextAlign.Center)
