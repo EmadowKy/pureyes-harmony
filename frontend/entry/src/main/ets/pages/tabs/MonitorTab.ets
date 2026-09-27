@@ -114,6 +114,7 @@ struct AddMonitorDialog {
 @Component
 export struct MonitorTab {
   @Prop @Watch('onGroupChange') groupId: number = 0;
+  onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
   @State monitors: Array<MonitorInfo> = [];
   @State selectedMonitorId: number = 0;
   @State selectedMonitorName: string = '';
@@ -234,6 +235,7 @@ export struct MonitorTab {
 
   resetSelection(): void {
     this.selectedMonitorId = 0;
+    this.onDetailChange(false);
     this.selectedMonitorName = '';
     this.selectedMonitorUrl = '';
     this.isLiveStream = false;
@@ -595,6 +597,7 @@ export struct MonitorTab {
     }
 
     this.selectedMonitorId = monitor.id;
+    this.onDetailChange(true);
     this.selectedMonitorName = monitor.name;
     this.isLiveStream = true;
     this.playbackMode = 'live';

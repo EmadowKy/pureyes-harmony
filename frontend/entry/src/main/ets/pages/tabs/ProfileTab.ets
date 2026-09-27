@@ -215,6 +215,7 @@ export struct CreateUserDialog {
 
 @Component
 export struct ProfileTab {
+  onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
   @State user: UserInfo = new UserInfo();
   @State activePage: string = PAGE_HOME;
   @State invites: Array<InviteInfo> = [];
@@ -404,6 +405,7 @@ export struct ProfileTab {
 
   openPage(page: string): void {
     this.activePage = page;
+    this.onDetailChange(page !== PAGE_HOME);
     if (page === PAGE_INFO) {
       this.editName = this.user.name;
       this.editPhone = this.user.phone;
@@ -436,6 +438,7 @@ export struct ProfileTab {
 
   backHome(): void {
     this.activePage = PAGE_HOME;
+    this.onDetailChange(false);
     this.selectedUser = new UserInfo();
     this.showUserDetail = false;
     this.userDetailReadonly = false;

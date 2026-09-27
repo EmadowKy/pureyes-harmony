@@ -115,6 +115,7 @@ export struct RenameGroupDialog {
 @Component
 export struct GroupTab {
   @Prop @Watch('onGroupChange') groupId: number = 0;
+  onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
   @State group: GroupDetail = new GroupDetail();
   @State members: Array<MemberInfo> = [];
   @State inviteCandidates: Array<MemberInfo> = [];
@@ -351,11 +352,13 @@ export struct GroupTab {
   openMemberDetail(member: MemberInfo): void {
     this.selectedMember = member;
     this.showMemberDetail = true;
+    this.onDetailChange(true);
   }
 
   closeMemberDetail(): void {
     this.selectedMember = new MemberInfo();
     this.showMemberDetail = false;
+    this.onDetailChange(false);
   }
 
   @Builder AppSymbol(name: string, color: ResourceColor, size: number) {

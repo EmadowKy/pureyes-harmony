@@ -33,8 +33,17 @@ struct Index {
   @State groups: Array<GroupInfo> = [];
   @State sessionState: string = 'checking';
   @State sessionMessage: string = '';
+  @State monitorDetailOpen: boolean = false;
+  @State groupDetailOpen: boolean = false;
+  @State profileDetailOpen: boolean = false;
   private tabsController: TabsController = new TabsController();
   private checkingSession: boolean = false;
+
+  private isSubpageOpen(): boolean {
+    return (this.currentIndex === 0 && this.monitorDetailOpen) ||
+      (this.currentIndex === 2 && this.groupDetailOpen) ||
+      (this.currentIndex === 3 && this.profileDetailOpen);
+  }
 
   aboutToAppear(): void {
     this.verifySession();
@@ -317,11 +326,16 @@ struct Index {
       .backgroundColor($r('app.color.app_page_bg'))
     } else {
       Column() {
-        this.TopNavigation()
+        if (!this.isSubpageOpen()) {
+          this.TopNavigation()
+        }
 
         Tabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
           TabContent() {
-            MonitorTab({ groupId: this.currentGroupId })
+            MonitorTab({
+              groupId: this.currentGroupId,
+              onDetailChange: (open: boolean): void => { this.monitorDetailOpen = open; }
+            })
           }.tabBar(this.NavBarItem(0, '监控', NavIconType.Monitor))
 
           TabContent() {
@@ -329,17 +343,22 @@ struct Index {
           }.tabBar(this.NavBarItem(1, '工作区', NavIconType.Workspace))
 
           TabContent() {
-            GroupTab({ groupId: this.currentGroupId })
+            GroupTab({
+              groupId: this.currentGroupId,
+              onDetailChange: (open: boolean): void => { this.groupDetailOpen = open; }
+            })
           }.tabBar(this.NavBarItem(2, '小组', NavIconType.Group))
 
           TabContent() {
-            ProfileTab()
+            ProfileTab({
+              onDetailChange: (open: boolean): void => { this.profileDetailOpen = open; }
+            })
           }.tabBar(this.NavBarItem(3, '我的', NavIconType.Profile))
         }
         .onChange((index: number) => {
           this.currentIndex = index;
         })
-        .barHeight(66)
+        .barHeight(this.isSubpageOpen() ? 0 : 66)
         .barBackgroundColor($r('app.color.app_nav_bar_bg'))
         .layoutWeight(1)
       }
