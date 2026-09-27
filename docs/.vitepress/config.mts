@@ -21,17 +21,30 @@ export default withMermaid(
       sidebar: {
         '/user-guide/': [
           {
-            text: '终端用户指南',
+            text: '开始使用',
+            collapsed: false,
             items: [
-              { text: '01. 系统简介与核心特性', link: '/user-guide/01-overview' },
-              { text: '02. 客户端快速入门', link: '/user-guide/02-quick-start' },
-              { text: '03. 账号认证与安全设置', link: '/user-guide/03-authentication' },
-              { text: '04. 小组协作与团队通讯录', link: '/user-guide/04-group-collaboration' },
-              { text: '05. 实时视频监控与历史回放', link: '/user-guide/05-live-monitoring' },
-              { text: '06. 工作区管理与视频切片', link: '/user-guide/06-workspace-management' },
-              { text: '07. 智能多模态视觉问答', link: '/user-guide/07-ai-multimodal-qa' },
-              { text: '08. 管理员控制台与用户管理', link: '/user-guide/08-admin-console' },
-              { text: '09. 个人中心与大模型 API 设置', link: '/user-guide/09-profile-and-settings' }
+              { text: '指南首页', link: '/user-guide/01-overview' },
+              { text: '快速开始', link: '/user-guide/02-quick-start' },
+              { text: '账号登录与安全', link: '/user-guide/03-authentication' }
+            ]
+          },
+          {
+            text: '小组与视频',
+            collapsed: false,
+            items: [
+              { text: '小组协作', link: '/user-guide/04-group-collaboration' },
+              { text: '监控与回放', link: '/user-guide/05-live-monitoring' },
+              { text: '工作区与视频片段', link: '/user-guide/06-workspace-management' },
+              { text: '调查问答', link: '/user-guide/07-ai-multimodal-qa' }
+            ]
+          },
+          {
+            text: '个人与管理',
+            collapsed: false,
+            items: [
+              { text: '个人中心与模型配置', link: '/user-guide/09-profile-and-settings' },
+              { text: '用户管理（管理员）', link: '/user-guide/08-admin-console' }
             ]
           }
         ],
