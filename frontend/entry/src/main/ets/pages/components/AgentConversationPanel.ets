@@ -1768,7 +1768,7 @@ export struct AgentConversationPanel {
       }
     }
     .width('100%')
-    .height('100%')
+    .layoutWeight(1)
     .backgroundColor($r('app.color.app_page_bg'))
   }
 }
