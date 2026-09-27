@@ -9,6 +9,7 @@ struct Login {
   @State empId: string = '';
   @State pass: string = '';
   @State loading: boolean = false;
+  @State focusedInput: string = '';
   
   // 使用 StorageLink 进行鸿蒙本地磁盘持久化存储双向绑定
   @StorageLink('is_custom_server') isCustomServer: boolean = false;
@@ -216,6 +217,7 @@ struct Login {
             .padding({ left: 8, right: 8, top: 5, bottom: 5 })
             .border({ width: 1, color: $r('app.color.app_border') })
             .borderRadius(6)
+            .animation({ duration: 180, curve: Curve.EaseOut })
           }
           .width('100%')
 
@@ -233,6 +235,8 @@ struct Login {
                   .height(46)
                   .fontColor($r('app.color.app_text_primary'))
                   .backgroundColor(Color.Transparent)
+                  .onFocus((): void => { this.focusedInput = 'server'; })
+                  .onBlur((): void => { this.focusedInput = ''; })
                   .onChange((val: string): void => {
                     this.serverUrl = val;
                     this.customServerUrlStorage = val;
@@ -257,11 +261,16 @@ struct Login {
               }
               .height(48)
               .backgroundColor($r('app.color.app_input_bg'))
-              .border({ width: 1, color: $r('app.color.app_border') })
+              .border({ width: 1, color: this.focusedInput === 'server' ?
+                $r('app.color.app_selection') : $r('app.color.app_border') })
               .borderRadius(8)
               .padding({ left: 4, right: 4 })
+              .animation({ duration: 160, curve: Curve.EaseOut })
             }
             .width('100%')
+            .transition(TransitionEffect.OPACITY
+              .combine(TransitionEffect.translate({ y: -8 }))
+              .animation({ duration: 200, curve: Curve.EaseOut }))
           }
 
           Column({ space: 6 }) {
@@ -275,9 +284,13 @@ struct Login {
               .height(48)
               .fontColor($r('app.color.app_text_primary'))
               .backgroundColor($r('app.color.app_input_bg'))
-              .border({ width: 1, color: $r('app.color.app_border') })
+              .border({ width: 1, color: this.focusedInput === 'id' ?
+                $r('app.color.app_selection') : $r('app.color.app_border') })
               .borderRadius(8)
+              .animation({ duration: 160, curve: Curve.EaseOut })
               .contentType(ContentType.USER_NAME)
+              .onFocus((): void => { this.focusedInput = 'id'; })
+              .onBlur((): void => { this.focusedInput = ''; })
               .onChange((val: string): void => {
                 this.empId = val;
               })
@@ -296,9 +309,13 @@ struct Login {
               .height(48)
               .fontColor($r('app.color.app_text_primary'))
               .backgroundColor($r('app.color.app_input_bg'))
-              .border({ width: 1, color: $r('app.color.app_border') })
+              .border({ width: 1, color: this.focusedInput === 'password' ?
+                $r('app.color.app_selection') : $r('app.color.app_border') })
               .borderRadius(8)
+              .animation({ duration: 160, curve: Curve.EaseOut })
               .contentType(ContentType.PASSWORD)
+              .onFocus((): void => { this.focusedInput = 'password'; })
+              .onBlur((): void => { this.focusedInput = ''; })
               .onChange((val: string): void => {
                 this.pass = val;
               })
@@ -319,6 +336,9 @@ struct Login {
             .padding({ left: 11, right: 11, top: 9, bottom: 9 })
             .backgroundColor($r('app.color.app_danger_soft'))
             .borderRadius(6)
+            .transition(TransitionEffect.OPACITY
+              .combine(TransitionEffect.translate({ y: -8 }))
+              .animation({ duration: 200, curve: Curve.EaseOut }))
           }
 
           Button() {
@@ -335,9 +355,13 @@ struct Login {
 
               Blank()
 
-              SymbolGlyph($r('sys.symbol.arrowshape_right_fill'))
-                .fontSize(16)
-                .fontColor([$r('app.color.app_text_on_inverted')])
+              if (this.loading) {
+                LoadingProgress().width(18).height(18).color($r('app.color.app_text_on_inverted'))
+              } else {
+                SymbolGlyph($r('sys.symbol.arrowshape_right_fill'))
+                  .fontSize(16)
+                  .fontColor([$r('app.color.app_text_on_inverted')])
+              }
             }
             .width('100%')
             .padding({ left: 14, right: 14 })
@@ -349,6 +373,7 @@ struct Login {
             .borderRadius(8)
             .enabled(!this.loading && !this.testingServer)
             .opacity((this.loading || this.testingServer) ? 0.6 : 1)
+            .animation({ duration: 180, curve: Curve.EaseOut })
             .onClick((): void => {
               this.handleLogin();
             })
@@ -377,9 +402,11 @@ struct Login {
           .padding({ left: 2, right: 2, top: 12, bottom: 4 })
           .border({ width: { top: 1 }, color: $r('app.color.app_border') })
           .onClick((): void => {
-            this.isCustomServer = !this.isCustomServer;
-            this.isServerOk = false;
-            this.isTestSuccess = false;
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
+              this.isCustomServer = !this.isCustomServer;
+              this.isServerOk = false;
+              this.isTestSuccess = false;
+            });
             if (!this.isCustomServer) {
               this.applyCurrentServerConfig();
             } else {

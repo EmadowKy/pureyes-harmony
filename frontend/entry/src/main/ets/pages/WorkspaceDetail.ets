@@ -1359,6 +1359,7 @@ struct WorkspaceDetail {
   initialConversationId: string = '';
 
   @State currentSubTab: number = 0; // 0: 片段, 1: 人脸, 2: 问答
+  @State pressedSegmentId: number = 0;
   @State agentDetailOpen: boolean = false;
   @State agentReturnSignal: number = 0;
   @State segments: Array<WorkspaceVideoSegment> = [];
@@ -2387,12 +2388,18 @@ struct WorkspaceDetail {
         .width(38)
         .height(3)
         .backgroundColor(this.currentSubTab === index ? $r('app.color.app_accent') : Color.Transparent)
+        .borderRadius(2)
+        .animation({ duration: 180, curve: Curve.EaseOut })
 
       Stack() {
         this.WorkspaceSubTabIcon(index, this.currentSubTab === index)
       }
       .width(46)
       .height(32)
+      .backgroundColor(this.currentSubTab === index ? $r('app.color.app_primary_soft') : Color.Transparent)
+      .borderRadius(11)
+      .scale({ x: this.currentSubTab === index ? 1 : 0.94, y: this.currentSubTab === index ? 1 : 0.94 })
+      .animation({ duration: 180, curve: Curve.EaseOut })
 
       Text(label)
         .fontSize(11)
@@ -2403,10 +2410,13 @@ struct WorkspaceDetail {
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .onClick((): void => {
-      this.currentSubTab = index;
-      this.showCreateQA = false;
-      this.showSelectExampleVideo = false;
-      this.agentDetailOpen = false;
+      if (this.currentSubTab === index) return;
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
+        this.currentSubTab = index;
+        this.showCreateQA = false;
+        this.showSelectExampleVideo = false;
+        this.agentDetailOpen = false;
+      });
       if (index === 0) {
         this.loadSegments();
       } else if (index === 1) {
@@ -2920,6 +2930,7 @@ struct WorkspaceDetail {
                                   .height(6)
                                   .color($r('app.color.app_primary'))
                                   .margin({ right: 8 })
+                                  .animation({ duration: 220, curve: Curve.EaseOut })
                                 Text(seg.status === 'pending' ? '排队中' : `${seg.progress}%`)
                                   .fontSize(10)
                                   .fontColor($r('app.color.app_primary'))
@@ -2950,13 +2961,24 @@ struct WorkspaceDetail {
                         .width('100%')
                         .padding(15)
                         .backgroundColor($r('app.color.app_card_bg'))
-                        .borderRadius(10)
+                        .borderRadius(14)
                         .border({ width: 1, color: $r('app.color.app_border') })
+                        .scale({ x: this.pressedSegmentId === seg.id ? 0.985 : 1,
+                          y: this.pressedSegmentId === seg.id ? 0.985 : 1 })
+                        .animation({ duration: 130, curve: Curve.EaseOut })
+                        .onTouch((event: TouchEvent): void => {
+                          if (event.type === TouchType.Down) this.pressedSegmentId = seg.id;
+                          if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.pressedSegmentId = 0;
+                        })
                         .onClick((): void => {
+                          this.pressedSegmentId = 0;
                           this.showSegmentDetail(seg);
                         })
                       }
-                    }, (seg: WorkspaceVideoSegment): string => `${seg.id}-${seg.status}-${seg.progress}`)
+                      .transition(TransitionEffect.OPACITY
+                        .combine(TransitionEffect.translate({ y: 8 }))
+                        .animation({ duration: 220, curve: Curve.EaseOut }))
+                    }, (seg: WorkspaceVideoSegment): string => seg.id.toString())
                   }
                   .width('90%')
                   .layoutWeight(1)
@@ -3432,6 +3454,7 @@ struct WorkspaceDetail {
 
 @Component
 struct VideoItemCard {
+  @State isPressed: boolean = false;
   @Prop name: string = '';
   @Prop duration: number = 0;
   @Prop sourceType: string = 'monitor';
@@ -3509,9 +3532,16 @@ struct VideoItemCard {
     }
     .width('100%')
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(8)
+    .borderRadius(12)
     .border({ width: 1, color: $r('app.color.app_border') })
+    .scale({ x: this.isPressed ? 0.975 : 1, y: this.isPressed ? 0.975 : 1 })
+    .animation({ duration: 130, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent): void => {
+      if (event.type === TouchType.Down) this.isPressed = true;
+      if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false;
+    })
     .onClick((): void => {
+      this.isPressed = false;
       this.onCardClick();
     })
   }
@@ -3525,6 +3555,7 @@ struct VideoItemCard {
 
 @Component
 struct FaceGroupCard {
+  @State isPressed: boolean = false;
   @Prop group: WorkspaceFaceGroupInfo = new WorkspaceFaceGroupInfo();
   onCardClick: () => void = (): void => {};
 
@@ -3577,9 +3608,16 @@ struct FaceGroupCard {
     }
     .width('100%')
     .backgroundColor($r('app.color.app_card_bg'))
-    .borderRadius(8)
+    .borderRadius(12)
     .border({ width: 1, color: $r('app.color.app_border') })
+    .scale({ x: this.isPressed ? 0.975 : 1, y: this.isPressed ? 0.975 : 1 })
+    .animation({ duration: 130, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent): void => {
+      if (event.type === TouchType.Down) this.isPressed = true;
+      if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.isPressed = false;
+    })
     .onClick((): void => {
+      this.isPressed = false;
       this.onCardClick();
     })
   }

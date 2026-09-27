@@ -116,6 +116,7 @@ export struct MonitorTab {
   @Prop @Watch('onGroupChange') groupId: number = 0;
   onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
   @State monitors: Array<MonitorInfo> = [];
+  @State pressedMonitorId: number = 0;
   @State selectedMonitorId: number = 0;
   @State selectedMonitorName: string = '';
   @State selectedMonitorUrl: string = '';
@@ -141,7 +142,8 @@ export struct MonitorTab {
   liveTimelineTimer: number = 0;
   liveTimelineRefreshTicks: number = 0;
   isRefreshingLiveTimeline: boolean = false;
-  isLoadingMonitors: boolean = false;
+  @State isLoadingMonitors: boolean = false;
+  private monitorLoadEpoch: number = 0;
 
   showToast(options: ToastOptions): void {
     try {
@@ -230,6 +232,9 @@ export struct MonitorTab {
 
   onGroupChange(): void {
     this.resetSelection();
+    this.monitors = [];
+    this.monitorLoadEpoch += 1;
+    this.isLoadingMonitors = false;
     this.loadMonitors();
   }
 
@@ -366,18 +371,22 @@ export struct MonitorTab {
   async loadMonitors(): Promise<void> {
     if (!this.groupId) {
       this.monitors = [];
+      this.isLoadingMonitors = false;
       return;
     }
     if (this.isLoadingMonitors) {
       return;
     }
 
+    const groupId = this.groupId;
+    const epoch = ++this.monitorLoadEpoch;
     this.isLoadingMonitors = true;
     try {
-      const res = await HttpUtil.get(`/monitors/${this.groupId}`);
+      const res = await HttpUtil.get(`/monitors/${groupId}`);
+      if (epoch !== this.monitorLoadEpoch || groupId !== this.groupId) return;
       if (res.code === 0 && res.data) {
         const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
-        this.monitors = listObj.map((item: Record<string, Object>): MonitorInfo => {
+        const mapped = listObj.map((item: Record<string, Object>): MonitorInfo => {
           const monitor = new MonitorInfo();
           monitor.id = item['id'] as number;
           monitor.name = item['name'] as string;
@@ -397,11 +406,14 @@ export struct MonitorTab {
           monitor.stream_url = monitor.live_url ? `${BASE_HOST}${monitor.live_url}` : '';
           return monitor;
         });
+        this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+          this.monitors = mapped;
+        });
       } else {
         this.monitors = [];
       }
     } finally {
-      this.isLoadingMonitors = false;
+      if (epoch === this.monitorLoadEpoch) this.isLoadingMonitors = false;
     }
   }
 
@@ -524,6 +536,7 @@ export struct MonitorTab {
         color: isSelected ? $r('app.color.app_accent') : $r('app.color.app_border')
       })
       .borderRadius(0)
+      .animation({ duration: 180, curve: Curve.EaseOut })
       .onClick(action)
   }
 
@@ -1049,7 +1062,18 @@ export struct MonitorTab {
         .width('100%')
         .padding({ left: 18, right: 18, top: 22, bottom: 16 })
 
-        if (this.monitors.length === 0) {
+        if (this.isLoadingMonitors && this.monitors.length === 0) {
+          Column({ space: 12 }) {
+            LoadingProgress().width(30).height(30).color($r('app.color.app_selection'))
+            Text('正在加载监控')
+              .fontSize(13)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else if (this.monitors.length === 0) {
           Column({ space: 10 }) {
             Stack() {
               Image($r('app.media.business_monitor'))
@@ -1079,6 +1103,9 @@ export struct MonitorTab {
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
           .padding({ bottom: 52 })
+          .transition(TransitionEffect.OPACITY
+            .combine(TransitionEffect.translate({ y: 8 }))
+            .animation({ duration: 220, curve: Curve.EaseOut }))
         } else {
           Grid() {
             ForEach(this.monitors, (monitor: MonitorInfo): void => {
@@ -1154,8 +1181,18 @@ export struct MonitorTab {
                 .backgroundColor($r('app.color.app_card_bg'))
                 .border({ width: 1, color: $r('app.color.app_border') })
                 .borderRadius(12)
+                .scale({ x: this.pressedMonitorId === monitor.id ? 0.985 : 1,
+                  y: this.pressedMonitorId === monitor.id ? 0.985 : 1 })
+                .animation({ duration: 130, curve: Curve.EaseOut })
+                .onTouch((event: TouchEvent): void => {
+                  if (event.type === TouchType.Down) this.pressedMonitorId = monitor.id;
+                  if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.pressedMonitorId = 0;
+                })
               }
-            })
+              .transition(TransitionEffect.OPACITY
+                .combine(TransitionEffect.translate({ y: 8 }))
+                .animation({ duration: 220, curve: Curve.EaseOut }))
+            }, (monitor: MonitorInfo): string => monitor.id.toString())
           }
           .columnsTemplate('1fr 1fr')
           .columnsGap(10)

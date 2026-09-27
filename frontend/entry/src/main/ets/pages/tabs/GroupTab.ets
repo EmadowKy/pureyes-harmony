@@ -124,6 +124,7 @@ export struct GroupTab {
   @State selectedInviteEmpId: string = '';
   @State showMemberDetail: boolean = false;
   @State isLoading: boolean = false;
+  private groupLoadEpoch: number = 0;
 
   showToast(options: ToastOptions): void {
     try {
@@ -150,6 +151,7 @@ export struct GroupTab {
   onGroupChange(): void {
     this.resetInviteState();
     this.closeMemberDetail();
+    this.members = [];
     this.loadGroup();
   }
 
@@ -202,14 +204,19 @@ export struct GroupTab {
 
   async loadGroup(): Promise<void> {
     if (!this.groupId) {
+      this.groupLoadEpoch += 1;
       this.group = new GroupDetail();
       this.members = [];
+      this.isLoading = false;
       this.resetInviteState();
       return;
     }
 
+    const groupId = this.groupId;
+    const epoch = ++this.groupLoadEpoch;
     this.isLoading = true;
-    const groupRes = await HttpUtil.get(`/groups/${this.groupId}`);
+    const groupRes = await HttpUtil.get(`/groups/${groupId}`);
+    if (epoch !== this.groupLoadEpoch || groupId !== this.groupId) return;
     if (groupRes.code === 0 && groupRes.data) {
       const dataObj = JSON.parse(groupRes.data) as Record<string, Object>;
       const detail = new GroupDetail();
@@ -225,7 +232,7 @@ export struct GroupTab {
     }
 
     await this.loadMembers();
-    this.isLoading = false;
+    if (epoch === this.groupLoadEpoch) this.isLoading = false;
   }
 
   async loadMembers(): Promise<void> {
@@ -234,15 +241,19 @@ export struct GroupTab {
       return;
     }
 
+    const groupId = this.groupId;
     const includePending = this.group.is_creator ? '?include_pending=1' : '';
-    const res = await HttpUtil.get(`/groups/${this.groupId}/members${includePending}`);
+    const res = await HttpUtil.get(`/groups/${groupId}/members${includePending}`);
+    if (groupId !== this.groupId) return;
     if (res.code === 0 && res.data) {
       const listObj = JSON.parse(res.data) as Array<Record<string, Object>>;
       const parsed: Array<MemberInfo> = [];
       for (let i = 0; i < listObj.length; i++) {
         parsed.push(this.parseMember(listObj[i]));
       }
-      this.members = parsed;
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+        this.members = parsed;
+      });
     } else {
       this.members = [];
     }
@@ -351,14 +362,17 @@ export struct GroupTab {
 
   openMemberDetail(member: MemberInfo): void {
     this.selectedMember = member;
-    this.showMemberDetail = true;
-    this.onDetailChange(true);
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+      this.showMemberDetail = true;
+      this.onDetailChange(true);
+    });
   }
 
   closeMemberDetail(): void {
-    this.selectedMember = new MemberInfo();
-    this.showMemberDetail = false;
-    this.onDetailChange(false);
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+      this.showMemberDetail = false;
+      this.onDetailChange(false);
+    });
   }
 
   @Builder AppSymbol(name: string, color: ResourceColor, size: number) {
@@ -498,6 +512,7 @@ export struct GroupTab {
     }
     .width('100%')
     .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
   }
 
   @Builder InvitePanel() {
@@ -652,7 +667,10 @@ export struct GroupTab {
             .border({ width: 1, color: $r('app.color.app_border') })
             .borderRadius(10)
           }
-        })
+          .transition(TransitionEffect.OPACITY
+            .combine(TransitionEffect.translate({ y: 8 }))
+            .animation({ duration: 220, curve: Curve.EaseOut }))
+        }, (member: MemberInfo): string => member.emp_id)
       }
       .width('90%')
       .layoutWeight(1)
@@ -695,7 +713,18 @@ export struct GroupTab {
           this.InvitePanel()
         }
 
-        if (this.members.length === 0 && !this.isLoading) {
+        if (this.members.length === 0 && this.isLoading) {
+          Column({ space: 12 }) {
+            LoadingProgress().width(30).height(30).color($r('app.color.app_selection'))
+            Text('正在加载成员')
+              .fontSize(13)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else if (this.members.length === 0) {
           Column({ space: 10 }) {
             Stack() {
               Image($r('app.media.business_team'))
