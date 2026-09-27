@@ -67,7 +67,7 @@ pip install -r backend/requirements.txt
 3. **ByteTrack 多目标追踪配置 (`bytetrack_fixed.yaml`)**：
    - 放置于 `backend/app/mva_v2/bytetrack_fixed.yaml`。
 4. **多模态视觉大模型 API 配置**：
-   - 用户可在客户端【我的】->【大模型 API 设置】界面实时配置个人或企业的 API Key、Base URL 及模型名称；服务器端亦可在环境变量或配置文件中配置默认的大模型 API 节点。
+   - 用户在客户端【我的】→【模型 API】管理个人配置；小组长可建立供本组成员选用的小组配置。每轮调查在问答输入框中选择配置，填写 API Key、Base URL 与模型名称。
 
 首次启动前至少设置管理员密码和持久化密钥。密钥一旦用于生产数据后请妥善备份并保持不变，否则已有登录凭据或加密保存的大模型 API Key 将失效：
 

@@ -2,11 +2,15 @@
 
 本文面向软件架构师与系统工程师，详细阐述 Pureyes 鸿蒙多模态视觉监控与分析系统的分层架构、通信协议与端到端数据流向。
 
+![客户端、Flask 服务、视频与索引、调查 Agent 之间的功能关系](../illustrations/pureyes-architecture.png)
+
+图中展示功能边界，下面的 Mermaid 图与接口说明给出更具体的数据流；图片中的图标与卡片不是实际应用界面。
+
 ---
 
 ## 1. 全局分层架构图
 
-系统采用前后端分离与云端大模型 API 的分层架构。工作区调查由 MVA_v2 的 ReAct 工具调用运行器驱动，前端展示多轮会话与公开执行记录：
+系统采用前后端分离与视觉大模型 API 的分层架构。工作区调查默认使用 MVA_v2 的原生函数调用循环，旧版 JSON/ReAct 是回退路径；前端展示多轮会话与公开执行记录：
 
 ```mermaid
 graph TB
@@ -24,7 +28,7 @@ graph TB
     end
 
     subgraph "AI 多模态分析层 MVA_v2 (PyTorch CUDA)"
-        MVA2[MVA_v2 ReAct 工具调用运行器]
+        MVA2[MVA_v2 调查 Agent 工具调用运行器]
         LLM[多模态视觉大语言模型 API]
         YOLO[YOLOv8 + ByteTrack 跨帧跟踪引擎]
         VectorDB[OSNet / CLIP 时空特征向量数据库]

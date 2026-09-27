@@ -28,38 +28,17 @@ frontend/
 │       │       └── ProfileTab.ets # 个人中心、控制台入口与设置
 │       └── utils/                 # 工具库
 │           ├── http.ets            # Network 请求封装、Base URL 管理与 Token 拦截
-│           └── security.ets        # 账号安全工具与首选项存储
+│           ├── security.ets        # 安全凭据与会话状态
+│           └── documentation.ets   # 在线使用说明入口
 ```
 
 ---
 
 ## 2. ArkTS 页面与 Tab 状态设计
 
-应用主框架采用鸿蒙原生的 `Tabs` 结合自定义 `TabContent` 架构，实现无缝手势滑动与沉浸式体验：
+`Index.ets` 先验证服务端会话，再加载当前账号的小组列表。只有 `currentGroupId` 出现在已加载列表中时，才渲染【监控】【工作区】【小组】【我的】四个 `TabContent`；未选小组或列表为空时，呈现选择／创建小组引导，并保留进入【我的】处理邀请的入口。小组发生变更后会清除无效的当前 ID，防止旧账号的小组状态被沿用。
 
-```typescript
-// Index.ets 核心逻辑示例
-@Entry
-@Component
-struct Index {
-  @State currentIndex: number = 0;
-  private controller: TabsController = new TabsController();
-
-  build() {
-    Column() {
-      Tabs({ barPosition: BarPosition.End, controller: this.controller }) {
-        TabContent() { MonitorTab() }.tabBar(this.NavBarItem(0, '监控', NavIconType.Monitor))
-        TabContent() { WorkspaceTab() }.tabBar(this.NavBarItem(1, '工作区', NavIconType.Workspace))
-        TabContent() { GroupTab() }.tabBar(this.NavBarItem(2, '小组', NavIconType.Group))
-        TabContent() { ProfileTab() }.tabBar(this.NavBarItem(3, '我的', NavIconType.Profile))
-      }
-      .onChange((index: number) => {
-        this.currentIndex = index;
-      })
-    }
-  }
-}
-```
+四个栏目首页使用主底栏。监控播放、成员详情和【我的】子页由各 Tab 通过 `onDetailChange` 向 `Index` 报告层级，主底栏与顶部选择器随之收起。工作区详情是独立路由，内部【片段 | 人脸 | 问答】为次级底栏；进入截取与调查子页时，次级底栏也会收起。
 
 ---
 
