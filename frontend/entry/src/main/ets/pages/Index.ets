@@ -31,6 +31,7 @@ struct Index {
   @StorageLink('session_check_flag') @Watch('onSessionCheck') sessionCheckFlag: number = 0;
   @StorageLink('widget_route') @Watch('onWidgetRoute') widgetRoute: string = '';
   @State groups: Array<GroupInfo> = [];
+  @State groupsLoaded: boolean = false;
   @State sessionState: string = 'checking';
   @State sessionMessage: string = '';
   @State monitorDetailOpen: boolean = false;
@@ -45,6 +46,23 @@ struct Index {
       (this.currentIndex === 3 && this.profileDetailOpen);
   }
 
+  private hasSelectedGroup(): boolean {
+    return this.groupsLoaded && this.currentGroupId > 0 &&
+      this.groups.some((group: GroupInfo): boolean => group.id === this.currentGroupId);
+  }
+
+  private selectGroup(groupId: number): void {
+    this.currentGroupId = groupId;
+    this.currentIndex = 0;
+    this.tabsController.changeIndex(0);
+    this.openWidgetTarget();
+  }
+
+  private openProfile(): void {
+    this.currentIndex = 3;
+    this.tabsController.changeIndex(3);
+  }
+
   aboutToAppear(): void {
     this.verifySession();
   }
@@ -54,11 +72,11 @@ struct Index {
   }
 
   onWidgetRoute(): void {
-    if (this.sessionState === 'ready') this.openWidgetTarget();
+    if (this.sessionState === 'ready' && this.hasSelectedGroup()) this.openWidgetTarget();
   }
 
   private openWidgetTarget(): void {
-    if (!this.widgetRoute || this.sessionState !== 'ready') return;
+    if (!this.widgetRoute || this.sessionState !== 'ready' || !this.hasSelectedGroup()) return;
     let workspaceId = 0;
     let conversationId = '';
     try {
@@ -97,6 +115,7 @@ struct Index {
     this.checkingSession = true;
     this.sessionState = 'checking';
     this.sessionMessage = '';
+    this.groupsLoaded = false;
     const token = AppStorage.get<string>('access_token');
     const savedServer = AppStorage.get<string>('session_server_url') || '';
     if (!token || savedServer !== getBaseUrl().replace(/\/+$/, '')) {
@@ -137,8 +156,8 @@ struct Index {
     }
     if (res.httpStatus === 200 && res.code === 0 && res.data) {
       this.sessionState = 'ready';
+      await this.loadGroups();
       this.checkingSession = false;
-      this.loadGroups();
       this.openWidgetTarget();
       return;
     }
@@ -158,7 +177,7 @@ struct Index {
     if (this.sessionState === 'ready') this.loadGroups();
   }
 
-  async loadGroups() {
+  async loadGroups(): Promise<void> {
     const res = await HttpUtil.get('/groups/');
     if (res.code === 0 && res.data) {
       const groupList = JSON.parse(res.data) as Array<Record<string, Object>>;
@@ -169,12 +188,20 @@ struct Index {
         return info;
       });
       
-      if (this.groups.length > 0 && this.currentGroupId === 0) {
-        this.currentGroupId = this.groups[0].id;
+      if (!this.groups.some((group: GroupInfo): boolean => group.id === this.currentGroupId)) {
+        this.currentGroupId = 0;
+        this.currentIndex = 0;
+        this.monitorDetailOpen = false;
+        this.groupDetailOpen = false;
+        this.profileDetailOpen = false;
       }
+      this.groupsLoaded = true;
     } else if (res.httpStatus === 0 || res.httpStatus === 401 || res.httpStatus === 403) {
       this.sessionState = 'offline';
       this.sessionMessage = res.message || '连接已中断，请重试';
+    } else {
+      this.sessionState = 'offline';
+      this.sessionMessage = res.message || '暂时无法获取小组，请重试';
     }
   }
 
@@ -193,7 +220,7 @@ struct Index {
       .borderRadius(10)
 
       Column({ space: 0 }) {
-        Text('当前调查组')
+        Text(this.hasSelectedGroup() ? '当前调查组' : '选择调查组')
           .fontSize(10)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_muted'))
@@ -211,7 +238,7 @@ struct Index {
           .backgroundColor(Color.Transparent)
           .onSelect((index: number, value: string) => {
             if (this.groups[index]) {
-              this.currentGroupId = this.groups[index].id;
+              this.selectGroup(this.groups[index].id);
             }
           })
       }
@@ -294,6 +321,65 @@ struct Index {
     })
   }
 
+  @Builder GroupRequiredState() {
+    Column({ space: 14 }) {
+      Image($r('app.media.business_team'))
+        .width(54)
+        .height(54)
+        .objectFit(ImageFit.Contain)
+        .padding(11)
+        .backgroundColor($r('app.color.app_card_subtle_bg'))
+        .borderRadius(15)
+
+      Text(!this.groupsLoaded ? '正在加载小组' :
+        this.groups.length === 0 ? '还没有加入小组' : '请选择一个小组')
+        .fontSize(21)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
+
+      Text(!this.groupsLoaded ? '正在获取可使用的小组，请稍候' :
+        this.groups.length === 0 ? '新建小组，或在“我的消息”中接受小组邀请后即可开始使用。' :
+        '在上方选择小组后，即可查看监控、工作区和成员。')
+        .fontSize(14)
+        .fontColor($r('app.color.app_text_secondary'))
+        .textAlign(TextAlign.Center)
+        .width('82%')
+
+      if (this.groupsLoaded) {
+        if (this.groups.length > 0) {
+          Button(`进入${this.groups[0].name}`)
+            .height(44)
+            .padding({ left: 20, right: 20 })
+            .fontColor($r('app.color.app_text_on_inverted'))
+            .backgroundColor($r('app.color.app_surface_inverted'))
+            .borderRadius(10)
+            .onClick((): void => { this.selectGroup(this.groups[0].id); })
+        }
+
+        Button(this.groups.length === 0 ? '前往我的 · 新建小组或查看邀请' : '前往我的')
+          .height(44)
+          .padding({ left: 20, right: 20 })
+          .fontColor(this.groups.length === 0 ? $r('app.color.app_text_on_inverted') : $r('app.color.app_primary'))
+          .backgroundColor(this.groups.length === 0 ? $r('app.color.app_surface_inverted') : Color.Transparent)
+          .borderRadius(10)
+          .onClick((): void => { this.openProfile(); })
+
+        if (this.groups.length === 0) {
+          Button('刷新小组')
+            .height(40)
+            .fontColor($r('app.color.app_primary'))
+            .backgroundColor(Color.Transparent)
+            .onClick((): void => { this.loadGroups(); })
+        }
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('app.color.app_page_bg'))
+  }
+
   build() {
     if (this.sessionState !== 'ready') {
       Column({ space: 16 }) {
@@ -323,6 +409,40 @@ struct Index {
       .height('100%')
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('app.color.app_page_bg'))
+    } else if (!this.hasSelectedGroup()) {
+      Column() {
+        if (this.currentIndex === 3) {
+          if (!this.profileDetailOpen) {
+            Row({ space: 12 }) {
+              Button('‹  返回')
+                .fontSize(16)
+                .fontColor($r('app.color.app_primary'))
+                .backgroundColor(Color.Transparent)
+                .onClick((): void => { this.currentIndex = 0; })
+              Text('我的')
+                .fontSize(19)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.app_text_primary'))
+            }
+            .width('100%')
+            .height(60)
+            .padding({ left: 12, right: 18 })
+            .backgroundColor($r('app.color.app_top_bar_bg'))
+          }
+          ProfileTab({
+            onDetailChange: (open: boolean): void => { this.profileDetailOpen = open; }
+          })
+            .layoutWeight(1)
+        } else {
+          if (this.groups.length > 0) {
+            this.TopNavigation()
+          }
+          this.GroupRequiredState()
+        }
+      }
+      .width('100%')
+      .height('100%')
       .backgroundColor($r('app.color.app_page_bg'))
     } else {
       Column() {
