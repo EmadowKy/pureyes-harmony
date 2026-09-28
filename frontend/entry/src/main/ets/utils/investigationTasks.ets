@@ -21,6 +21,9 @@ export class InvestigationTaskCenter {
 
   static start(context: common.UIAbilityContext): void {
     InvestigationTaskCenter.context = context;
+    notificationManager.isNotificationEnabled().then((enabled: boolean): void => {
+      AppStorage.setOrCreate('investigation_notifications_enabled', enabled);
+    }).catch((): void => {});
     if (!InvestigationTaskCenter.observingBackground) {
       try {
         backgroundTaskManager.on('continuousTaskCancel', (): void => {
@@ -59,8 +62,11 @@ export class InvestigationTaskCenter {
       if (!await notificationManager.isNotificationEnabled()) {
         await notificationManager.requestEnableNotification(context);
       }
-      AppStorage.setOrCreate('investigation_notification_hint', await notificationManager.isNotificationEnabled() ? '' :
+      const enabled = await notificationManager.isNotificationEnabled();
+      AppStorage.setOrCreate('investigation_notifications_enabled', enabled);
+      AppStorage.setOrCreate('investigation_notification_hint', enabled ? '' :
         '未开启通知，可在系统设置中允许清眸通知。');
+      if (enabled) { InvestigationTaskCenter.lastRefresh = 0; await InvestigationTaskCenter.refresh(); }
     } catch (_error) {
       AppStorage.setOrCreate('investigation_notification_hint', '未开启通知，可在系统设置中允许清眸通知。');
     }
@@ -72,7 +78,7 @@ export class InvestigationTaskCenter {
   }
   private static async target(task: InvestigationTaskSnapshot): Promise<WantAgent> {
     return wantAgent.getWantAgent({ wants: [{ bundleName: 'cn.edu.nuaa.pureyes', abilityName: 'EntryAbility',
-      parameters: { fromInvestigationCard: 'true', workspaceId: task.workspaceId.toString(), conversationId: task.conversationId } }],
+      parameters: { fromInvestigationCard: 'true', workspaceId: task.workspaceId.toString(), groupId: task.groupId.toString(), conversationId: task.conversationId } }],
       operationType: wantAgent.OperationType.START_ABILITY,
       requestCode: InvestigationTaskCenter.notificationId(task.taskId),
       wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG] });
@@ -180,6 +186,7 @@ export class InvestigationTaskCenter {
     InvestigationTaskCenter.watchedTasks.clear();
     InvestigationTaskCenter.lastRefresh = 0;
     AppStorage.setOrCreate('investigation_notification_hint', '');
+    AppStorage.setOrCreate('investigation_notifications_enabled', false);
     await InvestigationCard.clear(context);
   }
 }

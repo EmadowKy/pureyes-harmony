@@ -10,6 +10,7 @@ struct InvestigationCard {
   @LocalStorageProp('elapsed') elapsed: string = '00:00';
   @LocalStorageProp('updatedAt') updatedAt: string = '';
   @LocalStorageProp('workspaceId') workspaceId: string = '0';
+  @LocalStorageProp('groupId') groupId: string = '0';
   @LocalStorageProp('conversationId') conversationId: string = '';
   @LocalStorageProp('activeCount') runningCount: string = '0';
   @LocalStorageProp('completedCount') completedCount: string = '0';
@@ -37,7 +38,7 @@ struct InvestigationCard {
         }
       }.width('100%')
       FormLink({ action: 'router', abilityName: 'EntryAbility', params: {
-        fromInvestigationCard: 'true', workspaceId: this.workspaceId, conversationId: this.conversationId
+        fromInvestigationCard: 'true', workspaceId: this.workspaceId, groupId: this.groupId, conversationId: this.conversationId
       } }) {
         Column({ space: 3 }) {
           Row({ space: 8 }) {

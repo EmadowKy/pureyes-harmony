@@ -72,20 +72,26 @@ struct Index {
   }
 
   onWidgetRoute(): void {
-    if (this.sessionState === 'ready' && this.hasSelectedGroup()) this.openWidgetTarget();
+    if (this.sessionState === 'ready' && this.groupsLoaded) this.openWidgetTarget();
   }
 
   private openWidgetTarget(): void {
-    if (!this.widgetRoute || this.sessionState !== 'ready' || !this.hasSelectedGroup()) return;
+    if (!this.widgetRoute || this.sessionState !== 'ready' || !this.groupsLoaded) return;
     let workspaceId = 0;
+    let groupId = 0;
     let conversationId = '';
     try {
       const target = JSON.parse(this.widgetRoute) as Record<string, Object>;
       workspaceId = target['workspaceId'] as number;
+      groupId = (target['groupId'] as number) || 0;
       conversationId = (target['conversationId'] as string) || '';
     } catch (_error) {
       // Invalid widget payload falls back to the workspace list.
     }
+    if (Number.isSafeInteger(groupId) && groupId > 0 && this.groups.some((group: GroupInfo): boolean => group.id === groupId)) {
+      this.currentGroupId = groupId;
+    }
+    if (!this.hasSelectedGroup()) return;
     this.widgetRoute = '';
     if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
       this.currentIndex = 1;

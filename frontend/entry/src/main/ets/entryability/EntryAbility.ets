@@ -13,10 +13,11 @@ export default class EntryAbility extends UIAbility {
     const params = want.parameters;
     if (params?.['fromInvestigationCard'] !== 'true') return '';
     const workspaceId = Number(params['workspaceId']);
+    const groupId = Number(params['groupId'] || 0);
     const conversationId = (params['conversationId'] as string) || '';
     if (!Number.isSafeInteger(workspaceId) || workspaceId < 0 ||
         conversationId.length > 128) return '';
-    return JSON.stringify({ workspaceId, conversationId });
+    return JSON.stringify({ workspaceId, groupId, conversationId });
   }
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {

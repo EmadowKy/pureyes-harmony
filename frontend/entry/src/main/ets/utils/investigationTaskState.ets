@@ -2,6 +2,7 @@ export class InvestigationTaskSnapshot {
   taskId: string = '';
   conversationId: string = '';
   workspaceId: number = 0;
+  groupId: number = 0;
   title: string = '视频调查';
   status: string = 'idle';
   stage: string = '等待调查';
@@ -23,6 +24,7 @@ export function parseInvestigationDashboard(data: Record<string, Object>): Inves
     task.taskId = (raw['task_id'] as string) || '';
     task.conversationId = (raw['conversation_id'] as string) || '';
     task.workspaceId = (raw['workspace_id'] as number) || 0;
+    task.groupId = (raw['group_id'] as number) || 0;
     task.title = (raw['title'] as string) || '视频调查';
     task.status = (raw['status'] as string) || 'idle';
     task.stage = (raw['stage'] as string) || '等待调查';

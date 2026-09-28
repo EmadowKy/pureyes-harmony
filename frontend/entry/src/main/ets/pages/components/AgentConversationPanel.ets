@@ -193,6 +193,7 @@ export struct AgentConversationPanel {
   @State shareErrorTurnId: string = '';
   @State conversationActionError: string = '';
   @StorageLink('investigation_notification_hint') notificationHint: string = '';
+  @StorageLink('investigation_notifications_enabled') notificationsEnabled: boolean = false;
   private titleDialog?: CustomDialogController;
   private pollTimer: number = 0;
   private pollEpoch: number = 0;
@@ -1866,6 +1867,13 @@ export struct AgentConversationPanel {
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
+        if (!this.notificationsEnabled) {
+          Button('开启通知').fontSize(11).height(32)
+            .backgroundColor(Color.Transparent).fontColor($r('app.color.app_primary'))
+            .onClick((): void => {
+              InvestigationTaskCenter.enableNotifications(this.getUIContext().getHostContext() as common.UIAbilityContext);
+            })
+        }
         Button('+ 新建')
           .enabled(this.currentTaskId.length === 0 && !this.isSending)
           .fontSize(12)
@@ -1880,6 +1888,10 @@ export struct AgentConversationPanel {
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
 
+      if (this.notificationHint) {
+        Text(this.notificationHint).fontSize(11).fontColor($r('app.color.app_text_muted'))
+          .width('100%').padding({ left: 20, right: 20, top: 6, bottom: 6 })
+      }
       if (this.isLoading) {
         Column({ space: 12 }) {
           Text('正在载入调查记录').fontSize(13).fontColor($r('app.color.app_text_muted'))
@@ -1953,10 +1965,6 @@ export struct AgentConversationPanel {
           this.ReferenceSegments()
         }
         this.MessageStream()
-        if (this.notificationHint) {
-          Text(this.notificationHint).fontSize(11).fontColor($r('app.color.app_text_muted'))
-            .width('100%').padding({ left: 20, right: 20, top: 6, bottom: 6 })
-        }
         if (this.canContinue()) {
           this.Composer()
         } else {

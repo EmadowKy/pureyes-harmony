@@ -15,7 +15,7 @@ function binding(dashboard: InvestigationDashboard, selectedId: string = ''): fo
     status: task.status, stage: task.stage, steps: task.steps.toString(),
     title: task.title, elapsed: taskDuration(task.elapsedSeconds),
     updatedAt: dashboard.updatedAt ? `${new Date(dashboard.updatedAt).getHours().toString().padStart(2, '0')}:${new Date(dashboard.updatedAt).getMinutes().toString().padStart(2, '0')}` : '',
-    workspaceId: task.workspaceId.toString(), conversationId: task.conversationId,
+    workspaceId: task.workspaceId.toString(), groupId: task.groupId.toString(), conversationId: task.conversationId,
     activeCount: dashboard.activeCount.toString(), completedCount: dashboard.completedCount.toString(),
     conversationCount: dashboard.conversationCount.toString(),
     taskPosition: pool.length > 0 ? (index + 1).toString() : '0', taskCount: pool.length.toString()

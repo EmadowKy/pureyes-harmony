@@ -35,7 +35,7 @@ globalThis.api = { InvestigationTaskCenter, InvestigationCard, parseInvestigatio
 const { InvestigationTaskCenter: center, InvestigationCard: card, parseInvestigationDashboard: parse,
   taskPool: pool, taskDuration: duration } = context.api;
 const task = (id, status = 'processing') => ({ task_id: id, conversation_id: `conversation-${id}`,
-  workspace_id: 1, title: `Title ${id}`, status, stage: '核验画面', steps: 2, elapsed_seconds: 45 });
+  workspace_id: 1, group_id: 4, title: `Title ${id}`, status, stage: '核验画面', steps: 2, elapsed_seconds: 45 });
 const dashboard = tasks => ({ tasks, active_count: tasks.filter(t => t.status === 'processing').length,
   completed_count: tasks.filter(t => t.status === 'completed').length, conversation_count: tasks.length });
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -50,6 +50,7 @@ async function refresh(tasks) { now += 5000; current = dashboard(tasks); await c
   await card.publishDashboard({}, parse(dashboard([task('a'), task('b')])));
   await card.cycle({}, 'form-one', 1);
   assert.equal(lastCard.conversationId, 'conversation-b');
+  assert.equal(lastCard.groupId, '4', 'widget carries the authorized task group');
   await card.refresh({}, 'form-two');
   assert.equal(lastCard.conversationId, 'conversation-a', 'each form has its own task selection');
   await card.cycle({}, 'form-one', 1);

@@ -1249,7 +1249,7 @@ def agent_task_dashboard():
         elif record.status != "processing":
             stage = {"completed": "结论已生成", "failed": "调查未完成", "stopped": "调查已停止"}.get(record.status, "等待调查")
         tasks.append({"task_id": record.id, "conversation_id": conversation.id,
-            "workspace_id": workspace.id, "title": conversation.title,
+            "workspace_id": workspace.id, "group_id": workspace.group_id, "title": conversation.title,
             "status": record.status, "stage": stage, "steps": len(calls),
             "elapsed_seconds": record.timing()["elapsed_seconds"],
             "updated_at": conversation.updated_at.isoformat() + "Z"})
