@@ -134,6 +134,7 @@ export struct AgentConversationPanel {
   @State segments: Array<AgentSegmentChoice> = [];
   @State selectedConversationId: string = '';
   @State evidenceSegmentIds: Array<number> = [];
+  @State referenceSegmentsExpanded: boolean = false;
   @State selectedSegmentIds: Array<number> = [];
   @State composerText: string = '';
   @State creatingInvestigation: boolean = false;
@@ -348,6 +349,8 @@ export struct AgentConversationPanel {
     this.onDetailChange(true);
     this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
       this.selectedConversationId = conversationId;
+      this.referenceSegmentsExpanded = false;
+      this.evidenceSegmentIds = [];
       this.conversationReady = false;
       this.messages = [];
       this.messageSource.setItems([]);
@@ -423,6 +426,9 @@ export struct AgentConversationPanel {
         processingId = turn.id;
       }
       mapped.push(turn);
+    }
+    if (this.evidenceSegmentIds.length === 0 && mapped.length > 0) {
+      this.evidenceSegmentIds = [...mapped[0].segmentIds];
     }
     if (this.messages.length > 0 && mapped.length > this.messages.length) {
       this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
@@ -520,6 +526,7 @@ export struct AgentConversationPanel {
   }
 
   startInvestigation(): void {
+    this.referenceSegmentsExpanded = false;
     this.stopPolling();
     this.stopSync();
     this.onDetailChange(true);
@@ -540,6 +547,7 @@ export struct AgentConversationPanel {
   }
 
   showConversationList(): void {
+    this.referenceSegmentsExpanded = false;
     this.stopPolling();
     this.stopSync();
     this.onDetailChange(false);
@@ -582,12 +590,18 @@ export struct AgentConversationPanel {
   }
 
   evidenceScopeLabel(): string {
-    const names: Array<string> = [];
-    for (let i = 0; i < this.evidenceSegmentIds.length; i++) {
-      const segment = this.segments.find((choice: AgentSegmentChoice): boolean => choice.id === this.evidenceSegmentIds[i]);
-      names.push(segment ? segment.title : `片段 ${this.evidenceSegmentIds[i]}`);
-    }
-    return names.length > 0 ? `证据范围：${names.join('、')}` : '正在加载证据范围…';
+    return this.conversationReady ? '多轮调查 · 片段范围保持一致' : '正在加载调查…';
+  }
+
+  referenceSegment(segmentId: number): AgentSegmentChoice {
+    const segment = this.segments.find((choice: AgentSegmentChoice): boolean => choice.id === segmentId);
+    if (segment) return segment;
+    const unavailable = new AgentSegmentChoice();
+    unavailable.id = segmentId;
+    unavailable.title = `片段 ${segmentId}`;
+    unavailable.videoName = this.segmentLoadError ? '片段信息加载失败，请重试' : '片段信息暂不可用';
+    unavailable.status = 'unavailable';
+    return unavailable;
   }
 
   activeConversationTitle(): string {
@@ -1288,6 +1302,64 @@ export struct AgentConversationPanel {
       .animation({ duration: 260, curve: Curve.EaseOut }))
   }
 
+  @Builder ReferenceSegments() {
+    Column() {
+      Row({ space: 8 }) {
+        Text(this.referenceSegmentsExpanded ? '⌄' : '›')
+          .fontSize(20).width(18).textAlign(TextAlign.Center)
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(`引用片段 · ${this.evidenceSegmentIds.length}`)
+          .fontSize(12).fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary')).layoutWeight(1)
+        Text(this.referenceSegmentsExpanded ? '收起' : '展开')
+          .fontSize(11).fontColor($r('app.color.app_text_muted'))
+      }
+      .width('100%').padding({ left: 16, right: 18, top: 10, bottom: 10 })
+      .accessibilityText(`引用片段，共 ${this.evidenceSegmentIds.length} 个，${this.referenceSegmentsExpanded ? '点击收起' : '点击展开'}`)
+      .onClick((): void => {
+        this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+          this.referenceSegmentsExpanded = !this.referenceSegmentsExpanded;
+        });
+      })
+      if (this.referenceSegmentsExpanded) {
+        List() {
+          ForEach(this.evidenceSegmentIds, (segmentId: number, index: number): void => {
+            ListItem() {
+              Row({ space: 10 }) {
+                Text(`视频 ${index + 1}`).fontSize(11).width(44)
+                  .fontColor($r('app.color.app_text_secondary'))
+                Column({ space: 3 }) {
+                  Text(this.referenceSegment(segmentId).title)
+                    .fontSize(13).fontColor($r('app.color.app_text_primary'))
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(`${this.referenceSegment(segmentId).videoName}${this.referenceSegment(segmentId).durationText ? ' · ' + this.referenceSegment(segmentId).durationText : ''}`)
+                    .fontSize(11).fontColor($r('app.color.app_text_muted'))
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+                if (this.referenceSegment(segmentId).status !== 'unavailable') {
+                  Text('查看 ›').fontSize(11).fontColor($r('app.color.app_primary'))
+                }
+              }
+              .width('100%').height(60).padding({ left: 18, right: 18 })
+              .onClick((): void => {
+                if (this.referenceSegment(segmentId).status !== 'unavailable') {
+                  this.onTimestampClick(segmentId, '00:00');
+                }
+              })
+            }
+          }, (segmentId: number): string => `${segmentId}`)
+        }
+        .width('100%').height(Math.min(180, this.evidenceSegmentIds.length * 60))
+        if (this.segmentLoadError) {
+          Button('重新加载片段信息').fontSize(12).backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_primary')).onClick((): void => { this.loadSegments(); })
+        }
+      }
+    }
+    .width('100%').backgroundColor($r('app.color.app_card_bg'))
+    .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
+  }
+
   @Builder MessageStream() {
     List({ space: 0, scroller: this.messageScroller }) {
       LazyForEach(this.messageSource, (turn: AgentTurnItem): void => {
@@ -1804,6 +1876,9 @@ export struct AgentConversationPanel {
         .alignItems(HorizontalAlign.Center)
         .justifyContent(FlexAlign.Center)
       } else {
+        if (this.conversationReady && this.evidenceSegmentIds.length > 0) {
+          this.ReferenceSegments()
+        }
         this.MessageStream()
         if (this.canContinue()) {
           this.Composer()
