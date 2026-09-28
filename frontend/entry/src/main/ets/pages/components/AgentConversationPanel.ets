@@ -47,7 +47,7 @@ class AgentTurnItem {
 
 class AgentToolCall {
   name: string = '';
-  parameters: string = '';
+  parameters: Array<AgentToolParameter> = [];
   summary: string = '';
   query: string = '';
   queryType: string = '';
@@ -65,6 +65,13 @@ class AgentToolEvidence {
   segmentId: number = 0;
   timestampSec: number = 0;
   label: string = '';
+}
+
+class AgentToolParameter {
+  label: string = '';
+  value: string = '';
+  videoId: string = '';
+  timestampSec: number = -1;
 }
 
 class AgentTurnPayload {
@@ -778,7 +785,7 @@ export struct AgentConversationPanel {
       return evidence;
     });
     const params = (raw['params'] as Record<string, Object>) || {};
-    call.parameters = JSON.stringify(params, null, 2);
+    call.parameters = this.mapToolParameters(params);
     call.videoId = (params['video_id'] as string) || (params['video_path'] as string) || '';
     const query = params['query_text'] || params['track_id'];
     call.query = (typeof query === 'string' ? query : (query ? String(query) : '')).substring(0, 120);
@@ -799,6 +806,63 @@ export struct AgentConversationPanel {
     const numericTimestamp = Number(timestamp);
     call.timestampSec = timestamp !== undefined && !isNaN(numericTimestamp) ? numericTimestamp : -1;
     return call;
+  }
+
+  mapToolParameters(params: Record<string, Object>): Array<AgentToolParameter> {
+    const fields: Array<AgentToolParameter> = [];
+    const add = (label: string, value: string, videoId: string = '', seconds: number = -1): void => {
+      if (!value && !videoId) return;
+      const field = new AgentToolParameter();
+      field.label = label;
+      field.value = value;
+      field.videoId = videoId;
+      field.timestampSec = seconds;
+      fields.push(field);
+    };
+    const videoId = (params['video_id'] as string) || (params['video_path'] as string) || '';
+    if (videoId) add('视频', '', videoId);
+    const timestamp = params['timestamp_sec'];
+    if (timestamp !== undefined && timestamp !== null && timestamp !== '' &&
+        Number.isFinite(Number(timestamp)) && Number(timestamp) >= 0) {
+      add('时间点', this.parameterTime(Number(timestamp)), '', Number(timestamp));
+    }
+    const query = params['query_text'];
+    if (typeof query === 'string' && query) add('检索内容', query);
+    const trackId = params['track_id'];
+    if (typeof trackId === 'string' || typeof trackId === 'number') add('目标编号', String(trackId));
+    const queryType = params['query_type'];
+    if (typeof queryType === 'string' && queryType) {
+      add('检索方式', queryType === 'identity' ? '查找同一目标' :
+        (queryType === 'semantic' ? '按语义分类检索' : queryType));
+    }
+    const queries = (params['queries'] as Array<string>) || [];
+    for (let i = 0; i < queries.length; i++) {
+      if (typeof queries[i] === 'string') add(`检索内容 ${i + 1}`, queries[i]);
+    }
+    const frames = (params['frames'] as Array<Record<string, Object>>) || [];
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
+      const rawTime = frame['timestamp_sec'];
+      const seconds = Number(rawTime);
+      const validTime = rawTime !== undefined && rawTime !== null && rawTime !== '' &&
+        Number.isFinite(seconds) && seconds >= 0;
+      add(`画面 ${i + 1}`, validTime ? this.parameterTime(seconds) : '未指定时间点',
+        (frame['video_id'] as string) || '', validTime ? seconds : -1);
+    }
+    return fields;
+  }
+
+  parameterTime(seconds: number): string {
+    const milliseconds = Math.round(seconds * 1000);
+    const whole = Math.floor(milliseconds / 1000);
+    const base = `${Math.floor(whole / 60).toString().padStart(2, '0')}:${(whole % 60).toString().padStart(2, '0')}`;
+    const fraction = milliseconds % 1000;
+    return fraction === 0 ? base : `${base}.${fraction.toString().padStart(3, '0').replace(/0+$/, '')}`;
+  }
+
+  toolParameterValue(turn: AgentTurnItem, field: AgentToolParameter): string {
+    const video = field.videoId ? this.toolVideoLabel(turn, field.videoId) : '';
+    return video && field.value ? `${video} · ${field.value}` : (video || field.value);
   }
 
   updateLiveTurn(taskId: string, progress: Array<Record<string, Object>>): void {
@@ -1010,34 +1074,26 @@ export struct AgentConversationPanel {
                 .fontSize(12)
                 .fontColor($r('app.color.app_text_secondary'))
                 .width('100%')
-              Text(`工具 · ${call.name}`)
+              Text(`工具 · ${this.toolNameLabel(call.name)}`)
                 .fontSize(10)
                 .fontColor($r('app.color.app_text_muted'))
               Text(`范围 · ${this.toolScopeLabel(turn, call)}`)
                 .fontSize(11)
                 .fontColor($r('app.color.app_text_muted'))
-              if (call.query) {
-                Text(`参数 · ${call.query}`)
-                  .fontSize(11)
-                  .fontColor($r('app.color.app_text_secondary'))
-              }
-              if (call.parameters && call.parameters !== '{}') {
-                Text(call.parameters)
-                  .fontSize(10)
-                  .fontFamily('monospace')
-                  .fontColor($r('app.color.app_text_muted'))
-                  .width('100%')
-              }
-              if (call.queryType) {
-                Text(`检索类型 · ${call.queryType === 'identity' ? '同一目标' : '语义分类'}`)
-                  .fontSize(11)
-                  .fontColor($r('app.color.app_text_secondary'))
-              }
-              if (call.videoId) {
-                Text(this.toolVideoLabel(turn, call.videoId))
-                  .fontSize(11)
-                  .fontColor($r('app.color.app_text_secondary'))
-              }
+              ForEach(call.parameters, (field: AgentToolParameter, fieldIndex: number): void => {
+                Row({ space: 10 }) {
+                  Text(field.label)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_muted'))
+                    .width(74)
+                  Text(this.toolParameterValue(turn, field))
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_text_secondary'))
+                    .layoutWeight(1)
+                }
+                .width('100%')
+                .alignItems(VerticalAlign.Top)
+              }, (field: AgentToolParameter, fieldIndex: number): string => `${turn.id}-${index}-param-${fieldIndex}`)
               ForEach(call.details, (detail: string, detailIndex: number): void => {
                 Text(detail).fontSize(11).fontColor($r('app.color.app_text_secondary')).width('100%')
               }, (detail: string, detailIndex: number): string => `${turn.id}-${index}-detail-${detailIndex}`)
