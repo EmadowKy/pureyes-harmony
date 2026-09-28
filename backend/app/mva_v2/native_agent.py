@@ -50,7 +50,7 @@ SYSTEM_PROMPT = """你是安防视频调查 Agent。视频的时长、帧率、�
 调查中可以主动向用户说明进展：在 content 中用 <progress_update>一两句简短的公开过程说明</progress_update>，解释当前已核实的发现、下一步准备核验什么及其目的。它是给用户看的工作进展，不是隐藏推理、逐步思维链或内部评分。只在有值得告知的新进展时输出，不要求每轮或每次工具调用都输出，不要虚构已完成的检查。可在同一回复中继续调用工具；最终结论写在标签外。不要把 FRAME_OBSERVATION、原始工具 JSON 或内部文件路径放入过程说明。
 预处理能力边界：目标检测/跟踪擅长回答画面里检测到哪些类别、目标何时出现、位置如何变化，并给出候选track_id；CLIP擅长按外观、场景或物品描述找相似帧；OCR擅长找画面文字；ReID擅长提出跨镜外观相似目标；人脸模块擅长提供人脸出现区间或分组。这些都是索引线索，各自可能漏检或误检。
 预处理不擅长可靠判断短暂动作、动作先后与因果、人物意图或复杂行为语义，例如打斗、推搡、跑动、跌倒、浏览、徘徊、交接物品。CLIP相似度不是动作分类结果，轨迹稳定也不能证明人物在观看或等待。索引没有命中绝不等于事件没有发生；不得只凭索引回答这些问题。
-使用原生工具调用，不要输出 JSON 工具指令。每次调用工具时，尽可能附带 video_scores，为每个已选视频填写 video_index、relevance、evidence（0 到 1）；这是探索规划建议，不是证据，尚未调用工具探索的视频 evidence 必须为 0。若已看到工具提供的原始帧，仅在中间调查轮次的 content 中为每张图写一行 `FRAME_OBSERVATION <video_id> <timestamp_sec>: <直接视觉观察>`，其中 video_id 使用工具返回的内部文件名；这是内部证据记录，不是给用户看的答案。最终回答绝不输出 FRAME_OBSERVATION，改用简洁的自然语言和下述时间引用。只描述实际看清的内容，不要复述索引结果或推断；之后继续调用工具或回答。先用索引定位候选和时间范围，再亲自查看原始帧。遇到动作/行为问题，必须用 read_frames 检查多张帧：选择候选时刻前、过程中、之后的相邻帧，比较人物姿态、位置和相互作用；若第一组仍不能区分动作与相似姿态，继续用另一组相邻帧探索，再作判断。单视频通常最多8张，多视频通常最多12张；多条件题每个条件都要有视觉证据。挑选有判别力的帧，避免无目的逐秒穷举。
+使用原生工具调用，不要输出 JSON 工具指令。每次调用工具时，尽可能附带 video_scores，为每个已选视频填写 video_index、relevance、evidence（0 到 1）；这是探索规划建议，不是证据，尚未调用工具探索的视频 evidence 必须为 0。若已看到工具提供的原始帧，仅在中间调查轮次的 content 中为每张图写一行 `FRAME_OBSERVATION <video_id> <timestamp_sec>: <直接视觉观察>`，其中 video_id 使用工具返回的内部文件名；这是内部证据记录，不是给用户看的答案。最终回答绝不输出 FRAME_OBSERVATION，改用简洁的自然语言和下述时间引用。只描述实际看清的内容，不要复述索引结果或推断；之后继续调用工具或回答。先用索引定位候选和时间范围，再亲自查看原始帧。遇到动作/行为问题，必须用 read_frames 检查多张帧：选择候选时刻前、过程中、之后的相邻帧，比较人物姿态、位置和相互作用；若第一组仍不能区分动作与相似姿态，继续用另一组相邻帧探索，再作判断。调查不按固定总帧数结束；尚有关键歧义时继续探索，有足够证据时及时回答。只查看采样帧不能声称已经逐帧核验整个视频；多条件题每个条件都要有视觉证据。挑选有判别力的帧，避免无目的逐秒穷举。
 对于外观、物品或场景问题，可先用CLIP缩小范围，再核对原帧；文字问题用OCR找候选后核验；跨镜身份问题先取得track_id，再用ReID提出候选，并查看两边原帧。不能确认时说明不确定。
 回答用户的选项题时，第一行只写选项字母。所有具体时间必须写成 [video:"1", time:"MM:SS"] 形式，序号对应用户提供的视频列表。证据不足时如实说明。避免冗长的过程叙述。"""
 
@@ -162,7 +162,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
     messages[0]["content"] = SYSTEM_PROMPT
     temp_files, used_tools = [], []
     seen_frames = set()
-    visual_evidence_count = 0
     pending_frames = []
     priorities = VideoPriorities(video_items)
     available_tools = []
@@ -175,8 +174,9 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
         and any(term in question_lower for term in ("倒", "跌", "摔", "跑", "停", "走", "浏览", "观看", "打斗", "打架", "冲突", "搏斗", "拳打脚踢", "fight", "fall", "run", "walk", "stop"))
         and not any(term in question_lower for term in ("颜色", "衣服", "车牌", "物品", "相似", "color", "clothing"))
     )
-    frame_budget = 8 if short_action_question else (4 if len(video_items) == 1 else 12)
-    max_rounds = min(runner.max_feedback_loops, 5 if short_action_question else 6)
+    # Frame count is not a completion criterion. Keep the runner's independent
+    # loop protection, rather than reducing complex investigations to 5/6 rounds.
+    max_rounds = max(2, int(runner.max_feedback_loops))
     for tool in TOOLS:
         name = tool["function"]["name"]
         if name == "search_objects" or (name == "track_target" and len(video_items) == 1):
@@ -197,23 +197,28 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
         except Exception as exc:
             logger.warning("Initial object-index lookup failed: %s", exc)
     if indexes:
-        messages.append({"role": "user", "content": "【已自动检索完整视频目标索引，勿重复检索】\n" + json.dumps(indexes, ensure_ascii=False, default=str)})
+        messages.append({"role": "system", "content": "【系统提供的视频目标索引，勿重复检索】\n" + json.dumps(indexes, ensure_ascii=False, default=str)})
     if priorities.guidance():
-        messages.append({"role": "user", "content": priorities.guidance()})
+        messages.append({"role": "system", "content": priorities.guidance()})
     if short_action_question:
-        messages.append({"role": "user", "content": "这是不超过一分钟的动作判断题。目标索引只用于提供候选目标和时间线，不作为动作结论。请使用视觉能力检查动作前、中、后的相邻原帧；若第一组画面仍有歧义，可以再读取一组用于确认，不要因为索引没写该动作就回答没有。"})
+        messages.append({"role": "system", "content": "这是不超过一分钟的动作判断题。目标索引只用于提供候选目标和时间线，不作为动作结论。请使用视觉能力检查动作前、中、后的相邻原帧；若第一组画面仍有歧义，可以再读取一组用于确认，不要因为索引没写该动作就回答没有。"})
     final_answer = ""
     identity_terms = ("同一", "是不是同", "是否为同", "同一个", "reid", "跨镜", "跨摄像头")
     requires_identity = len(video_items) > 1 and any(term in user_query.casefold() for term in identity_terms)
+    identity_reminded = False
     try:
         for iteration in range(max_rounds):
             loop_idx = iteration + 1
             if progress_callback:
                 progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调查证据（第 {loop_idx} 轮）",
                                    "data": {"iteration": loop_idx, "phase": "thinking"}})
-            force_answer = loop_idx == max_rounds or (loop_idx >= 2 and visual_evidence_count >= frame_budget)
+            force_answer = loop_idx == max_rounds
             if force_answer:
-                messages.append({"role": "user", "content": "现在停止工具调查。请根据现有证据给出最终答案；不确定处直说，不要再调用工具。选项题第一行只写选项字母。"})
+                messages.append({"role": "system", "content":
+                    "【系统运行保护：达到本次调查的模型调用轮数上限，并非用户要求停止】"
+                    "请整理已经实际取得的证据。没有完成的核验必须明确标注，不能声称调查已充分完成，"
+                    "不能把此限制归因于用户，也不能虚构工具结果。说明仍缺少什么证据以及可继续追问的方向。"
+                    "本次调用不再使用工具。选项题第一行只写选项字母。"})
             setattr(api_config, "loop_idx", loop_idx)
             setattr(api_config, "force_answer", force_answer)
             model_started = time.monotonic()
@@ -246,13 +251,14 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             # Native tool responses carry planning scores in tool arguments, not JSON prose.
             if not calls:
                 messages.append({"role": "assistant", "content": content})
-                if requires_identity and "track_target" not in used_tools and loop_idx < max_rounds:
-                    messages.append({"role": "user", "content": "跨视频同一目标结论尚无 track_target 支撑。请先从目标索引获取 track_id，调用 track_target 并核验原帧。"})
+                if requires_identity and "track_target" not in used_tools and not force_answer and not identity_reminded:
+                    identity_reminded = True
+                    messages.append({"role": "system", "content": "跨视频同一目标结论尚无 track_target 支撑。若存在可比对目标，请先从目标索引获取 track_id，调用 track_target 并核验原帧；没有可靠候选时，明确解释证据缺口，不得声称已确认身份。"})
                     continue
                 if content.strip():
                     final_answer = content.strip()
                     break
-                messages.append({"role": "user", "content": "请继续调用工具或给出有证据的最终答案。"})
+                messages.append({"role": "system", "content": "请继续调用工具或给出有证据的最终答案。"})
                 continue
             messages.append({"role": "assistant", "content": content or None, "tool_calls": calls})
             images = []
@@ -288,12 +294,11 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                             if not isinstance(frame, dict):
                                 continue
                             key = (frame.get("video_id"), frame.get("timestamp_sec"))
-                            if (key not in seen_frames and key not in requested_keys
-                                    and len(seen_frames) + len(fresh) < frame_budget):
+                            if key not in seen_frames and key not in requested_keys:
                                 fresh.append(frame)
                                 requested_keys.add(key)
                         if not fresh:
-                            result, new_images = {"notice": f"这些时间点已经看过，或已达到 {frame_budget} 帧预算。请根据现有画面作答。"}, []
+                            result, new_images = {"notice": "这些时间点的画面已读取。请使用先前画面，或选择其他有判别力的时间点继续核验。"}, []
                         else:
                             result, new_images = _dispatch(runner, video_items, "read_frames", {"frames": fresh[:4]}, temp_files)
                     else:
@@ -321,7 +326,6 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                                            for frame in frame_results if isinstance(frame, dict)
                                            and frame.get("status") == "image_attached")
                     images.extend(new_images)
-                    visual_evidence_count += sum(1 for part in new_images if part.get("type") == "image")
                 except Exception as exc:
                     logger.exception("Tool %s failed", name)
                     result = {"error": str(exc)}
@@ -347,7 +351,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                 messages.append({"role": "tool", "tool_call_id": call.get("id"),
                                  "content": json.dumps(result, ensure_ascii=False, default=str)})
             if priorities.guidance():
-                messages.append({"role": "user", "content": priorities.guidance()})
+                messages.append({"role": "system", "content": priorities.guidance()})
             if images:
                 messages.append({"role": "user", "content": images + [{"type": "text", "text": "以上为工具返回的原始画面，请按对应时间核验；在中间轮次的 content 中为每张实际看清的帧写 FRAME_OBSERVATION <video_id> <timestamp_sec>: <直接视觉观察>，video_id 使用工具结果中的文件名。最终答案不要输出此内部标记。"}]})
         if progress_callback:

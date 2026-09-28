@@ -221,10 +221,76 @@ class NativeFrameEvidenceTests(unittest.TestCase):
             memories = [event for event in events if event.get("stage") == "evidence_memory"]
             self.assertEqual("a.mp4", memories[0]["data"]["evidence_cards"][0]["video_id"])
             guidance = [message["content"] for message in observed_messages[-1]
-                        if message.get("role") == "user" and isinstance(message.get("content"), str)
+                        if message.get("role") == "system" and isinstance(message.get("content"), str)
                         and "逐视频探索优先级" in message["content"]][-1]
             self.assertIn("a.mp4): 相关性 0.50，已有证据充分度 0.00，已探索", guidance)
             self.assertIn("b.mp4): 相关性 0.50，已有证据充分度 0.00，尚未探索", guidance)
+
+    def budget_runner(self, rounds=10):
+        return types.SimpleNamespace(
+            tools=types.SimpleNamespace(spatiotemporal_search=lambda *a, **k: {}),
+            max_feedback_loops=rounds,
+            _public_tool_summary=lambda result, fallback: fallback,
+            _public_tool_times=lambda result: [],
+            _public_tool_evidence=lambda result: [],
+            _public_tool_details=lambda result: [])
+
+    def test_more_than_twelve_frames_and_six_rounds_allow_late_tracking(self):
+        requests = []
+        model_rounds = []
+
+        def model(messages, **kwargs):
+            iteration = len(model_rounds) + 1
+            model_rounds.append(iteration)
+            self.assertFalse(self.native.api_config.force_answer)
+            if iteration <= 7:
+                args = {"frames": [{"video_id": "a.mp4", "timestamp_sec": (iteration - 1) + offset / 4}
+                                   for offset in range(4)]}
+                name = "read_frames"
+            elif iteration == 8:
+                name, args = "track_target", {"video_id": "a.mp4", "track_id": "person_1"}
+            else:
+                return {"content": "已检查画面并核验跨镜候选，不能确认同一人。"}
+            return {"tool_calls": [{"id": str(iteration), "function": {
+                "name": name, "arguments": json.dumps(args)}}]}
+
+        def dispatch(runner, videos, name, args, files):
+            requests.append((name, args))
+            return ({"frames": [dict(frame, status="image_attached") for frame in args["frames"]]}, []) if name == "read_frames" else ({}, [])
+
+        with patch.object(self.native, "Qwen_VL", model), patch.object(self.native, "_dispatch", dispatch):
+            answer = self.native.execute_native(self.budget_runner(), self.videos, [{"role": "system", "content": ""}], "是否同一人", None)
+        self.assertEqual(9, len(model_rounds))
+        self.assertEqual(28, sum(len(args["frames"]) for name, args in requests if name == "read_frames"))
+        self.assertEqual("track_target", requests[-1][0])
+        self.assertIn("不能确认", answer)
+
+    def test_loop_guard_is_system_not_user_and_allows_incomplete_answer(self):
+        question = "是否同一个人"
+        calls = []
+
+        def model(messages, **kwargs):
+            calls.append(list(messages))
+            if len(calls) == 1:
+                self.assertFalse(self.native.api_config.force_answer)
+                return {"content": "缺少可比对目标，无法确认。"}
+            self.assertTrue(self.native.api_config.force_answer)
+            return {"content": "核验未完成，无法确认身份。"}
+
+        with patch.object(self.native, "Qwen_VL", model):
+            answer = self.native.execute_native(self.budget_runner(2), self.videos,
+                [{"role": "system", "content": ""}, {"role": "user", "content": question}], question, None)
+        guards = [item for item in calls[-1] if "系统运行保护" in str(item.get("content"))]
+        self.assertEqual(["system"], [item["role"] for item in guards])
+        self.assertEqual([question], [item["content"] for item in calls[-1] if item["role"] == "user"])
+        self.assertIn("未完成", answer)
+        self.assertFalse(self.native.api_config.force_answer)
+
+    def test_no_identity_candidates_only_triggers_one_reminder(self):
+        with patch.object(self.native, "Qwen_VL", return_value={"content": "没有可靠候选，不能确认身份。"}) as model:
+            answer = self.native.execute_native(self.budget_runner(), self.videos, [{"role": "system", "content": ""}], "是否同一个人", None)
+        self.assertEqual(2, model.call_count)
+        self.assertIn("不能确认", answer)
 
     def test_public_updates_are_optional_and_do_not_leak_internal_observations(self):
         updates, answer = self.native._extract_progress_updates(

@@ -263,8 +263,8 @@ class MVA2Runner:
 
             if loop_idx == self.max_feedback_loops:
                 messages.append({
-                    "role": "user",
-                    "content": "【重要指令】决策已达最大上限。请根据搜集到的所有客观线索，立刻总结输出 final_answer JSON，并严格遵守 [video:\"序号\", time:\"MM:SS\"] 时间戳格式。"
+                    "role": "system",
+                    "content": "【系统运行保护：达到模型调用轮数上限，并非用户要求停止】请根据实际取得的证据输出 final_answer JSON，并遵守 [video:\"序号\", time:\"MM:SS\"] 时间戳格式。未完成的核验和缺失证据必须明确说明，不得声称调查充分完成，不得将停止归因于用户。"
                 })
 
             try:
@@ -285,7 +285,7 @@ class MVA2Runner:
                 if requires_cross_video_identity and "track_target" not in used_tools and loop_idx < self.max_feedback_loops:
                     logger.warning("Rejecting unsupported cross-video identity conclusion: track_target was not used")
                     messages.append({
-                        "role": "user",
+                        "role": "system",
                         "content": (
                             "当前问题要求判断跨视频同一目标，但你尚未调用 track_target。"
                             "请从 search_objects 已返回的候选中选择一个可靠 track_id，立即调用 "
