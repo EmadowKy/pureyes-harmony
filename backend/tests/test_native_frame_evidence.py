@@ -159,7 +159,7 @@ class NativeFrameEvidenceTests(unittest.TestCase):
             image_path = Path(image_dir) / "frame.jpg"
             image_path.write_bytes(b"test frame")
             responses = iter([
-                {"content": "", "tool_calls": [{"id": "call-1", "function": {
+                {"content": "<progress_update>先核验两段视频的原始画面，避免只凭索引下结论。</progress_update>", "tool_calls": [{"id": "call-1", "function": {
                     "name": "read_frames", "arguments": json.dumps({"frames": [
                         {"video_id": "a.mp4", "timestamp_sec": 3},
                         {"video_id": "b.mp4", "timestamp_sec": 8}]})}}]},
@@ -171,7 +171,15 @@ class NativeFrameEvidenceTests(unittest.TestCase):
 
             def model(messages, **kwargs):
                 observed_messages.append(list(messages))
-                return next(responses)
+                response = next(responses)
+                if response.get("tool_calls"):
+                    stream = kwargs["on_content"]
+                    stream("<progress_update>先核验两段视频")
+                    self.assertFalse(any(event.get("data", {}).get("phase") == "commentary" for event in events))
+                    stream(response["content"])
+                    self.assertTrue(any(event.get("data", {}).get("phase") == "commentary" for event in events))
+                    stream(response["content"])
+                return response
 
             def read_frame(path, seconds, video_id):
                 # The UI must receive the start event while the tool is still
@@ -201,6 +209,11 @@ class NativeFrameEvidenceTests(unittest.TestCase):
             self.assertIn("两处均有人员", answer)
             self.assertNotIn("FRAME_OBSERVATION", answer)
             self.assertNotIn("未读取的视频二画面", answer)
+            public_updates = [event for event in events if event.get("data", {}).get("phase") == "commentary"]
+            self.assertEqual(1, len(public_updates))
+            self.assertEqual("先核验两段视频的原始画面，避免只凭索引下结论。", public_updates[0]["data"]["text"])
+            phases = [event.get("data", {}).get("phase") for event in events]
+            self.assertLess(phases.index("commentary"), phases.index("action"))
             observations = [event for event in events if event.get("data", {}).get("phase") == "observation"]
             self.assertEqual(1, len(observations))
             self.assertIn("tool_seconds", observations[0]["data"])
@@ -212,6 +225,18 @@ class NativeFrameEvidenceTests(unittest.TestCase):
                         and "逐视频探索优先级" in message["content"]][-1]
             self.assertIn("a.mp4): 相关性 0.50，已有证据充分度 0.00，已探索", guidance)
             self.assertIn("b.mp4): 相关性 0.50，已有证据充分度 0.00，尚未探索", guidance)
+
+    def test_public_updates_are_optional_and_do_not_leak_internal_observations(self):
+        updates, answer = self.native._extract_progress_updates(
+            "<think><progress_update>隐藏推理</progress_update></think>"
+            "<progress_update>已核验画面，接着检查另一视频。</progress_update>结论。")
+        self.assertEqual(["已核验画面，接着检查另一视频。"], updates)
+        self.assertEqual("结论。", answer)
+        self.assertEqual(([], "普通答案"), self.native._extract_progress_updates("普通答案"))
+        self.assertEqual(([], ""), self.native._extract_progress_updates(
+            "<progress_update>FRAME_OBSERVATION a.mp4 1: 内部记录</progress_update>"))
+        self.assertEqual(([], "结论。"), self.native._extract_progress_updates(
+            "结论。<progress_update>未结束的说明"))
 
 
 if __name__ == "__main__":

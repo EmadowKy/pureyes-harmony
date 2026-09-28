@@ -33,6 +33,7 @@ class AgentConversationItem {
 class AgentTurnItem {
   // LazyForEach must replace the row when its nested tool timeline changes.
   traceRevision: number = 0;
+  processEntries: Array<AgentProcessEntry> = [];
   id: string = '';
   creatorId: string = '';
   modelConfigLabel: string = '';
@@ -65,6 +66,12 @@ class AgentToolEvidence {
   segmentId: number = 0;
   timestampSec: number = 0;
   label: string = '';
+}
+
+class AgentProcessEntry {
+  kind: string = 'tool';
+  text: string = '';
+  toolIndex: number = 0;
 }
 
 class AgentToolParameter {
@@ -139,6 +146,8 @@ export struct AgentConversationPanel {
   @State currentTaskId: string = '';
   @State conversationReady: boolean = false;
   @State expandedCallKeys: Array<string> = [];
+  @State expandedProcessTurns: Array<string> = [];
+  @State collapsedRunningProcessTurns: Array<string> = [];
   @State composerFocused: boolean = false;
   @State conversationLoadError: string = '';
   @State segmentLoadError: string = '';
@@ -391,6 +400,21 @@ export struct AgentConversationPanel {
         if (call.name.length > 0) {
           turn.toolCalls.push(call);
         }
+      }
+      const rawEntries = (item['process_entries'] as Array<Record<string, Object>>) || [];
+      turn.processEntries = rawEntries.map((raw: Record<string, Object>): AgentProcessEntry => {
+        const entry = new AgentProcessEntry();
+        entry.kind = (raw['kind'] as string) || 'tool';
+        entry.text = (raw['text'] as string) || '';
+        entry.toolIndex = (raw['tool_index'] as number) || 0;
+        return entry;
+      });
+      if (turn.processEntries.length === 0) {
+        turn.processEntries = turn.toolCalls.map((_call: AgentToolCall, index: number): AgentProcessEntry => {
+          const entry = new AgentProcessEntry();
+          entry.toolIndex = index;
+          return entry;
+        });
       }
       if (turn.status === 'processing') {
         processingId = turn.id;
@@ -867,13 +891,22 @@ export struct AgentConversationPanel {
 
   updateLiveTurn(taskId: string, progress: Array<Record<string, Object>>): void {
     const calls: Array<AgentToolCall> = [];
+    const entries: Array<AgentProcessEntry> = [];
     for (let i = 0; i < progress.length; i++) {
       const entry = progress[i];
       if (entry['stage'] !== 'reasoning') {
         continue;
       }
       const data = (entry['data'] as Record<string, Object>) || {};
-      if (data['phase'] === 'action') {
+      if (data['phase'] === 'commentary' && typeof data['text'] === 'string' && data['text']) {
+        const entry = new AgentProcessEntry();
+        entry.kind = 'commentary';
+        entry.text = (data['text'] as string).substring(0, 600);
+        entries.push(entry);
+      } else if (data['phase'] === 'action' && data['tool_name']) {
+        const entry = new AgentProcessEntry();
+        entry.toolIndex = calls.length;
+        entries.push(entry);
         const raw = JSON.parse('{}') as Record<string, Object>;
         raw['name'] = (data['tool_name'] as string) || '';
         raw['params'] = (data['tool_params'] as Record<string, Object>) || JSON.parse('{}') as Record<string, Object>;
@@ -905,11 +938,15 @@ export struct AgentConversationPanel {
       if (this.messages[i].id === taskId) {
         // Do not rebuild a message every polling tick. A changed key invalidates
         // LazyForEach's cached row only when a tool starts or returns new data.
-        if (JSON.stringify(calls) === JSON.stringify(this.messages[i].toolCalls)) return;
+        if (JSON.stringify(calls) === JSON.stringify(this.messages[i].toolCalls) &&
+            JSON.stringify(entries) === JSON.stringify(this.messages[i].processEntries)) return;
+        const followLatest = this.messageScroller.isAtEnd();
+        this.messages[i].processEntries = entries;
         this.messages[i].toolCalls = calls;
         this.messages[i].traceRevision += 1;
         this.messages = [...this.messages];
         this.messageSource.updateItem(i, this.messages[i]);
+        if (followLatest) this.scheduleScrollToEnd(80);
         break;
       }
     }
@@ -1038,9 +1075,24 @@ export struct AgentConversationPanel {
     return `${state}${this.toolNameLabel(call.name)} · ${call.query || this.toolScopeLabel(turn, call)}`;
   }
 
-  @Builder ToolTrace(turn: AgentTurnItem) {
-    Column({ space: 2 }) {
-      ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
+  isProcessExpanded(turn: AgentTurnItem): boolean {
+    return turn.status === 'processing' ? this.collapsedRunningProcessTurns.indexOf(turn.id) < 0 :
+      this.expandedProcessTurns.indexOf(turn.id) >= 0;
+  }
+
+  toggleProcess(turn: AgentTurnItem): void {
+    if (turn.status === 'processing') {
+      this.collapsedRunningProcessTurns = this.isProcessExpanded(turn) ?
+        [...this.collapsedRunningProcessTurns, turn.id] :
+        this.collapsedRunningProcessTurns.filter((id: string): boolean => id !== turn.id);
+    } else {
+      this.expandedProcessTurns = this.isProcessExpanded(turn) ?
+        this.expandedProcessTurns.filter((id: string): boolean => id !== turn.id) :
+        [...this.expandedProcessTurns, turn.id];
+    }
+  }
+
+  @Builder ToolStep(turn: AgentTurnItem, call: AgentToolCall, index: number) {
         Column({ space: 0 }) {
           Row({ space: 8 }) {
             if (call.status === 'running') {
@@ -1134,7 +1186,33 @@ export struct AgentConversationPanel {
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
-      }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
+  }
+
+  @Builder ToolTrace(turn: AgentTurnItem) {
+    Column({ space: 4 }) {
+      Row({ space: 8 }) {
+        Text(this.isProcessExpanded(turn) ? '⌄' : '›')
+          .fontSize(18).fontColor($r('app.color.app_text_muted')).width(16)
+        Text(`${turn.status === 'processing' ? '调查过程' : '查看调查过程'} · ${turn.toolCalls.length} 次工具调用`)
+          .fontSize(12).fontColor($r('app.color.app_text_muted')).layoutWeight(1)
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 36 })
+      .onClick((): void => { this.toggleProcess(turn); })
+      if (this.isProcessExpanded(turn)) {
+        ForEach(turn.processEntries, (entry: AgentProcessEntry, entryIndex: number): void => {
+          if (entry.kind === 'commentary') {
+            Text(entry.text)
+              .fontSize(13)
+              .lineHeight(21)
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ top: 6, bottom: 8 })
+          } else if (entry.toolIndex >= 0 && entry.toolIndex < turn.toolCalls.length) {
+            this.ToolStep(turn, turn.toolCalls[entry.toolIndex], entry.toolIndex)
+          }
+        }, (entry: AgentProcessEntry, entryIndex: number): string => `${turn.id}-process-${entryIndex}`)
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -1269,7 +1347,7 @@ export struct AgentConversationPanel {
               }
               .padding({ left: 0, right: 0, top: 4, bottom: 4 })
             }
-            if (turn.toolCalls.length > 0) {
+            if (turn.processEntries.length > 0) {
               this.ToolTrace(turn)
             }
             if (turn.status !== 'processing') {

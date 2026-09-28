@@ -47,6 +47,7 @@ TOOLS = [
 ]
 
 SYSTEM_PROMPT = """你是安防视频调查 Agent。视频的时长、帧率、总帧数已在用户消息给出，不要再查询。
+调查中可以主动向用户说明进展：在 content 中用 <progress_update>一两句简短的公开过程说明</progress_update>，解释当前已核实的发现、下一步准备核验什么及其目的。它是给用户看的工作进展，不是隐藏推理、逐步思维链或内部评分。只在有值得告知的新进展时输出，不要求每轮或每次工具调用都输出，不要虚构已完成的检查。可在同一回复中继续调用工具；最终结论写在标签外。不要把 FRAME_OBSERVATION、原始工具 JSON 或内部文件路径放入过程说明。
 预处理能力边界：目标检测/跟踪擅长回答画面里检测到哪些类别、目标何时出现、位置如何变化，并给出候选track_id；CLIP擅长按外观、场景或物品描述找相似帧；OCR擅长找画面文字；ReID擅长提出跨镜外观相似目标；人脸模块擅长提供人脸出现区间或分组。这些都是索引线索，各自可能漏检或误检。
 预处理不擅长可靠判断短暂动作、动作先后与因果、人物意图或复杂行为语义，例如打斗、推搡、跑动、跌倒、浏览、徘徊、交接物品。CLIP相似度不是动作分类结果，轨迹稳定也不能证明人物在观看或等待。索引没有命中绝不等于事件没有发生；不得只凭索引回答这些问题。
 使用原生工具调用，不要输出 JSON 工具指令。每次调用工具时，尽可能附带 video_scores，为每个已选视频填写 video_index、relevance、evidence（0 到 1）；这是探索规划建议，不是证据，尚未调用工具探索的视频 evidence 必须为 0。若已看到工具提供的原始帧，仅在中间调查轮次的 content 中为每张图写一行 `FRAME_OBSERVATION <video_id> <timestamp_sec>: <直接视觉观察>`，其中 video_id 使用工具返回的内部文件名；这是内部证据记录，不是给用户看的答案。最终回答绝不输出 FRAME_OBSERVATION，改用简洁的自然语言和下述时间引用。只描述实际看清的内容，不要复述索引结果或推断；之后继续调用工具或回答。先用索引定位候选和时间范围，再亲自查看原始帧。遇到动作/行为问题，必须用 read_frames 检查多张帧：选择候选时刻前、过程中、之后的相邻帧，比较人物姿态、位置和相互作用；若第一组仍不能区分动作与相似姿态，继续用另一组相邻帧探索，再作判断。单视频通常最多8张，多视频通常最多12张；多条件题每个条件都要有视觉证据。挑选有判别力的帧，避免无目的逐秒穷举。
@@ -141,6 +142,22 @@ def _dispatch(runner, video_items, name, args, temp_files):
     return {"error": f"未知工具: {name}"}, []
 
 
+def _extract_progress_updates(content):
+    """Only explicitly authored public updates are eligible for the UI timeline."""
+    updates = []
+    # Never surface a provider's reasoning channel or legacy <think> blocks.
+    content = re.sub(r"<think\b[^>]*>.*?(?:</think>|$)", "", str(content or ""), flags=re.S | re.I)
+    def extract(match):
+        text = match.group(1).strip()
+        if text and "FRAME_OBSERVATION" not in text:
+            updates.append(text[:600])
+        return ""
+    content = re.sub(r"<progress_update>(.*?)</progress_update>", extract, content, flags=re.S | re.I)
+    # An incomplete marker must not leak into the final answer.
+    content = re.sub(r"<progress_update>.*$", "", content, flags=re.S | re.I)
+    return updates[:3], content.strip()
+
+
 def execute_native(runner, video_items, messages, user_query, progress_callback=None):
     messages[0]["content"] = SYSTEM_PROMPT
     temp_files, used_tools = [], []
@@ -200,11 +217,22 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
             setattr(api_config, "loop_idx", loop_idx)
             setattr(api_config, "force_answer", force_answer)
             model_started = time.monotonic()
-            response = Qwen_VL(messages, tools=available_tools)
+            emitted_updates = 0
+            def publish_updates(partial_content):
+                nonlocal emitted_updates
+                updates, _ = _extract_progress_updates(partial_content)
+                if progress_callback:
+                    for update in updates[emitted_updates:]:
+                        progress_callback({"stage": "reasoning", "status": "running", "message": update,
+                                           "data": {"iteration": loop_idx, "phase": "commentary", "text": update}})
+                emitted_updates = len(updates)
+            response = Qwen_VL(messages, tools=available_tools, on_content=publish_updates)
             model_seconds = round(time.monotonic() - model_started, 2)
             setattr(api_config, "force_answer", False)
             calls = response.get("tool_calls") or []
             content = response.get("content") or ""
+            publish_updates(content)
+            _, content = _extract_progress_updates(content)
             frame_cards, content = frame_cards_from_text(content, video_items, pending_frames)
             if frame_cards:
                 observed_frames = {(card["video_id"], card["timestamp_sec"]) for card in frame_cards}

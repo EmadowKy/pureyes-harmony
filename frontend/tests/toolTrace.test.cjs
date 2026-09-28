@@ -10,10 +10,16 @@ const source = fs.readFileSync(path.join(__dirname,
   '../entry/src/main/ets/pages/components/AgentConversationPanel.ets'), 'utf8');
 const classes = source.slice(source.indexOf('class ConfigSelectItem'), source.indexOf('@Component'));
 const methods = source.slice(source.indexOf('  mapToolCall('), source.indexOf('  toolVideoLabel('));
+const processMethods = source.slice(source.indexOf('  isProcessExpanded('), source.indexOf('  @Builder ToolStep('));
 const harness = `${classes}\nclass Harness {
   messages: Array<AgentTurnItem> = [];
   messageSource: AgentMessageDataSource = new AgentMessageDataSource();
+  expandedProcessTurns: Array<string> = [];
+  collapsedRunningProcessTurns: Array<string> = [];
+  messageScroller = { isAtEnd: (): boolean => false };
+  scheduleScrollToEnd(_delay: number): void {}
   ${methods}
+  ${processMethods}
 }\nglobalThis.harness = new Harness();`;
 const context = vm.createContext({});
 vm.runInContext(ts.transpileModule(harness, {
@@ -69,9 +75,25 @@ panel.updateLiveTurn('another-task', progress);
 assert.equal(changes, 3, 'A stale task must not alter the active row');
 assert.match(source, /\$\{turn\.id\}-\$\{turn\.traceRevision\}/,
   'LazyForEach key must invalidate cached rows on tool progress');
-const trace = source.slice(source.indexOf('  @Builder ToolTrace('), source.indexOf('  @Builder ConversationRail('));
+const trace = source.slice(source.indexOf('  @Builder ToolStep('), source.indexOf('  @Builder ConversationRail('));
 assert.ok(trace.indexOf('if (this.isCallExpanded') < trace.indexOf('Text(call.summary'),
   'Tool results must only be shown in the expanded section');
 assert.ok(!trace.includes('.backgroundColor('), 'Tool rows must not have separate colored cards');
 assert.ok(!trace.includes('Text(call.parameters)'), 'Raw JSON must never be rendered');
+progress.push({ stage: 'reasoning', data: { phase: 'commentary', text: '两处画面已核验，继续比较。' } });
+panel.updateLiveTurn('active', progress);
+assert.equal(changes, 4, 'Commentary without a new tool must refresh the timeline');
+assert.equal(panel.messages[0].processEntries.at(-1).text, '两处画面已核验，继续比较。');
+assert.deepEqual(Array.from(panel.messages[0].processEntries, entry => entry.kind), ['tool', 'tool', 'commentary']);
+const turn = panel.messages[0];
+turn.status = 'processing';
+assert.equal(panel.isProcessExpanded(turn), true);
+panel.toggleProcess(turn);
+assert.equal(panel.isProcessExpanded(turn), false);
+panel.toggleProcess(turn);
+turn.status = 'completed';
+assert.equal(panel.isProcessExpanded(turn), false, 'Completion must automatically collapse the process');
+panel.toggleProcess(turn);
+assert.equal(panel.isProcessExpanded(turn), true, 'A finished process can be reopened');
+assert.equal(panel.isProcessExpanded({ id: 'follow-up', status: 'processing' }), true);
 console.log('PASS: running steps, result matching, row invalidation, unchanged polls, stale tasks, collapsed layout');

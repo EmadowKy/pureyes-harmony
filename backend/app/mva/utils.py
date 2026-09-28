@@ -16,7 +16,7 @@ def init(model_path: str="Qwen3-VL-2B-Instruct", device_id: int=None):
     return None, None
 
 
-def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tokens=2048, tools=None):
+def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tokens=2048, tools=None, on_content=None):
     api_key = getattr(api_config, 'api_key', None)
     base_url = getattr(api_config, 'base_url', None)
     model_name = getattr(api_config, 'model', None)
@@ -194,6 +194,8 @@ def Qwen_VL(messages, device_id=None, model_path="Qwen3-VL-2B-Instruct", max_tok
                                 chunk_text = ''
                             collected_chunks.append(chunk_text)
                             partial_text = "".join(collected_chunks)
+                            if chunk_text and callable(on_content):
+                                on_content(partial_text)
 
                             if tools is not None:
                                 if task_id and partial_text:

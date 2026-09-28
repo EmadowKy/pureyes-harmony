@@ -1,10 +1,24 @@
 import json
 import unittest
 
-from app.workspaces.routes import _tool_calls_from_progress
+from app.workspaces.routes import _tool_calls_from_progress, _process_entries_from_progress, _public_progress
 
 
 class ToolTraceHistoryTests(unittest.TestCase):
+    def test_public_updates_and_tools_retain_order_without_private_thoughts(self):
+        progress = [
+            {"stage": "reasoning", "data": {"phase": "thinking", "thought": "private"}},
+            {"stage": "reasoning", "data": {"phase": "commentary", "text": "先检查门口画面。", "thought": "private"}},
+            {"stage": "reasoning", "data": {"phase": "action", "tool_name": "read_frames", "iteration": 1}},
+            {"stage": "reasoning", "data": {"phase": "commentary", "text": "还需核验另一机位。"}},
+            {"stage": "reasoning", "data": {"phase": "action", "tool_name": "track_target", "iteration": 2}},
+        ]
+        entries = _process_entries_from_progress(json.dumps(progress))
+        self.assertEqual(["commentary", "tool", "commentary", "tool"], [entry["kind"] for entry in entries])
+        self.assertEqual([0, 1], [entry["tool_index"] for entry in entries if entry["kind"] == "tool"])
+        self.assertNotIn("private", json.dumps(_public_progress(progress)))
+        self.assertEqual([], _process_entries_from_progress("invalid json"))
+
     def test_same_round_results_match_the_pending_tool_name(self):
         progress = [
             {"stage": "reasoning", "data": {"phase": "action", "iteration": 1,

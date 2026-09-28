@@ -314,7 +314,14 @@ def _public_progress(progress):
         phase = data.get("phase")
         if entry.get("stage") == "reasoning":
             clean = {"iteration": data.get("iteration"), "phase": phase}
-            if phase == "action":
+            if phase == "commentary":
+                text = data.get("text")
+                text = text[:600].strip() if isinstance(text, str) else ""
+                if not text:
+                    continue
+                clean["text"] = text
+                message = text
+            elif phase == "action":
                 clean.update(tool_name=data.get("tool_name"),
                              tool_params=_safe_tool_params(data.get("tool_params")))
                 message = f"正在调用 {data.get('tool_name') or '工具'} 核验线索"
@@ -375,6 +382,25 @@ def _tool_calls_from_progress(progress_json):
     # A native model may issue several calls in one round. Keep the entire
     # persisted chain so revisiting an investigation shows its early evidence.
     return calls
+
+
+def _process_entries_from_progress(progress_json):
+    """Persist public model updates interleaved with tool steps, without thoughts."""
+    try:
+        progress = _public_progress(json.loads(progress_json or "[]"))
+    except (TypeError, ValueError):
+        return []
+    entries, tool_index = [], 0
+    for entry in progress:
+        if entry.get("stage") != "reasoning":
+            continue
+        data = entry["data"]
+        if data.get("phase") == "commentary":
+            entries.append({"kind": "commentary", "text": data["text"]})
+        elif data.get("phase") == "action" and data.get("tool_name"):
+            entries.append({"kind": "tool", "tool_index": tool_index})
+            tool_index += 1
+    return entries
 
 
 def _parse_preprocess_options(data):
@@ -1161,6 +1187,7 @@ def get_agent_conversation_messages(conversation_id):
         selections = QAVideoSelection.query.filter_by(record_id=record.id).all()
         data["selections"] = [selection.to_dict() for selection in selections]
         data["tool_calls"] = _tool_calls_from_progress(record.progress_json)
+        data["process_entries"] = _process_entries_from_progress(record.progress_json)
         messages.append(data)
     return success(data={"conversation": _serialize_conversation(conversation), "messages": messages})
 
