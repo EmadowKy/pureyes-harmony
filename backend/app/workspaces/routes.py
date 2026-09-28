@@ -348,7 +348,8 @@ def _tool_calls_from_progress(progress_json):
             continue
         if data.get("phase") == "observation":
             for call in reversed(calls):
-                if call["iteration"] == data.get("iteration"):
+                if (call["status"] == "running" and call["iteration"] == data.get("iteration")
+                        and (not data.get("tool_name") or call["name"] == data.get("tool_name"))):
                     call["summary"] = data.get("summary") or ""
                     call["times"] = data.get("times") or []
                     call["evidence"] = data.get("evidence") or []

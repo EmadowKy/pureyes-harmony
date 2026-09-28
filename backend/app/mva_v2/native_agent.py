@@ -232,6 +232,7 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                 name = (call.get("function") or {}).get("name", "")
                 tool_started = time.monotonic()
                 cards = []
+                action_emitted = False
                 try:
                     args = json.loads((call.get("function") or {}).get("arguments") or "{}")
                     if not isinstance(args, dict):
@@ -246,6 +247,11 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                             name = "search_visual_semantics_batch"
                         else:
                             raise ValueError("模型返回了缺少工具名称的调用")
+                    if progress_callback:
+                        progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调用 {name}",
+                                           "data": {"iteration": loop_idx, "phase": "action", "tool_name": name,
+                                                    "tool_params": args, "model_seconds": model_seconds}})
+                        action_emitted = True
                     if name in ("read_frames", "read_frame_image"):
                         requested = args.get("frames", [args]) if name == "read_frames" else [args]
                         fresh = []
@@ -293,9 +299,10 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                     result = {"error": str(exc)}
                     args = {}
                 if progress_callback:
-                    progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调用 {name}",
-                                       "data": {"iteration": loop_idx, "phase": "action", "tool_name": name, "tool_params": args,
-                                                "model_seconds": model_seconds, "tool_seconds": round(time.monotonic() - tool_started, 2)}})
+                    if not action_emitted:
+                        progress_callback({"stage": "reasoning", "status": "running", "message": f"正在调用 {name}",
+                                           "data": {"iteration": loop_idx, "phase": "action", "tool_name": name,
+                                                    "tool_params": args, "model_seconds": model_seconds}})
                     progress_callback({"stage": "reasoning", "status": "completed",
                                        "message": f"已完成 {name} 核验",
                                        "data": {"iteration": loop_idx, "phase": "observation", "tool_name": name,
@@ -303,7 +310,8 @@ def execute_native(runner, video_items, messages, user_query, progress_callback=
                                                 "times": runner._public_tool_times(result),
                                                 "evidence": runner._public_tool_evidence(result),
                                                 "details": runner._public_tool_details(result),
-                                                "result_status": "failed" if isinstance(result, dict) and result.get("error") else "completed"}})
+                                                "result_status": "failed" if isinstance(result, dict) and result.get("error") else "completed",
+                                                "tool_seconds": round(time.monotonic() - tool_started, 2)}})
                     if cards:
                         progress_callback({"stage": "evidence_memory", "status": "completed",
                                            "message": "已记录可追溯的索引候选",

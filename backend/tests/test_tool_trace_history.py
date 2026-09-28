@@ -5,6 +5,23 @@ from app.workspaces.routes import _tool_calls_from_progress
 
 
 class ToolTraceHistoryTests(unittest.TestCase):
+    def test_same_round_results_match_the_pending_tool_name(self):
+        progress = [
+            {"stage": "reasoning", "data": {"phase": "action", "iteration": 1,
+             "tool_name": "read_frames", "tool_params": {}}},
+            {"stage": "reasoning", "data": {"phase": "action", "iteration": 1,
+             "tool_name": "search_objects", "tool_params": {}}},
+            {"stage": "reasoning", "status": "completed", "data": {
+             "phase": "observation", "iteration": 1, "tool_name": "read_frames",
+             "summary": "已读取画面", "result_status": "completed"}},
+            {"stage": "reasoning", "status": "completed", "data": {
+             "phase": "observation", "iteration": 1, "tool_name": "search_objects",
+             "summary": "找到目标", "result_status": "completed"}},
+        ]
+        calls = _tool_calls_from_progress(json.dumps(progress))
+        self.assertEqual(["已读取画面", "找到目标"], [call["summary"] for call in calls])
+        self.assertTrue(all(call["status"] == "completed" for call in calls))
+
     def test_persisted_trace_retains_early_calls_when_one_round_uses_many_tools(self):
         progress = []
         for index in range(14):

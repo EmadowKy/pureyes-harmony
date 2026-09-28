@@ -31,6 +31,8 @@ class AgentConversationItem {
 }
 
 class AgentTurnItem {
+  // LazyForEach must replace the row when its nested tool timeline changes.
+  traceRevision: number = 0;
   id: string = '';
   creatorId: string = '';
   modelConfigLabel: string = '';
@@ -45,6 +47,7 @@ class AgentTurnItem {
 
 class AgentToolCall {
   name: string = '';
+  parameters: string = '';
   summary: string = '';
   query: string = '';
   queryType: string = '';
@@ -95,7 +98,7 @@ class AgentMessageDataSource implements IDataSource {
 
   updateItem(index: number, item: AgentTurnItem): void {
     this.items[index] = item;
-    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataChanged(index));
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataChange(index));
   }
 }
 
@@ -129,8 +132,6 @@ export struct AgentConversationPanel {
   @State currentTaskId: string = '';
   @State conversationReady: boolean = false;
   @State expandedCallKeys: Array<string> = [];
-  @State expandedTraceTurns: Array<string> = [];
-  @State collapsedTraceTurns: Array<string> = [];
   @State composerFocused: boolean = false;
   @State conversationLoadError: string = '';
   @State segmentLoadError: string = '';
@@ -402,7 +403,6 @@ export struct AgentConversationPanel {
       this.currentTaskId = processingId;
       this.isSending = true;
       const activeTurn = mapped.find((turn: AgentTurnItem): boolean => turn.id === processingId);
-      if (activeTurn) this.showLiveTrace(processingId, activeTurn.toolCalls.length);
       this.startPolling(processingId, activeTurn ? activeTurn.createdAt : '');
     } else {
       this.currentTaskId = '';
@@ -778,6 +778,7 @@ export struct AgentConversationPanel {
       return evidence;
     });
     const params = (raw['params'] as Record<string, Object>) || {};
+    call.parameters = JSON.stringify(params, null, 2);
     call.videoId = (params['video_id'] as string) || (params['video_path'] as string) || '';
     const query = params['query_text'] || params['track_id'];
     call.query = (typeof query === 'string' ? query : (query ? String(query) : '')).substring(0, 120);
@@ -817,7 +818,8 @@ export struct AgentConversationPanel {
         calls.push(this.mapToolCall(raw));
       } else if (data['phase'] === 'observation') {
         for (let j = calls.length - 1; j >= 0; j--) {
-          if (calls[j].iteration === (data['iteration'] as number)) {
+          if (calls[j].status === 'running' && calls[j].iteration === (data['iteration'] as number) &&
+              (!data['tool_name'] || calls[j].name === data['tool_name'])) {
             calls[j].summary = (data['summary'] as string) || '';
             calls[j].times = (data['times'] as Array<number>) || [];
             calls[j].details = (data['details'] as Array<string>) || [];
@@ -837,18 +839,13 @@ export struct AgentConversationPanel {
     }
     for (let i = 0; i < this.messages.length; i++) {
       if (this.messages[i].id === taskId) {
-        const newStep = calls.length > this.messages[i].toolCalls.length;
-        const update = (): void => {
-          this.showLiveTrace(taskId, calls.length);
-          this.messages[i].toolCalls = calls;
-          this.messages = [...this.messages];
-          this.messageSource.updateItem(i, this.messages[i]);
-        };
-        if (newStep) {
-          this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, update);
-        } else {
-          update();
-        }
+        // Do not rebuild a message every polling tick. A changed key invalidates
+        // LazyForEach's cached row only when a tool starts or returns new data.
+        if (JSON.stringify(calls) === JSON.stringify(this.messages[i].toolCalls)) return;
+        this.messages[i].toolCalls = calls;
+        this.messages[i].traceRevision += 1;
+        this.messages = [...this.messages];
+        this.messageSource.updateItem(i, this.messages[i]);
         break;
       }
     }
@@ -928,10 +925,10 @@ export struct AgentConversationPanel {
 
   toolNameLabel(toolName: string): string {
     if (toolName === 'search_objects' || toolName === 'spatiotemporal_search') return '查找目标';
-    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '画面语义';
-    if (toolName === 'search_video_text') return '画面文字';
+    if (toolName === 'search_visual_semantics' || toolName === 'search_visual_semantics_batch') return '检索画面语义';
+    if (toolName === 'search_video_text') return '检索画面文字';
     if (toolName === 'track_target') return '追踪轨迹';
-    if (toolName === 'search_face_tracks') return '人脸线索';
+    if (toolName === 'search_face_tracks') return '查询人脸线索';
     if (toolName === 'read_frame_image' || toolName === 'read_frames') return '核验画面';
     if (toolName === 'get_video_metadata') return '读取元数据';
     return '工具调用';
@@ -972,232 +969,119 @@ export struct AgentConversationPanel {
     });
   }
 
-  isTraceExpanded(turnId: string): boolean {
-    return this.expandedTraceTurns.indexOf(turnId) >= 0;
-  }
-
-  showLiveTrace(turnId: string, callCount: number): void {
-    if (callCount > 0 && this.expandedTraceTurns.indexOf(turnId) < 0 &&
-        this.collapsedTraceTurns.indexOf(turnId) < 0) {
-      this.expandedTraceTurns = [...this.expandedTraceTurns, turnId];
-    }
-  }
-
-  toggleTrace(turnId: string): void {
-    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
-      const index = this.expandedTraceTurns.indexOf(turnId);
-      if (index >= 0) {
-        this.expandedTraceTurns.splice(index, 1);
-        this.collapsedTraceTurns = [...this.collapsedTraceTurns, turnId];
-      } else {
-        this.expandedTraceTurns.push(turnId);
-        this.collapsedTraceTurns = this.collapsedTraceTurns.filter((id: string): boolean => id !== turnId);
-      }
-      this.expandedTraceTurns = [...this.expandedTraceTurns];
-    });
+  toolStepText(turn: AgentTurnItem, call: AgentToolCall): string {
+    const state = call.status === 'running' ? '正在' : (call.status === 'failed' ? '未能完成' : '已');
+    return `${state}${this.toolNameLabel(call.name)} · ${call.query || this.toolScopeLabel(turn, call)}`;
   }
 
   @Builder ToolTrace(turn: AgentTurnItem) {
-    Column({ space: 7 }) {
-      Row({ space: 7 }) {
-        Text('工具调用链')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
-        Text(`${turn.toolCalls.length} 步 · 按执行顺序`)
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_muted'))
-          .layoutWeight(1)
-          .textAlign(TextAlign.End)
-        Text(this.isTraceExpanded(turn.id) ? '收起' : '查看')
-          .fontSize(11)
-          .fontColor($r('app.color.app_primary'))
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-      .backgroundColor($r('app.color.app_page_bg'))
-      .borderRadius(9)
-      .onClick((): void => { this.toggleTrace(turn.id); })
-      if (this.isTraceExpanded(turn.id)) {
-        ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
-          Column({ space: 7 }) {
-            Row({ space: 9 }) {
-              Text(`${index + 1}`)
-                .fontSize(12)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.toolAccent(call.name))
+    Column({ space: 2 }) {
+      ForEach(turn.toolCalls, (call: AgentToolCall, index: number): void => {
+        Column({ space: 0 }) {
+          Row({ space: 8 }) {
+            if (call.status === 'running') {
+              LoadingProgress().width(16).height(16).color($r('app.color.app_text_muted'))
+            } else {
+              Text(call.status === 'failed' ? '!' : '✓')
+                .fontSize(14)
+                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') : $r('app.color.app_text_muted'))
+                .width(16)
                 .textAlign(TextAlign.Center)
-                .width(28)
-                .height(28)
-                .backgroundColor(this.toolSoft(call.name))
-                .borderRadius(14)
-              Column({ space: 2 }) {
-                Text(this.toolNameLabel(call.name))
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.app_text_primary'))
-                Text(`${this.toolKind(call.name)} · ${this.toolScopeLabel(turn, call)}`)
-                  .fontSize(10)
-                  .fontColor($r('app.color.app_text_muted'))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-              }
-              .alignItems(HorizontalAlign.Start)
+            }
+            Text(this.toolStepText(turn, call))
+              .fontSize(12)
+              .fontColor($r('app.color.app_text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
-              Text(call.status === 'running' ? '进行中' : (call.status === 'failed' ? '未完成' : '已完成'))
-                .fontSize(10)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') :
-                  (call.status === 'running' ? $r('app.color.app_warning') : $r('app.color.app_success')))
-                .padding({ left: 7, right: 7, top: 4, bottom: 4 })
-                .backgroundColor(call.status === 'failed' ? $r('app.color.app_danger_soft') :
-                  (call.status === 'running' ? $r('app.color.app_warning_soft') : $r('app.color.app_success_soft')))
-                .borderRadius(6)
-            }
-            .width('100%')
-            .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
-
-            Text(call.summary || (call.status === 'running' ? '正在等待工具返回…' : '工具已执行'))
-                .fontSize(12)
-                .fontColor(call.status === 'failed' ? $r('app.color.app_danger') : $r('app.color.app_text_secondary'))
-                .maxLines(this.isCallExpanded(`${turn.id}-${index}`) ? 8 : 3)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-            if (call.query) {
-              Text(`检索 · ${call.query}`)
-                .fontSize(10)
-                .fontColor($r('app.color.app_text_secondary'))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-            }
-            if (call.evidence.length > 0) {
-              Text(this.evidenceVideoCount(call) > 1 ?
-                `跨 ${this.evidenceVideoCount(call)} 段视频 · ${call.evidence.length} 处可查看证据` :
-                `${call.evidence.length} 处可查看证据`)
-                .fontSize(10)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_primary'))
-              Flex({ wrap: FlexWrap.Wrap }) {
-                ForEach(call.evidence.slice(0, this.isCallExpanded(`${turn.id}-${index}`) ?
-                  call.evidence.length : 3), (evidence: AgentToolEvidence, evidenceIndex: number): void => {
-                  Text(`${this.evidenceVideoLabel(turn, evidence.segmentId)} · ${this.formatTimestamp(evidence.timestampSec)} ↗`)
-                    .fontSize(11)
-                    .fontColor($r('app.color.app_primary'))
-                    .padding({ left: 8, right: 8, top: 6, bottom: 6 })
-                    .backgroundColor($r('app.color.app_primary_soft'))
-                    .borderRadius(7)
-                    .margin({ right: 6, bottom: 4 })
-                    .onClick((): void => {
-                      if (turn.segmentIds.indexOf(evidence.segmentId) >= 0) {
-                        this.onTimestampClick(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
-                      }
-                    })
-                }, (evidence: AgentToolEvidence, evidenceIndex: number): string =>
-                  `${turn.id}-${index}-evidence-${evidenceIndex}`)
-                if (call.evidence.length > 3 && !this.isCallExpanded(`${turn.id}-${index}`)) {
-                  Text(`还有 ${call.evidence.length - 3} 处 · 展开`)
-                    .fontSize(11)
-                    .fontColor($r('app.color.app_text_secondary'))
-                    .padding({ top: 6, bottom: 6 })
-                    .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
-                }
-              }
-              .width('100%')
-            }
-            Row() {
-              Blank()
-              Text(this.isCallExpanded(`${turn.id}-${index}`) ? '收起参数与结果  ⌃' : '查看参数与结果  ⌄')
-                .fontSize(11)
-                .fontColor(this.toolAccent(call.name))
-            }
-            .width('100%')
-            .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
-            if (this.isCallExpanded(`${turn.id}-${index}`)) {
-                Column({ space: 8 }) {
-                  Text(`工具标识 · ${call.name}`)
-                    .fontSize(10)
-                    .fontColor($r('app.color.app_text_muted'))
-                  if (call.query || call.videoId || call.timestampSec >= 0 || call.queryType) {
-                    Text('调用参数')
-                      .fontSize(10)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor($r('app.color.app_text_muted'))
-                    if (call.query) {
-                      Text(call.query).fontSize(12).fontWeight(FontWeight.Medium).fontColor($r('app.color.app_text_primary'))
-                    }
-                    if (call.queryType) {
-                      Text(`检索类型：${call.queryType === 'identity' ? '同一目标' : '语义分类'}`)
-                        .fontSize(11).fontColor($r('app.color.app_text_secondary'))
-                    }
-                    if (call.videoId) {
-                      Text(this.toolVideoLabel(turn, call.videoId)).fontSize(11).fontColor($r('app.color.app_text_secondary'))
-                    }
-                    if (call.timestampSec >= 0 && this.toolSegmentId(turn, call.videoId) > 0) {
-                      Text(`打开核验画面 · ${this.formatTimestamp(call.timestampSec)} ↗`)
-                        .fontSize(11)
-                        .fontColor($r('app.color.app_selection'))
-                        .padding({ left: 9, right: 9, top: 7, bottom: 7 })
-                        .backgroundColor($r('app.color.app_primary_soft'))
-                        .borderRadius(6)
-                        .onClick((): void => {
-                          this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(call.timestampSec));
-                        })
-                    }
-                  }
-                  if (call.details.length > 0 || (call.evidence.length === 0 && call.times.length > 0)) {
-                    Divider().color($r('app.color.app_border'))
-                    Text('观察结果')
-                      .fontSize(10)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor($r('app.color.app_text_muted'))
-                  }
-                  ForEach(call.details, (detail: string, detailIndex: number): void => {
-                    Row({ space: 6 }) {
-                      Text('•').fontSize(12).fontColor(this.toolAccent(call.name))
-                      Text(detail).fontSize(11).fontColor($r('app.color.app_text_secondary')).layoutWeight(1)
-                    }.width('100%')
-                  }, (detail: string, detailIndex: number): string => `${turn.id}-${index}-detail-${detailIndex}`)
-                  if (call.evidence.length === 0 && call.times.length > 0 &&
-                      this.toolSegmentId(turn, call.videoId) > 0) {
-                    Flex({ wrap: FlexWrap.Wrap }) {
-                      ForEach(call.times, (seconds: number, timeIndex: number): void => {
-                        Text(`${this.formatTimestamp(seconds)} ↗`)
-                          .fontSize(11)
-                          .fontColor(this.toolAccent(call.name))
-                          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-                          .backgroundColor(this.toolSoft(call.name))
-                          .borderRadius(6)
-                          .margin({ right: 6, bottom: 5 })
-                          .onClick((): void => {
-                            this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(seconds));
-                          })
-                      }, (seconds: number, timeIndex: number): string => `${turn.id}-${index}-time-${timeIndex}`)
-                    }
-                  }
-                }
-                .width('100%')
-                .padding({ left: 10, right: 0, top: 7, bottom: 3 })
-                .border({ width: { left: 2 }, color: $r('app.color.app_border') })
-                .transition(TransitionEffect.OPACITY
-                  .combine(TransitionEffect.translate({ y: -8 }))
-                  .animation({ duration: 220, curve: Curve.EaseOut }))
-            }
+            Text(this.isCallExpanded(`${turn.id}-${index}`) ? '⌄' : '›')
+              .fontSize(18)
+              .fontColor($r('app.color.app_text_muted'))
+              .width(20)
+              .textAlign(TextAlign.Center)
           }
-          .alignItems(HorizontalAlign.Start)
           .width('100%')
-          .padding({ left: 12, right: 8, top: 11, bottom: 11 })
-          .backgroundColor($r('app.color.app_card_subtle_bg'))
-          .border({ width: { left: 2, bottom: 1 }, color: $r('app.color.app_border') })
-          .transition(TransitionEffect.OPACITY
-            .combine(TransitionEffect.translate({ y: -8 }))
-            .animation({ duration: 220, curve: Curve.EaseOut }))
-        }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
-      }
+          .constraintSize({ minHeight: 36 })
+          .accessibilityText(`${this.toolStepText(turn, call)}，${this.isCallExpanded(`${turn.id}-${index}`) ? '收起详情' : '展开详情'}`)
+          .onClick((): void => { this.toggleCall(`${turn.id}-${index}`); })
+          if (this.isCallExpanded(`${turn.id}-${index}`)) {
+            Column({ space: 8 }) {
+              Text(call.summary || (call.status === 'running' ? '正在等待工具返回…' : '工具已执行'))
+                .fontSize(12)
+                .fontColor($r('app.color.app_text_secondary'))
+                .width('100%')
+              Text(`工具 · ${call.name}`)
+                .fontSize(10)
+                .fontColor($r('app.color.app_text_muted'))
+              Text(`范围 · ${this.toolScopeLabel(turn, call)}`)
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_muted'))
+              if (call.query) {
+                Text(`参数 · ${call.query}`)
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_text_secondary'))
+              }
+              if (call.parameters && call.parameters !== '{}') {
+                Text(call.parameters)
+                  .fontSize(10)
+                  .fontFamily('monospace')
+                  .fontColor($r('app.color.app_text_muted'))
+                  .width('100%')
+              }
+              if (call.queryType) {
+                Text(`检索类型 · ${call.queryType === 'identity' ? '同一目标' : '语义分类'}`)
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_text_secondary'))
+              }
+              if (call.videoId) {
+                Text(this.toolVideoLabel(turn, call.videoId))
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_text_secondary'))
+              }
+              ForEach(call.details, (detail: string, detailIndex: number): void => {
+                Text(detail).fontSize(11).fontColor($r('app.color.app_text_secondary')).width('100%')
+              }, (detail: string, detailIndex: number): string => `${turn.id}-${index}-detail-${detailIndex}`)
+              ForEach(call.evidence, (evidence: AgentToolEvidence, evidenceIndex: number): void => {
+                Text(`${this.evidenceVideoLabel(turn, evidence.segmentId)} · ${this.formatTimestamp(evidence.timestampSec)} ↗`)
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_primary'))
+                  .padding({ top: 5, bottom: 5 })
+                  .onClick((): void => {
+                    if (turn.segmentIds.indexOf(evidence.segmentId) >= 0) {
+                      this.onTimestampClick(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
+                    }
+                  })
+              }, (evidence: AgentToolEvidence, evidenceIndex: number): string => `${turn.id}-${index}-evidence-${evidenceIndex}`)
+              if (call.evidence.length === 0 && this.toolSegmentId(turn, call.videoId) > 0) {
+                if (call.timestampSec >= 0) {
+                  Text(`打开画面 · ${this.formatTimestamp(call.timestampSec)} ↗`)
+                    .fontSize(11).fontColor($r('app.color.app_primary'))
+                    .padding({ top: 5, bottom: 5 })
+                    .onClick((): void => {
+                      this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(call.timestampSec));
+                    })
+                }
+                ForEach(call.times, (seconds: number, timeIndex: number): void => {
+                  Text(`${this.formatTimestamp(seconds)} ↗`)
+                    .fontSize(11).fontColor($r('app.color.app_primary'))
+                    .padding({ top: 5, bottom: 5 })
+                    .onClick((): void => {
+                      this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(seconds));
+                    })
+                }, (seconds: number, timeIndex: number): string => `${turn.id}-${index}-time-${timeIndex}`)
+              }
+            }
+            .alignItems(HorizontalAlign.Start)
+            .width('100%')
+            .padding({ left: 24, right: 8, top: 2, bottom: 12 })
+          }
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      }, (call: AgentToolCall, index: number): string => `${turn.id}-${index}`)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding({ top: 3 })
   }
 
   @Builder ConversationRail() {
@@ -1378,7 +1262,7 @@ export struct AgentConversationPanel {
           .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
           .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
         }
-      }, (turn: AgentTurnItem): string => turn.id)
+      }, (turn: AgentTurnItem): string => `${turn.id}-${turn.traceRevision}`)
     }
     .width('100%')
     .layoutWeight(1)

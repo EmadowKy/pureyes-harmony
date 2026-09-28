@@ -174,6 +174,14 @@ class NativeFrameEvidenceTests(unittest.TestCase):
                 return next(responses)
 
             def read_frame(path, seconds, video_id):
+                # The UI must receive the start event while the tool is still
+                # executing, rather than both events after it has returned.
+                actions = [event for event in events
+                           if event.get("data", {}).get("phase") == "action"]
+                self.assertEqual(1, len(actions))
+                self.assertEqual("read_frames", actions[0]["data"]["tool_name"])
+                self.assertFalse(any(event.get("data", {}).get("phase") == "observation"
+                                     for event in events))
                 return str(image_path) if video_id == "a.mp4" else None
 
             events = []
@@ -194,6 +202,8 @@ class NativeFrameEvidenceTests(unittest.TestCase):
             self.assertNotIn("FRAME_OBSERVATION", answer)
             self.assertNotIn("未读取的视频二画面", answer)
             observations = [event for event in events if event.get("data", {}).get("phase") == "observation"]
+            self.assertEqual(1, len(observations))
+            self.assertIn("tool_seconds", observations[0]["data"])
             self.assertEqual([11], [link["segment_id"] for link in observations[0]["data"]["evidence"]])
             memories = [event for event in events if event.get("stage") == "evidence_memory"]
             self.assertEqual("a.mp4", memories[0]["data"]["evidence_cards"][0]["video_id"])
