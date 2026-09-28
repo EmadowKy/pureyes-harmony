@@ -1,7 +1,7 @@
 import asset from '@ohos.security.asset';
 import util from '@ohos.util';
 import { common } from '@kit.AbilityKit';
-import { InvestigationCard } from './investigationCard';
+import { InvestigationTaskCenter } from './investigationTasks';
 
 function stringToUint8Array(str: string): Uint8Array {
   const encoder = new util.TextEncoder();
@@ -113,7 +113,7 @@ export class SecurityUtil {
     AppStorage.setOrCreate('widget_route', '');
     if (context) {
       try {
-        await InvestigationCard.clear(context);
+        await InvestigationTaskCenter.clear(context);
       } catch (error) {
         console.warn('[InvestigationCard] clear failed', JSON.stringify(error));
       }

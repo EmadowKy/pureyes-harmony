@@ -18,6 +18,9 @@
         "name": "ohos.permission.VIBRATE"
       },
       {
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
+      },
+      {
         "name": "ohos.permission.PRIVACY_WINDOW",
         "reason": "$string:privacy_window_reason",
         "usedScene": {
@@ -31,6 +34,7 @@
     "abilities": [
       {
         "name": "EntryAbility",
+        "backgroundModes": ["dataTransfer"],
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
         "icon": "$media:layered_image",

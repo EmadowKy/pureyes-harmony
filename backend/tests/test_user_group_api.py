@@ -120,6 +120,65 @@ class UserGroupApiTest(unittest.TestCase):
         self.assertEqual(image.data, avatar_file.read_bytes())
         image.close()
 
+    def test_conversation_management_and_task_dashboard_permissions(self):
+        from app.models.agent_conversation import AgentConversation
+        from app.models.qa_record import QARecord, QAVideoSelection
+        from app.models.workspace import WorkspaceVideoSegment
+        from app.models.group import GroupMember
+        for emp in ('conv-owner', 'conv-peer', 'conv-outsider'):
+            self.create_user(emp, emp)
+        owner = self.auth_headers('conv-owner', 'pass1234')
+        peer = self.auth_headers('conv-peer', 'pass1234')
+        outsider = self.auth_headers('conv-outsider', 'pass1234')
+        group = self.client.post('/api/groups/', headers=self.super_headers, json={'name': 'Conversation controls'}).get_json()['data']['id']
+        workspace = self.client.post(f'/api/workspaces/{group}', headers=self.super_headers,
+            json={'name': 'Conversation controls'}).get_json()['data']['id']
+        with self.app.app_context():
+            db.session.add_all([GroupMember(group_id=group, emp_id=emp, status='accepted') for emp in ('conv-owner', 'conv-peer')])
+            segment = WorkspaceVideoSegment(workspace_id=workspace, video_name='keep.mp4',
+                start_offset=0, end_offset=10, duration=10, filepath='keep.mp4', status='completed')
+            db.session.add(segment)
+            db.session.flush()
+            segment_id = segment.id
+            conversation = AgentConversation(id='controls-test', workspace_id=workspace,
+                creator_id='conv-owner', title='Original', segment_ids_json=json.dumps([segment_id]))
+            db.session.add(conversation)
+            db.session.flush()
+            record = QARecord(id='controls-task', workspace_id=workspace, creator_id='conv-owner',
+                conversation_id=conversation.id, question='private question', status='processing', heartbeat_at=datetime.utcnow(),
+                progress_json=json.dumps([{'stage': 'reasoning', 'data': {'phase': 'action', 'tool_name': 'read_frames'}}]))
+            db.session.add(record)
+            db.session.flush()
+            db.session.add(QAVideoSelection(record_id=record.id, monitor_id=0, segment_id=segment_id,
+                start_time=datetime.utcnow(), end_time=datetime.utcnow() + timedelta(seconds=10)))
+            db.session.commit()
+        url = '/api/workspaces/agent/conversations/controls-test'
+        self.assertEqual(403, self.client.put(url, headers=peer, json={'title': 'No'}).status_code)
+        self.assertEqual(403, self.client.delete(url, headers=outsider).status_code)
+        self.assertEqual(409, self.client.delete(url, headers=owner).status_code)
+        for title in (' ', 'x' * 161, 123):
+            self.assertEqual(400, self.client.put(url, headers=owner, json={'title': title}).status_code)
+        result = self.client.put(url, headers=owner, json={'title': '  New title  '})
+        self.assertEqual(200, result.status_code)
+        self.assertEqual('New title', result.get_json()['data']['title'])
+        dashboard = self.client.get('/api/workspaces/agent/tasks', headers=peer).get_json()['data']
+        task = next(t for t in dashboard['tasks'] if t['task_id'] == 'controls-task')
+        self.assertEqual('正在核验画面', task['stage'])
+        self.assertEqual(1, task['steps'])
+        self.assertNotIn('private question', json.dumps(dashboard))
+        hidden = self.client.get('/api/workspaces/agent/tasks', headers=outsider).get_json()['data']
+        self.assertNotIn('controls-task', json.dumps(hidden))
+        with self.app.app_context():
+            db.session.get(QARecord, 'controls-task').status = 'completed'
+            db.session.commit()
+        self.assertEqual(403, self.client.delete(url, headers=peer).status_code)
+        self.assertEqual(200, self.client.delete(url, headers=owner).status_code)
+        self.assertEqual(404, self.client.get(url + '/messages', headers=owner).status_code)
+        with self.app.app_context():
+            self.assertIsNotNone(db.session.get(WorkspaceVideoSegment, segment_id))
+            self.assertIsNone(db.session.get(QARecord, 'controls-task'))
+            self.assertEqual(0, QAVideoSelection.query.filter_by(record_id='controls-task').count())
+
     def test_personal_and_group_model_configs_permissions(self):
         self.create_user("cfg_leader", "Config Leader")
         self.create_user("cfg_member", "Config Member")

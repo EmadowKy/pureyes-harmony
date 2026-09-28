@@ -5,11 +5,46 @@ import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { vibrator } from '@kit.SensorServiceKit';
-import { InvestigationCard, InvestigationCardSnapshot } from '../../utils/investigationCard';
 import { cleanAnswerForDisplay } from '../../utils/answerFormatting';
+import { InvestigationTaskCenter } from '../../utils/investigationTasks';
+
+@CustomDialog
+struct ConversationTitleDialog {
+  controller?: CustomDialogController;
+  initialTitle: string = '';
+  onSave: (title: string) => Promise<string> = async (_title: string): Promise<string> => '';
+  @State title: string = '';
+  @State error: string = '';
+  @State saving: boolean = false;
+  aboutToAppear(): void { this.title = this.initialTitle; }
+  build() {
+    Column({ space: 16 }) {
+      Text('修改调查标题').fontSize(18).fontWeight(FontWeight.Bold)
+      TextInput({ text: this.title, placeholder: '输入标题' }).maxLength(160)
+        .onChange((value: string): void => { this.title = value; this.error = ''; })
+      if (this.error) { Text(this.error).fontSize(12).fontColor($r('app.color.app_danger')) }
+      Row({ space: 16 }) {
+        Button('取消').enabled(!this.saving).onClick((): void => { this.controller?.close(); })
+        Button(this.saving ? '保存中…' : '保存').enabled(!this.saving && this.title.trim().length > 0)
+          .onClick(async (): Promise<void> => {
+            this.saving = true;
+            try {
+              this.error = await this.onSave(this.title.trim());
+              if (!this.error) this.controller?.close();
+            } catch (_error) { this.error = '无法保存标题，请重试。'; }
+            finally { this.saving = false; }
+          })
+      }.justifyContent(FlexAlign.End).width('100%')
+    }.padding(24).width('100%')
+  }
+}
 
 class ConfigSelectItem {
   value: string = '';
+}
+
+class ConversationTitlePayload {
+  title: string = '';
 }
 
 class AgentSegmentChoice {
@@ -28,6 +63,7 @@ class AgentConversationItem {
   turnCount: number = 0;
   latestStatus: string = 'idle';
   latestQuestion: string = '';
+  canManage: boolean = false;
 }
 
 class AgentTurnItem {
@@ -155,6 +191,9 @@ export struct AgentConversationPanel {
   @State segmentLoadError: string = '';
   @State modelLoadError: string = '';
   @State shareErrorTurnId: string = '';
+  @State conversationActionError: string = '';
+  @StorageLink('investigation_notification_hint') notificationHint: string = '';
+  private titleDialog?: CustomDialogController;
   private pollTimer: number = 0;
   private pollEpoch: number = 0;
   private syncTimer: number = 0;
@@ -164,12 +203,11 @@ export struct AgentConversationPanel {
   private lastProgressAtMs: number = 0;
   private lastProgressCount: number = 0;
   private syncing: boolean = false;
-  private lastCardState: string = '';
-  private cardWrite: Promise<void> = Promise.resolve();
   private messageScroller: Scroller = new Scroller();
   private messageSource: AgentMessageDataSource = new AgentMessageDataSource();
 
   aboutToAppear(): void {
+    InvestigationTaskCenter.start(this.getUIContext().getHostContext() as common.UIAbilityContext);
     if (this.initialConversationId) {
       this.selectedConversationId = this.initialConversationId;
       this.onDetailChange(true);
@@ -215,28 +253,8 @@ export struct AgentConversationPanel {
     }
   }
 
-  publishCard(turn: AgentTurnItem, stage: string = ''): void {
-    if (this.workspaceId <= 0 || !this.selectedConversationId) return;
-    const snapshot = new InvestigationCardSnapshot();
-    snapshot.workspaceId = this.workspaceId;
-    snapshot.conversationId = this.selectedConversationId;
-    snapshot.status = turn.status;
-    snapshot.steps = turn.toolCalls.length;
-    snapshot.stage = turn.status === 'processing' ? (stage || '正在调查') :
-      (turn.status === 'completed' ? '结论已生成' : '查看调查记录');
-    const fingerprint = `${snapshot.conversationId}:${snapshot.status}:${snapshot.steps}:${snapshot.stage}`;
-    if (fingerprint === this.lastCardState) return;
-    this.lastCardState = fingerprint;
-    const now = new Date();
-    snapshot.updatedAt = `${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ` +
-      `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.cardWrite = this.cardWrite.then(async (): Promise<void> => {
-      await InvestigationCard.publish(context, snapshot);
-    }).catch((error: Object): void => {
-      console.warn('[InvestigationCard] publish failed', JSON.stringify(error));
-      this.lastCardState = '';
-    });
+  publishCard(_turn: AgentTurnItem, _stage: string = ''): void {
+    InvestigationTaskCenter.refresh();
   }
 
   async refreshAll(): Promise<void> {
@@ -277,6 +295,7 @@ export struct AgentConversationPanel {
       conversation.turnCount = (item['turn_count'] as number) || 0;
       conversation.latestStatus = (item['latest_status'] as string) || 'idle';
       conversation.latestQuestion = (item['latest_question'] as string) || '';
+      conversation.canManage = item['can_manage'] === true;
       mapped.push(conversation);
     }
     const unchanged = mapped.length === this.conversations.length && mapped.every(
@@ -284,7 +303,7 @@ export struct AgentConversationPanel {
         const previous = this.conversations[index];
         return item.id === previous.id && item.title === previous.title &&
           item.turnCount === previous.turnCount && item.latestStatus === previous.latestStatus &&
-          item.latestQuestion === previous.latestQuestion;
+          item.latestQuestion === previous.latestQuestion && item.canManage === previous.canManage;
       });
     if (!unchanged) this.conversations = mapped;
   }
@@ -308,6 +327,43 @@ export struct AgentConversationPanel {
     if (!this.modelConfigs.some((item: ModelConfigOption): boolean => item.id === this.selectedModelConfigId)) {
       this.selectedModelConfigId = this.modelConfigs.length > 0 ? this.modelConfigs[0].id : 0;
     }
+  }
+
+  editConversationTitle(item: AgentConversationItem): void {
+    this.titleDialog = new CustomDialogController({
+      builder: ConversationTitleDialog({ initialTitle: item.title,
+        onSave: async (title: string): Promise<string> => {
+          const payload = new ConversationTitlePayload();
+          payload.title = title;
+          const res = await HttpUtil.put(`/workspaces/agent/conversations/${item.id}`, payload);
+          if (res.code !== 0) return res.message || '无法修改标题，请重试';
+          await this.loadConversations();
+          InvestigationTaskCenter.refresh();
+          return '';
+        } }), autoCancel: false
+    });
+    this.titleDialog.open();
+  }
+
+  confirmDeleteConversation(item: AgentConversationItem): void {
+    if (item.latestStatus === 'processing') {
+      this.conversationActionError = '调查正在运行，请进入会话停止本轮后再删除。';
+      return;
+    }
+    this.getUIContext().showAlertDialog({ title: '删除调查记录？',
+      message: `「${item.title}」的全部问答和工具记录将被删除，视频片段和人脸数据保留。此操作不可撤销。`,
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: { value: '删除', action: async (): Promise<void> => {
+        const res = await HttpUtil.del(`/workspaces/agent/conversations/${item.id}`);
+        if (res.code !== 0) {
+          this.conversationActionError = res.message || '删除失败，请重试';
+          return;
+        }
+        this.conversationActionError = '';
+        await this.loadConversations();
+        InvestigationTaskCenter.refresh();
+      } }
+    });
   }
 
   async loadSegments(): Promise<void> {
@@ -652,6 +708,8 @@ export struct AgentConversationPanel {
         }
       }
     }
+    await InvestigationTaskCenter.enableNotifications(this.getUIContext().getHostContext() as common.UIAbilityContext);
+    if (epoch !== this.pollEpoch) return;
     const res = await HttpUtil.post(`/workspaces/${this.workspaceId}/qa`, payload);
     if (epoch !== this.pollEpoch) {
       return;
@@ -669,6 +727,8 @@ export struct AgentConversationPanel {
     const data = JSON.parse(res.data) as Record<string, Object>;
     this.currentTaskId = (data['task_id'] as string) || '';
     this.selectedConversationId = (data['conversation_id'] as string) || this.selectedConversationId;
+    await InvestigationTaskCenter.submitted(this.currentTaskId, this.selectedConversationId, this.workspaceId);
+    if (epoch !== this.pollEpoch) return;
     this.composerText = '';
     this.creatingInvestigation = false;
     await this.loadConversations();
@@ -1252,6 +1312,7 @@ export struct AgentConversationPanel {
                 .borderRadius(10)
                 .geometryTransition(`investigation-${item.id}`)
                 .transition(TransitionEffect.OPACITY)
+                .onClick((): void => { this.openConversation(item.id); })
               Column({ space: 5 }) {
                 Row({ space: 8 }) {
                   Text(item.title)
@@ -1282,11 +1343,20 @@ export struct AgentConversationPanel {
               }
               .layoutWeight(1)
               .alignItems(HorizontalAlign.Start)
+              .onClick((): void => { this.openConversation(item.id); })
+              if (item.canManage) {
+                Button('⋯').width(32).height(30).fontSize(22)
+                  .backgroundColor(Color.Transparent).fontColor($r('app.color.app_text_secondary'))
+                  .accessibilityText(`管理调查：${item.title}`)
+                  .bindMenu([
+                    { value: '修改标题', action: (): void => { this.editConversationTitle(item); } },
+                    { value: '删除记录', action: (): void => { this.confirmDeleteConversation(item); } }
+                  ])
+              }
             }
             .width('100%')
             .alignItems(VerticalAlign.Top)
             .padding({ top: 15, bottom: 15 })
-            .onClick((): void => { this.openConversation(item.id); })
           }
           .width('100%')
           .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
@@ -1825,6 +1895,9 @@ export struct AgentConversationPanel {
         this.NewInvestigation()
       } else if (!this.selectedConversationId) {
         Column({ space: 10 }) {
+          if (this.conversationActionError) {
+            Text(this.conversationActionError).fontSize(12).fontColor($r('app.color.app_danger'))
+          }
           if (this.conversationLoadError) {
             Row({ space: 8 }) {
               Text(this.conversationLoadError)
@@ -1880,6 +1953,10 @@ export struct AgentConversationPanel {
           this.ReferenceSegments()
         }
         this.MessageStream()
+        if (this.notificationHint) {
+          Text(this.notificationHint).fontSize(11).fontColor($r('app.color.app_text_muted'))
+            .width('100%').padding({ left: 20, right: 20, top: 6, bottom: 6 })
+        }
         if (this.canContinue()) {
           this.Composer()
         } else {

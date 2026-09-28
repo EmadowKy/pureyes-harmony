@@ -252,7 +252,17 @@ def _serialize_conversation(conversation):
     _recover_stalled_record(latest)
     data["latest_status"] = latest.status if latest else "idle"
     data["latest_question"] = latest.question if latest else ""
+    data["can_manage"] = _can_manage_conversation(conversation)
     return data
+
+
+def _can_manage_conversation(conversation):
+    from app.models.group import Group
+    from app.user_center.permissions import current_user, is_admin
+    workspace = db.session.get(Workspace, conversation.workspace_id)
+    group = db.session.get(Group, workspace.group_id) if workspace else None
+    return bool(conversation.creator_id == get_jwt_identity() or
+                (group and group.creator_id == get_jwt_identity()) or is_admin(current_user()))
 
 
 def _recover_stalled_record(record):
@@ -1166,6 +1176,87 @@ def workspace_model_configs(workspace_id):
     shared = LLMConfig.query.filter_by(scope="group", group_id=workspace.group_id).all()
     return success(data=[config.public(emp_id, group.creator_id if group else None)
                          for config in personal + shared])
+
+
+@workspaces_bp.put("/agent/conversations/<conversation_id>")
+@jwt_required()
+def rename_agent_conversation(conversation_id):
+    conversation = db.session.get(AgentConversation, conversation_id)
+    if not conversation:
+        return fail(message="conversation not found", code=5026, http_status=404)
+    _, error = _require_workspace_member(conversation.workspace_id)
+    if error:
+        return error
+    if not _can_manage_conversation(conversation):
+        return fail(message="仅调查创建者或管理员可以修改标题", code=5031, http_status=403)
+    data = request.get_json(silent=True)
+    title = data.get("title") if isinstance(data, dict) else None
+    if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
+        return fail(message="标题须为 1–160 个字符", code=5032, http_status=400)
+    conversation.title = title.strip()
+    db.session.commit()
+    return success(data=_serialize_conversation(conversation))
+
+
+@workspaces_bp.delete("/agent/conversations/<conversation_id>")
+@jwt_required()
+def delete_agent_conversation(conversation_id):
+    conversation = db.session.get(AgentConversation, conversation_id)
+    if not conversation:
+        return fail(message="conversation not found", code=5026, http_status=404)
+    _, error = _require_workspace_member(conversation.workspace_id)
+    if error:
+        return error
+    if not _can_manage_conversation(conversation):
+        return fail(message="仅调查创建者或管理员可以删除记录", code=5031, http_status=403)
+    records = QARecord.query.filter_by(conversation_id=conversation.id).all()
+    if any(record.status == "processing" for record in records):
+        return fail(message="调查正在运行，请先停止本轮再删除", code=5033, http_status=409)
+    for record in records:
+        QAVideoSelection.query.filter_by(record_id=record.id).delete(synchronize_session=False)
+        db.session.delete(record)
+        running_tasks.pop(record.id, None)
+    db.session.delete(conversation)
+    db.session.commit()
+    return success(message="调查记录已删除，视频片段保留")
+
+
+@workspaces_bp.get("/agent/tasks")
+@jwt_required()
+def agent_task_dashboard():
+    """Authorized, small task snapshots for notifications and multi-task widgets."""
+    groups = db.session.query(GroupMember.group_id).filter_by(
+        emp_id=get_jwt_identity(), status="accepted")
+    latest = db.session.query(QARecord.conversation_id,
+        db.func.max(QARecord.turn_index).label("turn_index")).group_by(QARecord.conversation_id).subquery()
+    rows = (db.session.query(QARecord, AgentConversation, Workspace)
+        .join(AgentConversation, QARecord.conversation_id == AgentConversation.id)
+        .join(Workspace, AgentConversation.workspace_id == Workspace.id)
+        .join(latest, QARecord.conversation_id == latest.c.conversation_id)
+        .filter(QARecord.turn_index == latest.c.turn_index, Workspace.group_id.in_(groups))
+        .order_by(AgentConversation.updated_at.desc()).all())
+    labels = {"read_frames": "核验画面", "read_frame_image": "核验画面",
+        "track_target": "追踪目标", "search_video_text": "核对文字",
+        "search_face_tracks": "查找人脸", "search_visual_semantics": "检索线索",
+        "search_visual_semantics_batch": "检索线索"}
+    tasks = []
+    for record, conversation, workspace in rows:
+        _recover_stalled_record(record)
+        calls = _tool_calls_from_progress(record.progress_json)
+        stage = "正在调查"
+        if record.status == "processing" and calls:
+            stage = "正在" + labels.get(calls[-1].get("tool_name", calls[-1].get("name")), "调查证据")
+        elif record.status != "processing":
+            stage = {"completed": "结论已生成", "failed": "调查未完成", "stopped": "调查已停止"}.get(record.status, "等待调查")
+        tasks.append({"task_id": record.id, "conversation_id": conversation.id,
+            "workspace_id": workspace.id, "title": conversation.title,
+            "status": record.status, "stage": stage, "steps": len(calls),
+            "elapsed_seconds": record.timing()["elapsed_seconds"],
+            "updated_at": conversation.updated_at.isoformat() + "Z"})
+    active = [task for task in tasks if task["status"] == "processing"]
+    return success(data={"tasks": active + [t for t in tasks if t["status"] != "processing"][:20],
+        "active_count": len(active), "completed_count": sum(t["status"] == "completed" for t in tasks),
+        "conversation_count": len(tasks)})
 
 
 @workspaces_bp.get("/agent/conversations/<conversation_id>/messages")

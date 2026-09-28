@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { SecurityUtil } from '../utils/security';
+import { InvestigationTaskCenter } from '../utils/investigationTasks';
 
 const DOMAIN = 0x0000;
 
@@ -39,6 +40,7 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
     SecurityUtil.initSecureState().then((): void => {
+      InvestigationTaskCenter.start(this.context);
       this.loadMainContent(windowStage);
     }).catch((err: Object): void => {
       hilog.warn(DOMAIN, 'SecurityState', 'Secure state initialization failed: %{public}s', JSON.stringify(err));
@@ -86,12 +88,14 @@ export default class EntryAbility extends UIAbility {
   }
 
   onForeground(): void {
+    InvestigationTaskCenter.start(this.context);
     // Ability has brought to foreground
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
     AppStorage.setOrCreate('session_check_flag', Date.now());
   }
 
   onBackground(): void {
+    InvestigationTaskCenter.setForeground(false);
     // Ability has back to background
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
   }
