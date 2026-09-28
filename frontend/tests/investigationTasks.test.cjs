@@ -25,8 +25,12 @@ const context = vm.createContext({
     getWantAgent: async value => value },
   backgroundTaskManager: { BackgroundMode: { DATA_TRANSFER: 1 }, on() {},
     startBackgroundRunning: async () => { starts++; }, stopBackgroundRunning: async () => { stops++; } },
-  preferences: { getPreferences: async () => ({ get: async (key, fallback) => prefs.get(key) ?? fallback,
-    put: async (key, value) => prefs.set(key, value), delete: async key => prefs.delete(key), flush: async () => {} }) },
+  preferences: { removePreferencesFromCache: async () => {}, getPreferences: async (_context, { name }) => {
+    if (!prefs.has(name)) prefs.set(name, new Map());
+    const file = prefs.get(name);
+    return { get: async (key, fallback) => file.get(key) ?? fallback,
+      put: async (key, value) => file.set(key, value), delete: async key => file.delete(key), flush: async () => {} };
+  } },
   formBindingData: { createFormBindingData: value => value },
   formProvider: { updateForm: async (_id, binding) => { lastCard = binding; } }
 });
@@ -56,6 +60,8 @@ async function refresh(tasks) { now += 5000; current = dashboard(tasks); await c
   await card.cycle({}, 'form-one', 1);
   assert.equal(lastCard.conversationId, 'conversation-a', 'cycling wraps');
   await card.clear({});
+  assert.equal(JSON.parse(prefs.get('investigation_card_registry').get('form_ids')).length, 2,
+    'dashboard clearing cannot erase the form registry');
   current = dashboard([task('a'), task('b')]);
   center.start({});
   await flush(); await flush();

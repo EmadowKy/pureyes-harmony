@@ -17,7 +17,7 @@ export default class InvestigationFormAbility extends FormExtensionAbility {
   }
 
   onUpdateForm(formId: string): void {
-    InvestigationCard.refresh(this.context, formId).catch((error: Object): void => {
+    InvestigationCard.attach(this.context, formId).catch((error: Object): void => {
       console.warn('[InvestigationCard] refresh failed', JSON.stringify(error));
     });
   }
@@ -35,6 +35,7 @@ export default class InvestigationFormAbility extends FormExtensionAbility {
   }
 
   private async handleEvent(formId: string, message: string): Promise<void> {
+    await InvestigationCard.attach(this.context, formId);
     const value = JSON.parse(message) as Record<string, Object>;
     const params = (value['params'] as Record<string, Object>) || value;
     const command = params['command'] as string;

@@ -4,6 +4,8 @@ import { common } from '@kit.AbilityKit';
 import { InvestigationDashboard, InvestigationTaskSnapshot, taskPool, taskDuration } from './investigationTaskState';
 
 const FILE_NAME = 'investigation_card';
+const REGISTRY_FILE = 'investigation_card_registry';
+const SELECTION_FILE = 'investigation_card_selection';
 const FORM_IDS_KEY = 'form_ids';
 export class InvestigationCardSnapshot extends InvestigationTaskSnapshot {}
 
@@ -24,12 +26,18 @@ function binding(dashboard: InvestigationDashboard, selectedId: string = ''): fo
 export class InvestigationCard {
   private static pending: Promise<void> = Promise.resolve();
   static empty(): formBindingData.FormBindingData { return binding(new InvestigationDashboard()); }
-  private static async store(context: common.Context): Promise<preferences.Preferences> {
-    return preferences.getPreferences(context, { name: FILE_NAME });
+  private static async store(context: common.Context, name: string = FILE_NAME): Promise<preferences.Preferences> {
+    // UIAbility and FormExtension run in separate processes. Reload committed data,
+    // and keep their independently owned registry/selection outside the dashboard.
+    await preferences.removePreferencesFromCache(context, { name });
+    return preferences.getPreferences(context, { name });
   }
-  private static async ids(store: preferences.Preferences): Promise<Array<string>> {
+  private static async ids(context: common.Context): Promise<Array<string>> {
     try {
-      const data = JSON.parse(await store.get(FORM_IDS_KEY, '[]') as string) as Array<string>;
+      const registry = await InvestigationCard.store(context, REGISTRY_FILE);
+      let serialized = await registry.get(FORM_IDS_KEY, '') as string;
+      if (!serialized) serialized = await (await InvestigationCard.store(context)).get(FORM_IDS_KEY, '[]') as string;
+      const data = JSON.parse(serialized) as Array<string>;
       return Array.isArray(data) ? data : [];
     } catch (_error) { return []; }
   }
@@ -41,8 +49,8 @@ export class InvestigationCard {
     } catch (_error) { return new InvestigationDashboard(); }
   }
   static async attach(context: common.Context, formId: string): Promise<void> {
-    const store = await InvestigationCard.store(context);
-    const ids = await InvestigationCard.ids(store);
+    const ids = await InvestigationCard.ids(context);
+    const store = await InvestigationCard.store(context, REGISTRY_FILE);
     if (ids.indexOf(formId) < 0) {
       ids.push(formId);
       await store.put(FORM_IDS_KEY, JSON.stringify(ids));
@@ -51,19 +59,22 @@ export class InvestigationCard {
     await InvestigationCard.refresh(context, formId);
   }
   static async detach(context: common.Context, formId: string): Promise<void> {
-    const store = await InvestigationCard.store(context);
-    await store.put(FORM_IDS_KEY, JSON.stringify((await InvestigationCard.ids(store)).filter((id: string): boolean => id !== formId)));
-    await store.delete(`selected_${formId}`);
+    const ids = await InvestigationCard.ids(context);
+    const store = await InvestigationCard.store(context, REGISTRY_FILE);
+    await store.put(FORM_IDS_KEY, JSON.stringify(ids.filter((id: string): boolean => id !== formId)));
     await store.flush();
+    const selection = await InvestigationCard.store(context, SELECTION_FILE);
+    await selection.delete(`selected_${formId}`);
+    await selection.flush();
   }
   static async refresh(context: common.Context, formId: string): Promise<void> {
-    const store = await InvestigationCard.store(context);
+    const store = await InvestigationCard.store(context, SELECTION_FILE);
     await formProvider.updateForm(formId, binding(await InvestigationCard.dashboard(context), await store.get(`selected_${formId}`, '') as string));
   }
   static async cycle(context: common.Context, formId: string, direction: number): Promise<void> {
     const pool = taskPool(await InvestigationCard.dashboard(context));
     if (pool.length === 0) return;
-    const store = await InvestigationCard.store(context);
+    const store = await InvestigationCard.store(context, SELECTION_FILE);
     const selected = await store.get(`selected_${formId}`, '') as string;
     const current = Math.max(0, pool.findIndex((task: InvestigationTaskSnapshot): boolean => task.taskId === selected));
     await store.put(`selected_${formId}`, pool[(current + direction + pool.length) % pool.length].taskId);
@@ -75,7 +86,7 @@ export class InvestigationCard {
       const store = await InvestigationCard.store(context);
       await store.put('dashboard', JSON.stringify(dashboard));
       await store.flush();
-      for (const id of await InvestigationCard.ids(store)) {
+      for (const id of await InvestigationCard.ids(context)) {
         try { await InvestigationCard.refresh(context, id); } catch (_error) {}
       }
     });
