@@ -1,4 +1,8 @@
 import { HttpUtil, BASE_HOST } from '../utils/http'
+import photoAccessHelper from '@ohos.file.photoAccessHelper';
+import picker from '@ohos.file.picker';
+import common from '@ohos.app.ability.common';
+import { uploadLocalVideo } from '../utils/localVideoUpload';
 import { QARecordInfo } from './tabs/WorkspaceTab'
 import { AgentConversationPanel } from './components/AgentConversationPanel'
 import { MarkdownAnswer } from './components/MarkdownAnswer'
@@ -1366,6 +1370,9 @@ struct WorkspaceDetail {
   @State segmentLoadError: string = '';
   @State exampleVideos: Array<ExampleVideoInfo> = [];
   @State showSelectExampleVideo: boolean = false;
+  @State isUploadingVideo: boolean = false;
+  @State videoUploadProgress: number = -1;
+  @State videoUploadError: string = '';
   @State activeVideo: ExampleVideoInfo = new ExampleVideoInfo();
   @State activeIndex: number = 0;
 
@@ -1820,6 +1827,53 @@ struct WorkspaceDetail {
       this.exampleVideos = mapped;
     } else {
       this.exampleVideos = [];
+    }
+  }
+
+  async selectLocalVideo(fromFiles: boolean): Promise<void> {
+    if (this.isUploadingVideo) return;
+    this.isUploadingVideo = true;
+    this.videoUploadProgress = -1;
+    this.videoUploadError = '';
+    try {
+      let uri = '';
+      if (fromFiles) {
+        const options = new picker.DocumentSelectOptions();
+        options.maxSelectNumber = 1;
+        const uris = await new picker.DocumentViewPicker().select(options);
+        uri = uris.length > 0 ? uris[0] : '';
+      } else {
+        const options = new photoAccessHelper.PhotoSelectOptions();
+        options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.VIDEO_TYPE;
+        options.maxSelectNumber = 1;
+        const selected = await new photoAccessHelper.PhotoViewPicker().select(options);
+        uri = selected.photoUris.length > 0 ? selected.photoUris[0] : '';
+      }
+      if (!uri) return;
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const response = await uploadLocalVideo(this.workspaceId, uri, context.cacheDir,
+        (percent: number): void => { this.videoUploadProgress = percent; });
+      if (response.code !== 0 || !response.data) {
+        this.videoUploadError = response.message || '上传失败，请重试';
+        return;
+      }
+      const uploaded = JSON.parse(response.data) as ExampleVideoInfo;
+      if (!uploaded.filepath || uploaded.duration <= 0) {
+        this.videoUploadError = '服务器无法读取此视频，请选择可播放的视频文件';
+        return;
+      }
+      uploaded.startOffset = 0;
+      uploaded.endOffset = uploaded.duration;
+      uploaded.isSelected = false;
+      this.exampleVideos = [uploaded, ...this.exampleVideos.filter(
+        (video: ExampleVideoInfo): boolean => video.id !== uploaded.id)];
+      this.showToast({ message: '上传成功，请选择截取范围与预处理设置', duration: 2000 });
+      if (this.workspaceVisible && this.showSelectExampleVideo) this.handleExampleVideoClick(0);
+    } catch (error) {
+      this.videoUploadError = '未能选择视频，请重试';
+    } finally {
+      this.isUploadingVideo = false;
+      this.videoUploadProgress = -1;
     }
   }
 
@@ -2793,13 +2847,14 @@ struct WorkspaceDetail {
               // Video Selection grid for adding fragment
               Column({ space: 10 }) {
                 Row({ space: 8 }) {
-                  Text('选择视频源（监控录像 / 上传视频）')
+                  Text('选择视频源')
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.app_text_primary'))
                     .layoutWeight(1)
 
                   Button('刷新')
+                    .enabled(!this.isUploadingVideo)
                     .fontSize(12)
                     .height(32)
                     .backgroundColor(Color.Transparent)
@@ -2814,6 +2869,45 @@ struct WorkspaceDetail {
                 .width('100%')
                 .padding({ bottom: 10 })
                 .alignItems(VerticalAlign.Center)
+
+                Row({ space: 12 }) {
+                  Column({ space: 4 }) {
+                    Text('上传本地视频').fontSize(14).fontWeight(FontWeight.Medium)
+                      .fontColor($r('app.color.app_text_primary'))
+                    Text('从相册或文件选择，上传后设置截取范围')
+                      .fontSize(11).fontColor($r('app.color.app_text_muted'))
+                  }
+                  .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                  Button('选择视频')
+                    .height(36).fontSize(12).borderRadius(8)
+                    .backgroundColor($r('app.color.app_primary_soft'))
+                    .fontColor($r('app.color.app_primary'))
+                    .enabled(!this.isUploadingVideo)
+                    .bindMenu([
+                      { value: '从相册选择', action: (): void => { this.selectLocalVideo(false); } },
+                      { value: '从文件选择', action: (): void => { this.selectLocalVideo(true); } }
+                    ])
+                }
+                .width('100%').padding(12).borderRadius(12)
+                .backgroundColor($r('app.color.app_card_bg'))
+                .border({ width: 1, color: $r('app.color.app_border') })
+                if (this.isUploadingVideo) {
+                  Column({ space: 6 }) {
+                    Text(this.videoUploadProgress < 0 ? '正在选择或准备视频…' :
+                      (this.videoUploadProgress >= 100 ? '上传完成，正在读取视频信息…' :
+                        `正在上传 ${this.videoUploadProgress}%`))
+                      .fontSize(12).fontColor($r('app.color.app_text_secondary'))
+                    if (this.videoUploadProgress >= 0) {
+                      Progress({ value: this.videoUploadProgress, total: 100, type: ProgressType.Linear })
+                        .width('100%').color($r('app.color.app_primary'))
+                    }
+                  }
+                  .width('100%').alignItems(HorizontalAlign.Start).padding(8)
+                }
+                if (this.videoUploadError) {
+                  Text(this.videoUploadError).fontSize(12).fontColor($r('app.color.app_danger'))
+                    .width('100%').padding(8)
+                }
 
                 if (this.exampleVideos.length > 0) {
                   Grid() {
@@ -2917,7 +3011,7 @@ struct WorkspaceDetail {
                               .maxLines(1)
                               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-                            Text('来自监控：' + seg.video_name)
+                            Text('来源：' + seg.video_name)
                               .fontSize(12)
                               .fontColor('#9CA3AF')
                               .maxLines(1)

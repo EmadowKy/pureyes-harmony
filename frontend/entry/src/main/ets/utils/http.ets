@@ -65,6 +65,47 @@ export class TestServerResult {
 const REQUEST_TIMEOUT = 10000;
 
 export class HttpUtil {
+  static async uploadFile(url: string, filePath: string, filename: string, contentType: string,
+    onProgress: (percent: number) => void): Promise<HttpResult> {
+    const upload = http.createHttp();
+    const result = new HttpResult();
+    const token = AppStorage.get<string>('access_token') || '';
+    try {
+      upload.on('dataSendProgress', (progress: http.DataSendProgressInfo): void => {
+        if (progress.totalSize > 0) {
+          onProgress(Math.min(100, Math.floor(progress.sendSize * 100 / progress.totalSize)));
+        }
+      });
+      const response = await upload.request(`${getBaseUrl().replace(/\/+$/, '')}${url}`, {
+        method: http.RequestMethod.POST,
+        header: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${token}` },
+        multiFormDataList: [{ name: 'file', contentType: contentType,
+          remoteFileName: filename, filePath: filePath }],
+        connectTimeout: REQUEST_TIMEOUT,
+        readTimeout: 600000
+      });
+      result.httpStatus = response.responseCode;
+      if (response.responseCode === 413) {
+        result.message = '视频超过服务器允许的大小，请选择更小的视频';
+        return result;
+      }
+      try {
+        const body = JSON.parse(response.result as string) as Record<string, Object>;
+        result.code = typeof body['code'] === 'number' ? body['code'] as number : -1;
+        result.message = (body['message'] as string) || '';
+        if (body['data'] !== undefined) result.data = JSON.stringify(body['data']);
+      } catch (error) {
+        result.message = `服务器响应异常（HTTP ${response.responseCode}）`;
+      }
+      return result;
+    } catch (error) {
+      result.message = '上传失败，请检查网络后重试；若已上传成功，可刷新视频源查看';
+      return result;
+    } finally {
+      upload.destroy();
+    }
+  }
+
   static async request(url: string, method: http.RequestMethod, data?: Object,
     authToken?: string): Promise<HttpResult> {
     const httpRequest = http.createHttp();
