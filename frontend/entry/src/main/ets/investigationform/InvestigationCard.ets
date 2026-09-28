@@ -32,46 +32,48 @@ struct InvestigationCard {
   build() {
     Column({ space: 4 }) {
       Row() {
-        Text('清眸 · 小鸮').fontSize(12).fontWeight(FontWeight.Bold).fontColor('#203D54').layoutWeight(1)
+        Text('清眸 · 小鸮').fontSize(11).fontWeight(FontWeight.Bold).fontColor('#203D54').layoutWeight(1)
         FormLink({ action: 'message', params: { command: 'refresh' } }) {
-          Text('↻').fontSize(18).fontColor('#7392AD').width(28).height(28).textAlign(TextAlign.Center)
+          Text('↻').fontSize(18).fontColor('#7392AD').width(22).height(20).textAlign(TextAlign.Center)
         }
-      }.width('100%')
+      }.width('100%').height(20)
       FormLink({ action: 'router', abilityName: 'EntryAbility', params: {
         fromInvestigationCard: 'true', workspaceId: this.workspaceId, groupId: this.groupId, conversationId: this.conversationId
       } }) {
         Column({ space: 3 }) {
-          Row({ space: 8 }) {
-            Image(this.pet()).width(64).height(64).objectFit(ImageFit.Contain)
-            Column({ space: 5 }) {
-              Text(this.statusLabel()).fontSize(14).fontWeight(FontWeight.Bold).fontColor('#203D54').maxLines(1)
+          Row({ space: 6 }) {
+            Image(this.pet()).width(44).height(44).objectFit(ImageFit.Contain)
+            Column({ space: 3 }) {
+              Text(this.statusLabel()).fontSize(12).minFontSize(10).maxFontSize(12)
+                .fontWeight(FontWeight.Bold).fontColor('#203D54').maxLines(1).width('100%')
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
               Text(this.runningCount !== '0' ? this.stage : `已完成 ${this.completedCount} 项`)
-                .fontSize(11).fontColor('#667A91').maxLines(2)
+                .fontSize(10).fontColor('#667A91').maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
               Text(this.runningCount !== '0' ? `${this.elapsed} · ${this.steps} 步` : `共 ${this.conversationCount} 场调查`)
-                .fontSize(10).fontColor('#2D9A8D').maxLines(1)
+                .fontSize(9).fontColor('#2D9A8D').maxLines(1)
             }.layoutWeight(1).alignItems(HorizontalAlign.Start)
           }.width('100%')
           Text(this.taskCount !== '0' ? this.title : '选择视频，让小鸮帮你找线索')
-            .fontSize(11).fontColor('#203D54').width('100%').maxLines(1)
+            .fontSize(10).fontColor('#203D54').width('100%').maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }.width('100%')
-      }
-      Blank()
+        }.width('100%').height('100%').justifyContent(FlexAlign.Center)
+      }.width('100%').layoutWeight(1)
       Row() {
         if (Number(this.taskCount) > 1) {
           FormLink({ action: 'message', params: { command: 'previous' } }) {
-            Text('‹').fontSize(20).width(30).height(28).textAlign(TextAlign.Center).fontColor('#203D54')
+            Text('‹').fontSize(18).width(20).height(18).textAlign(TextAlign.Center).fontColor('#203D54')
           }
-          Text(`${this.taskPosition} / ${this.taskCount} · ${this.updatedAt}`).fontSize(10).fontColor('#667A91').layoutWeight(1).textAlign(TextAlign.Center)
+          Text(`${this.taskPosition} / ${this.taskCount} · ${this.updatedAt}`).fontSize(9).fontColor('#667A91').layoutWeight(1).textAlign(TextAlign.Center)
           FormLink({ action: 'message', params: { command: 'next' } }) {
-            Text('›').fontSize(20).width(30).height(28).textAlign(TextAlign.Center).fontColor('#203D54')
+            Text('›').fontSize(18).width(20).height(18).textAlign(TextAlign.Center).fontColor('#203D54')
           }
         } else {
-          Text(this.updatedAt ? `同步 ${this.updatedAt}` : '打开清眸开始调查').fontSize(10).fontColor('#7392AD').layoutWeight(1)
-          Text('查看 ↗').fontSize(10).fontColor('#203D54')
+          Text(this.updatedAt ? `同步 ${this.updatedAt}` : '打开清眸开始调查').fontSize(9).fontColor('#7392AD').layoutWeight(1)
+          Text('查看 ↗').fontSize(9).fontColor('#203D54')
         }
-      }.width('100%').height(28)
-    }.width('100%').height('100%').padding(12)
+      }.width('100%').height(18)
+    }.width('100%').height('100%').padding(10)
       .alignItems(HorizontalAlign.Start).backgroundColor('#F2F7FA').borderRadius(20)
   }
 }
