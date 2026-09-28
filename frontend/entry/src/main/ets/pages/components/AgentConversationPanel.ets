@@ -140,6 +140,7 @@ export struct AgentConversationPanel {
   private pollEpoch: number = 0;
   private syncTimer: number = 0;
   private clockTimer: number = 0;
+  private scrollTimer: number = 0;
   private activeStartedAtMs: number = 0;
   private lastProgressAtMs: number = 0;
   private lastProgressCount: number = 0;
@@ -410,7 +411,7 @@ export struct AgentConversationPanel {
     }
     if (mapped.length > 0) this.publishCard(mapped[mapped.length - 1]);
     if (scrollToEnd) {
-      setTimeout((): void => this.messageScroller.scrollEdge(Edge.Bottom), 120);
+      this.scheduleScrollToEnd(120);
     }
   }
 
@@ -526,6 +527,24 @@ export struct AgentConversationPanel {
 
   canContinue(): boolean {
     return this.selectedConversationId.length > 0 && this.conversationReady;
+  }
+
+  isLatestTurn(turnId: string): boolean {
+    // Exit transitions may still render a failed row after the list is cleared.
+    const latest = this.messages.length > 0 ? this.messages[this.messages.length - 1] : null;
+    return latest !== null && latest.id === turnId;
+  }
+
+  scheduleScrollToEnd(delay: number): void {
+    if (this.scrollTimer > 0) clearTimeout(this.scrollTimer);
+    const conversationId = this.selectedConversationId;
+    const epoch = this.pollEpoch;
+    this.scrollTimer = setTimeout((): void => {
+      this.scrollTimer = 0;
+      if (epoch !== this.pollEpoch || !conversationId || conversationId !== this.selectedConversationId ||
+          !this.conversationReady || this.messages.length === 0) return;
+      this.messageScroller.scrollEdge(Edge.Bottom);
+    }, delay);
   }
 
   evidenceScopeLabel(): string {
@@ -706,6 +725,10 @@ export struct AgentConversationPanel {
 
   stopPolling(): void {
     this.pollEpoch += 1;
+    if (this.scrollTimer > 0) {
+      clearTimeout(this.scrollTimer);
+      this.scrollTimer = 0;
+    }
     if (this.pollTimer > 0) {
       clearInterval(this.pollTimer);
       this.pollTimer = 0;
@@ -1334,7 +1357,7 @@ export struct AgentConversationPanel {
                       .fontColor($r('app.color.app_danger'))
                   }
                 }
-                if (turn.status === 'failed' && turn.id === this.messages[this.messages.length - 1].id) {
+                if (turn.status === 'failed' && this.isLatestTurn(turn.id)) {
                   Button('重新尝试这一问  ↗')
                     .fontSize(12)
                     .backgroundColor($r('app.color.app_primary_soft'))
@@ -1409,7 +1432,7 @@ export struct AgentConversationPanel {
           .animation({ duration: 160, curve: Curve.EaseOut })
           .onFocus((): void => {
             this.composerFocused = true;
-            setTimeout((): void => this.messageScroller.scrollEdge(Edge.Bottom), 250);
+            this.scheduleScrollToEnd(250);
           })
           .onBlur((): void => { this.composerFocused = false; })
           .onChange((value: string): void => { this.composerText = value; })
