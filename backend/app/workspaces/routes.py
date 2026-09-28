@@ -1274,6 +1274,7 @@ def get_qa_status(task_id):
 
     return success(data={
         "status": record.status,
+        **record.timing(),
         "progress": _public_progress(progress_data),
         "answer": record.answer if record.status == "completed" else None,
         "error": record.answer if record.status == "failed" else None,

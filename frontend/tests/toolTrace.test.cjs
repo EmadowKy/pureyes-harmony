@@ -11,6 +11,7 @@ const source = fs.readFileSync(path.join(__dirname,
 const classes = source.slice(source.indexOf('class ConfigSelectItem'), source.indexOf('@Component'));
 const methods = source.slice(source.indexOf('  mapToolCall('), source.indexOf('  toolVideoLabel('));
 const processMethods = source.slice(source.indexOf('  isProcessExpanded('), source.indexOf('  @Builder ToolStep('));
+const durationMethod = source.slice(source.indexOf('  formatDuration('), source.indexOf('  stageLabel('));
 const harness = `${classes}\nclass Harness {
   messages: Array<AgentTurnItem> = [];
   messageSource: AgentMessageDataSource = new AgentMessageDataSource();
@@ -20,12 +21,17 @@ const harness = `${classes}\nclass Harness {
   scheduleScrollToEnd(_delay: number): void {}
   ${methods}
   ${processMethods}
+  ${durationMethod}
 }\nglobalThis.harness = new Harness();`;
 const context = vm.createContext({});
 vm.runInContext(ts.transpileModule(harness, {
   compilerOptions: { target: ts.ScriptTarget.ES2020 }
 }).outputText, context);
 const panel = context.harness;
+assert.equal(panel.formatDuration(123.25), '02:03');
+assert.equal(panel.formatDuration(0), '00:00');
+assert.equal(panel.formatDuration(3601), '60:01');
+assert.match(source, /Text\(`用时 \$\{this\.formatDuration\(turn\.elapsedSeconds\)\}`\)/);
 panel.messages = [{ id: 'active', traceRevision: 0, toolCalls: [] }];
 let changes = 0;
 panel.messageSource.registerDataChangeListener({ onDataChange: () => changes++ });

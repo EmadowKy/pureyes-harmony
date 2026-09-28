@@ -42,6 +42,7 @@ class AgentTurnItem {
   status: string = 'processing';
   turnIndex: number = 1;
   createdAt: string = '';
+  elapsedSeconds: number = -1;
   toolCalls: Array<AgentToolCall> = [];
   segmentIds: Array<number> = [];
 }
@@ -390,6 +391,8 @@ export struct AgentConversationPanel {
       turn.status = (item['status'] as string) || 'processing';
       turn.turnIndex = (item['turn_index'] as number) || (i + 1);
       turn.createdAt = (item['created_at'] as string) || '';
+      const elapsed = item['elapsed_seconds'];
+      turn.elapsedSeconds = typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : -1;
       const selections = (item['selections'] as Array<Record<string, Object>>) || [];
       turn.segmentIds = conversationSegmentIds.length > 0 ? conversationSegmentIds :
         selections.map((selection: Record<string, Object>): number => selection['segment_id'] as number)
@@ -662,6 +665,7 @@ export struct AgentConversationPanel {
   }
 
   formatDuration(seconds: number): string {
+    seconds = Math.max(0, Math.floor(seconds));
     const minutes = Math.floor(seconds / 60);
     const remainder = seconds % 60;
     return `${minutes.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`;
@@ -1326,6 +1330,11 @@ export struct AgentConversationPanel {
                 .fontSize(12)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.app_text_secondary'))
+              if (turn.status !== 'processing' && turn.elapsedSeconds >= 0) {
+                Text(`用时 ${this.formatDuration(turn.elapsedSeconds)}`)
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_text_muted'))
+              }
             }
             if (turn.status === 'processing') {
               Column({ space: 7 }) {

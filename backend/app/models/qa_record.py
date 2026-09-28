@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timezone
+import json
 from app.core.db import db
 
 class QARecord(db.Model):
@@ -27,8 +28,37 @@ class QARecord(db.Model):
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+    def timing(self):
+        """Recover durable timing from terminal events, never from page-open time."""
+        finished = None
+        if self.status != "processing":
+            try:
+                progress = json.loads(self.progress_json or "[]")
+                for entry in progress if isinstance(progress, list) else []:
+                    if not isinstance(entry, dict):
+                        continue
+                    terminal = (entry.get("stage") == "answering" and entry.get("status") == "completed") or (
+                        entry.get("stage") == "system" and entry.get("status") in ("failed", "stopped"))
+                    if terminal and isinstance(entry.get("at"), str):
+                        try:
+                            value = datetime.fromisoformat(entry["at"].replace("Z", "+00:00"))
+                            if value.tzinfo is not None:
+                                value = value.astimezone(timezone.utc).replace(tzinfo=None)
+                            finished = max(finished, value) if finished else value
+                        except ValueError:
+                            continue
+            except (TypeError, ValueError):
+                pass
+        end = datetime.utcnow() if self.status == "processing" else finished
+        start = self.created_at
+        if start and start.tzinfo is not None:
+            start = start.astimezone(timezone.utc).replace(tzinfo=None)
+        elapsed = max(0, round((end - start).total_seconds(), 2)) if end and start else None
+        return {"elapsed_seconds": elapsed, "finished_at": finished.isoformat() + "Z" if finished else None}
+
     def to_dict(self):
         return {
+            **self.timing(),
             "id": self.id,
             "workspace_id": self.workspace_id,
             "creator_id": self.creator_id,
