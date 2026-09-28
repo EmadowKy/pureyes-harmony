@@ -1346,8 +1346,18 @@ export struct AgentConversationPanel {
               .alignItems(HorizontalAlign.Start)
               .onClick((): void => { this.openConversation(item.id); })
               if (item.canManage) {
-                Button('⋯').width(32).height(30).fontSize(22)
-                  .backgroundColor(Color.Transparent).fontColor($r('app.color.app_text_secondary'))
+                Button({ type: ButtonType.Normal }) {
+                  Row({ space: 3 }) {
+                    Row().width(3).height(3).borderRadius(2).backgroundColor($r('app.color.app_text_secondary'))
+                    Row().width(3).height(3).borderRadius(2).backgroundColor($r('app.color.app_text_secondary'))
+                    Row().width(3).height(3).borderRadius(2).backgroundColor($r('app.color.app_text_secondary'))
+                  }
+                  .justifyContent(FlexAlign.Center)
+                  .alignItems(VerticalAlign.Center)
+                  .width('100%').height('100%')
+                }
+                  .width(40).height(40).padding(0).borderRadius(10)
+                  .backgroundColor(Color.Transparent)
                   .accessibilityText(`管理调查：${item.title}`)
                   .bindMenu([
                     { value: '修改标题', action: (): void => { this.editConversationTitle(item); } },
