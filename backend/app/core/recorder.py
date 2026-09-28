@@ -21,6 +21,47 @@ MIN_FREE_GB = max(0.0, float(os.environ.get("MONITOR_MIN_FREE_DISK_GB", "2")))
 SUPERVISOR_INTERVAL_SECONDS = max(15, int(os.environ.get("MONITOR_RECORDER_SUPERVISOR_SECONDS", "30")))
 
 
+def _acquire_recording_lock(output_dir):
+    """On Linux the child owns this lock until it exits, including orphan exits."""
+    if os.name != 'posix':
+        return None
+    import fcntl
+    fd = os.open(os.path.join(output_dir, '.recorder.lock'), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return -1
+    return fd
+
+
+def _open_recording_paths():
+    """Protect files held by any recorder, not just this Python process."""
+    paths = set()
+    proc_root = os.path.join(os.sep, 'proc')
+    if os.name != 'posix' or not os.path.isdir(proc_root):
+        return paths
+    base = os.path.realpath(VIDEO_STORAGE_BASE) + os.sep
+    for pid in os.listdir(proc_root):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc_root, pid, 'comm')) as handle:
+                if handle.read().strip() != 'ffmpeg':
+                    continue
+            fd_dir = os.path.join(proc_root, pid, 'fd')
+            for fd in os.listdir(fd_dir):
+                try:
+                    target = os.path.realpath(os.path.join(fd_dir, fd))
+                    if target.startswith(base) and target.endswith('.mp4'):
+                        paths.add(target)
+                except OSError:
+                    pass
+        except OSError:
+            continue
+    return paths
+
+
 def recording_state(monitor_id: int) -> str:
     """Return the actual process state instead of trusting a stored label."""
     with recorder_lock:
@@ -51,6 +92,9 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
 
         output_dir = os.path.join(VIDEO_STORAGE_BASE, str(monitor_id))
         os.makedirs(output_dir, exist_ok=True)
+        lock_fd = _acquire_recording_lock(output_dir)
+        if lock_fd == -1:
+            return False
         
         # Build FFmpeg command
         cmd = [get_ffmpeg_path("ffmpeg"), "-y"]
@@ -73,14 +117,15 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
         ])
         
         try:
-            print(f"[Recorder] Starting recording command for monitor {monitor_id}: {' '.join(cmd)}")
+            print(f"[Recorder] Starting recording for monitor {monitor_id}")
             # Start process in background. FFmpeg diagnostics are discarded so
             # recording a long-running stream cannot create unbounded log files.
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                **({'pass_fds': (lock_fd,)} if lock_fd is not None else {})
             )
             recording_processes[monitor_id] = proc
             return True
@@ -93,6 +138,9 @@ def start_recording(monitor_id: int, stream_url: str) -> bool:
         except Exception as e:
             print(f"[Recorder] Failed to start FFmpeg recording for monitor {monitor_id}: {e}")
             return False
+        finally:
+            if lock_fd is not None:
+                os.close(lock_fd)
 
 def stop_recording(monitor_id: int):
     """
@@ -151,20 +199,36 @@ def _delete_expired_recordings() -> None:
     now = datetime.now()
     cutoff = now - timedelta(hours=RETENTION_HOURS)
     candidates = []
+    active_paths = _open_recording_paths()
+    # Conservative fallback for Windows or inaccessible process descriptors.
+    # Recently written files must not be unlinked even if disk space is low.
+    write_grace = max(SEGMENT_SECONDS * 3, 180)
     for monitor_dir in os.listdir(VIDEO_STORAGE_BASE):
         monitor_path = os.path.join(VIDEO_STORAGE_BASE, monitor_dir)
-        if not os.path.isdir(monitor_path):
+        if not os.path.isdir(monitor_path) or os.path.islink(monitor_path):
             continue
         for file in os.listdir(monitor_path):
             if not file.endswith(".mp4"):
                 continue
             file_path = os.path.join(monitor_path, file)
+            if os.path.islink(file_path):
+                continue
             try:
+                if os.path.realpath(file_path) in active_paths:
+                    continue
+                if time.time() - os.path.getmtime(file_path) < write_grace:
+                    continue
                 file_time = datetime.strptime(os.path.splitext(file)[0], "%Y%m%d_%H%M%S")
+            except OSError:
+                continue
             except ValueError:
                 file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
             if file_time < cutoff:
-                os.remove(file_path)
+                try:
+                    if time.time() - os.path.getmtime(file_path) >= write_grace:
+                        os.remove(file_path)
+                except OSError:
+                    pass
             else:
                 candidates.append((file_time, file_path))
 
@@ -175,7 +239,9 @@ def _delete_expired_recordings() -> None:
         if shutil.disk_usage(VIDEO_STORAGE_BASE).free >= target_free_bytes:
             break
         try:
-            os.remove(file_path)
+            # Recheck immediately before deletion in case a writer resumed.
+            if time.time() - os.path.getmtime(file_path) >= write_grace:
+                os.remove(file_path)
         except OSError:
             pass
 
