@@ -4,6 +4,7 @@ import { GroupTab } from './tabs/GroupTab'
 import { ProfileTab } from './tabs/ProfileTab'
 import { HttpResult, HttpUtil, getBaseUrl } from '../utils/http'
 import { SecurityUtil } from '../utils/security'
+import { CaptureProtection } from '../utils/captureProtection'
 import { common } from '@kit.AbilityKit';
 
 export class GroupInfo {
@@ -161,6 +162,15 @@ struct Index {
       }
     }
     if (res.httpStatus === 200 && res.code === 0 && res.data) {
+      const profile = JSON.parse(res.data) as Record<string, Object>;
+      try {
+        await CaptureProtection.apply(profile['screen_capture_allowed'] === true);
+      } catch (error) {
+        this.sessionState = 'offline';
+        this.sessionMessage = '无法应用截图录屏权限，请重试';
+        this.checkingSession = false;
+        return;
+      }
       this.sessionState = 'ready';
       await this.loadGroups();
       this.checkingSession = false;

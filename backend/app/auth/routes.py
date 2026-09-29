@@ -12,6 +12,41 @@ from app.models.blacklist import TokenBlacklist
 from app.core.response import success, fail
 from app.user_center.serializers import user_to_dict
 from . import auth_bp
+from collections import defaultdict, deque
+from threading import Lock
+from time import monotonic
+
+_capture_attempts = defaultdict(deque)
+_capture_attempt_lock = Lock()
+
+
+@auth_bp.put("/screen-capture")
+@jwt_required()
+def update_screen_capture():
+    """Both enabling and disabling capture require the current user's password."""
+    payload = request.get_json(silent=True) or {}
+    password = payload.get("password")
+    allowed = payload.get("allowed")
+    if not isinstance(password, str) or not password or len(password) > 1024 or type(allowed) is not bool:
+        return fail(message="请输入当前账号密码并选择截图录屏权限", code=1301, http_status=400)
+    user = db.session.get(User, get_jwt_identity())
+    if not user or not user.is_active:
+        return fail(message="账号不可用", code=1302, http_status=403)
+    now = monotonic()
+    with _capture_attempt_lock:
+        attempts = _capture_attempts[user.emp_id]
+        while attempts and attempts[0] <= now - 300:
+            attempts.popleft()
+        if len(attempts) >= 5:
+            return fail(message="验证次数过多，请5分钟后重试", code=1303, http_status=429)
+        attempts.append(now)
+    if not user.check_password(password):
+        return fail(message="当前账号密码不正确，设置未修改", code=1304, http_status=403)
+    with _capture_attempt_lock:
+        _capture_attempts.pop(user.emp_id, None)
+    user.screen_capture_allowed = allowed
+    db.session.commit()
+    return success(data={"allowed": allowed}, message="截图录屏权限已更新")
 
 @auth_bp.post("/login")
 def login():

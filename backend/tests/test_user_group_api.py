@@ -77,6 +77,36 @@ class UserGroupApiTest(unittest.TestCase):
     def setUp(self):
         self.super_headers = self.auth_headers("admin", "admin")
 
+    def test_capture_permission_requires_current_password_and_is_persisted(self):
+        self.create_user('capture_user', 'Capture User')
+        headers = self.auth_headers('capture_user', 'pass1234')
+        endpoint = '/api/auth/screen-capture'
+        self.assertFalse(self.client.get('/api/users/me', headers=headers).get_json()['data']['screen_capture_allowed'])
+        self.assertEqual(self.client.put(endpoint, json={'allowed': True, 'password': 'pass1234'}).status_code, 401)
+        self.assertEqual(self.client.put(endpoint, headers=headers, json={'allowed': True, 'password': 'wrong'}).status_code, 403)
+        self.assertEqual(self.client.put(endpoint, headers=headers, json={'allowed': 'true', 'password': 'pass1234'}).status_code, 400)
+        self.assertEqual(self.client.put(endpoint, headers=headers, json={'allowed': True}).status_code, 400)
+        self.assertFalse(self.client.get('/api/users/me', headers=headers).get_json()['data']['screen_capture_allowed'])
+        enabled = self.client.put(endpoint, headers=headers, json={'allowed': True, 'password': 'pass1234'})
+        self.assertEqual(enabled.status_code, 200)
+        self.assertTrue(self.client.get('/api/users/me', headers=headers).get_json()['data']['screen_capture_allowed'])
+        # Disabling is also password gated, and other users remain protected.
+        self.assertEqual(self.client.put(endpoint, headers=headers, json={'allowed': False, 'password': 'wrong'}).status_code, 403)
+        self.assertTrue(self.client.get('/api/users/me', headers=headers).get_json()['data']['screen_capture_allowed'])
+        self.assertFalse(self.client.get('/api/users/me', headers=self.super_headers).get_json()['data']['screen_capture_allowed'])
+        self.assertEqual(self.client.put(endpoint, headers=headers, json={'allowed': False, 'password': 'pass1234'}).status_code, 200)
+        self.assertFalse(self.client.get('/api/users/me', headers=headers).get_json()['data']['screen_capture_allowed'])
+
+    def test_capture_password_verification_throttles_repeated_failures(self):
+        self.create_user('capture_throttle', 'Capture Throttle')
+        headers = self.auth_headers('capture_throttle', 'pass1234')
+        for _ in range(5):
+            self.assertEqual(self.client.put('/api/auth/screen-capture', headers=headers,
+                json={'allowed': True, 'password': 'wrong'}).status_code, 403)
+        self.assertEqual(self.client.put('/api/auth/screen-capture', headers=headers,
+            json={'allowed': True, 'password': 'pass1234'}).status_code, 429)
+        self.assertFalse(self.client.get('/api/users/me', headers=headers).get_json()['data']['screen_capture_allowed'])
+
     def test_face_cover_is_served_as_authorized_image(self):
         group_response = self.client.post(
             "/api/groups/", headers=self.super_headers, json={"name": "Face Cover Group"}

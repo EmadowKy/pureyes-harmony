@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Core Vision Kit 人脸比对 | `frontend/entry/src/main/ets/utils/harmonyFaces.ets`、`pages/WorkspaceDetail.ets` | 在启用手机端重分类的后端配置下，下载待分组的人脸抓拍图，在手机上调用 `faceComparator` 比对并提交分组结果。视频抽帧、人脸检测及轨迹生成仍由后端完成。 |
 | Asset Store Kit | `frontend/entry/src/main/ets/utils/security.ets` | 保存会话令牌与服务器地址等本地敏感值；读取失败时由登录流程处理。服务端模型 API Key 不通过这里分发到组员手机。 |
-| 隐私窗口 | `frontend/entry/src/main/ets/entryability/EntryAbility.ets`、`frontend/entry/src/main/module.json5` | 主窗口调用 `setWindowPrivacyMode(true)`，限制系统截屏和录屏。需在目标设备验证系统效果；调用失败会记录日志。 |
+| 隐私窗口 | `frontend/entry/src/main/ets/utils/captureProtection.ets`、`frontend/entry/src/main/ets/entryability/EntryAbility.ets` | 默认限制系统截屏和录屏；用户在账号安全页验证当前密码后可更改联合权限。设置按账号保存，启动先开启保护、验证登录后应用设置，退出登录恢复保护。需在目标设备验证系统效果。 |
 | 系统凭据填充 | `frontend/entry/src/main/ets/pages/Login.ets` | 账号与密码输入框分别标注 `ContentType.USER_NAME`、`ContentType.PASSWORD`，允许系统识别凭据字段。是否提示保存及如何解锁由设备和用户设置决定。 |
 | Share Kit 系统分享 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 已完成且有结论的调查轮次提供“分享结论”；点击后分享问题与 Markdown 原文，由用户在系统面板选择目标。不会自动分享视频、截图、令牌或服务器地址。 |
 | Sensor Service Kit 触感 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 页面在轮询中看到任务完成时发出一次 60 ms 轻触感。设备无马达或系统禁用振动时静默退化，结果仍正常显示。 |
@@ -41,7 +41,7 @@
 
 ## 设备验证
 
-文档新增[功能截图导览](../user-guide/11-interface-tour.md)和[通知与桌面小鸮](../user-guide/10-investigation-notifications.md)。2026-09-29 模拟器截图展示已完成调查、工具链、人脸抓拍和 2×2 空闲卡片；不证明运行中通知、2×4 卡片或真机端侧人脸比对已经验收。采集只在临时构建关闭隐私窗口，正式源码与拍摄结束后的安装包仍启用隐私保护。
+文档新增[功能截图导览](../user-guide/11-interface-tour.md)和[通知与桌面小鸮](../user-guide/10-investigation-notifications.md)。2026-09-29 模拟器截图展示已完成调查、工具链、人脸抓拍和 2×2 空闲卡片；不证明运行中通知、2×4 卡片或真机端侧人脸比对已经验收。原有截图使用临时构建采集；当前版本默认启用保护，允许用户验证密码后更改截图录屏权限。
 
 在 HarmonyOS 6.1 手机上验证登录填充提示、隐私窗口的截屏表现、人脸重分类、系统分享面板及完成触感。卡片需额外验证：添加桌面后的首次加载、任务运行和完成时刷新、应用退出后的同步时刻、点击后的登录校验与调查定位、用户退出登录后的清空、重复添加和删除卡片。尤其要测试无振动设备或关闭振动、分享目标不可用及网络中断。本页描述的是代码接入状态，并不代替实机验收。
 

@@ -2,6 +2,7 @@ import asset from '@ohos.security.asset';
 import util from '@ohos.util';
 import { common } from '@kit.AbilityKit';
 import { InvestigationTaskCenter } from './investigationTasks';
+import { CaptureProtection } from './captureProtection';
 
 function stringToUint8Array(str: string): Uint8Array {
   const encoder = new util.TextEncoder();
@@ -106,6 +107,11 @@ export class SecurityUtil {
   }
 
   static async clearSession(context?: common.Context): Promise<void> {
+    try {
+      await CaptureProtection.apply(false);
+    } catch (error) {
+      console.warn('[PrivacyMode] Unable to restore capture protection');
+    }
     AppStorage.setOrCreate('access_token', '');
     AppStorage.setOrCreate('refresh_token', '');
     AppStorage.setOrCreate('session_server_url', '');

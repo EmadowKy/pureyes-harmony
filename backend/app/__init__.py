@@ -31,6 +31,8 @@ def _ensure_user_schema():
         inspector = inspect(db.engine)
         columns = {column["name"] for column in inspector.get_columns("users")}
         with db.engine.begin() as conn:
+            if "screen_capture_allowed" not in columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN screen_capture_allowed BOOLEAN NOT NULL DEFAULT 0"))
             if "auth_version" not in columns:
                 conn.execute(text(
                     "ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0"

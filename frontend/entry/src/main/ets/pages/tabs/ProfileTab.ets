@@ -4,6 +4,7 @@ import { SecurityUtil } from '../../utils/security'
 import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
 import { common } from '@kit.AbilityKit';
 import { openDocumentation } from '../../utils/documentation'
+import { CaptureProtection } from '../../utils/captureProtection'
 
 class ConfigGroupOption {
   id: number = 0;
@@ -75,6 +76,11 @@ class AvatarPayload {
 
 class PasswordPayload {
   password: string = '';
+}
+
+class ScreenCapturePayload {
+  password: string = '';
+  allowed: boolean = false;
 }
 
 class CreateGroupPayload {
@@ -232,6 +238,10 @@ export struct ProfileTab {
   @State editPhone: string = '';
   @State newPassword: string = '';
   @State confirmPassword: string = '';
+  @StorageLink('screen_capture_allowed') captureAllowed: boolean = false;
+  @State captureChoice: boolean = false;
+  @State capturePassword: string = '';
+  @State savingCapture: boolean = false;
   @State resetPassword: string = '';
   @State resetConfirmPassword: string = '';
   @State deleteConfirm: boolean = false;
@@ -323,6 +333,35 @@ export struct ProfileTab {
     if (res.code === 0 && res.data) {
       const dataObj = JSON.parse(res.data) as Record<string, Object>;
       this.user = this.parseUser(dataObj);
+      this.captureChoice = dataObj['screen_capture_allowed'] === true;
+    }
+  }
+
+  async submitCapturePermission(): Promise<void> {
+    if (this.savingCapture) return;
+    if (!this.capturePassword) {
+      this.showToast({ message: '请输入当前账号密码', duration: 2000 });
+      return;
+    }
+    this.savingCapture = true;
+    const payload = new ScreenCapturePayload();
+    payload.password = this.capturePassword;
+    payload.allowed = this.captureChoice;
+    try {
+      const res = await HttpUtil.put('/auth/screen-capture', payload);
+      if (res.code !== 0 || !res.data) {
+        this.showToast({ message: res.message || '验证失败，设置未修改', duration: 2500 });
+        return;
+      }
+      const data = JSON.parse(res.data) as Record<string, Object>;
+      await CaptureProtection.apply(data['allowed'] === true);
+      this.showToast({ message: this.captureAllowed ? '已允许截图和录屏' : '已禁止截图和录屏', duration: 2000 });
+    } catch (error) {
+      this.showToast({ message: '设置未能在本机生效，请重新进入应用重试', duration: 2500 });
+    } finally {
+      this.capturePassword = '';
+      payload.password = '';
+      this.savingCapture = false;
     }
   }
 
@@ -415,6 +454,8 @@ export struct ProfileTab {
       this.editName = this.user.name;
       this.editPhone = this.user.phone;
     } else if (page === PAGE_SECURITY) {
+      this.capturePassword = '';
+      this.captureChoice = this.captureAllowed;
       this.newPassword = '';
       this.confirmPassword = '';
     } else if (page === PAGE_MESSAGES) {
@@ -442,6 +483,7 @@ export struct ProfileTab {
   }
 
   backHome(): void {
+    this.capturePassword = '';
     this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
       this.activePage = PAGE_HOME;
       this.onDetailChange(false);
@@ -1239,6 +1281,32 @@ export struct ProfileTab {
   @Builder SecurityPage() {
     Column({ space: 14 }) {
       this.PageHeader('账号安全')
+
+      Column({ space: 12 }) {
+        Text('截图与录屏').fontSize(16).fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary')).width('100%')
+        Text(this.captureAllowed ? '当前：允许截图和录屏' : '当前：禁止截图和录屏')
+          .fontSize(12).fontColor($r('app.color.app_text_secondary')).width('100%')
+        Text('默认禁止。允许或禁止都需验证当前账号密码；允许后，请注意监控画面与人脸信息的隐私。')
+          .fontSize(12).fontColor($r('app.color.app_text_secondary')).width('100%')
+        Row({ space: 12 }) {
+          Button(this.captureChoice ? '允许 · 已选择' : '允许')
+            .layoutWeight(1).enabled(!this.savingCapture)
+            .onClick((): void => { this.captureChoice = true; })
+          Button(!this.captureChoice ? '禁止 · 已选择' : '禁止')
+            .layoutWeight(1).enabled(!this.savingCapture)
+            .onClick((): void => { this.captureChoice = false; })
+        }.width('100%')
+        TextInput({ placeholder: '当前账号密码', text: this.capturePassword })
+          .type(InputType.Password).height(42).width('100%')
+          .enabled(!this.savingCapture)
+          .onChange((value: string): void => { this.capturePassword = value; })
+        Button(this.savingCapture ? '正在验证…' : '验证密码并保存截图录屏权限')
+          .width('100%').enabled(!this.savingCapture)
+          .onClick((): void => { this.submitCapturePermission(); })
+      }.width('90%').padding(16)
+        .backgroundColor($r('app.color.app_card_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') }).borderRadius(8)
 
       Column({ space: 12 }) {
         TextInput({ placeholder: '新密码，至少6位', text: this.newPassword })

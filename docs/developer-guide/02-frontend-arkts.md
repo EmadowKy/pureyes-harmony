@@ -159,7 +159,7 @@ Image($r('app.media.business_monitor'))
 1. **系统凭据填充** (`Login.ets`)：
    使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框；凭据保存和解锁提示由系统及用户设置决定。
 2. **隐私窗口** (`EntryAbility.ets`)：
-   配置 `ohos.permission.PRIVACY_WINDOW` 并调用 `win.setWindowPrivacyMode(true)`，限制系统截屏与录屏；未接入注视感知。
+   配置 `ohos.permission.PRIVACY_WINDOW`，通过 `CaptureProtection` 默认限制系统截屏与录屏。账号安全页验证当前账号密码后可更改联合权限，设置按账号保存；启动先保护、登录后恢复，退出登录重新保护。未接入注视感知。
 3. **端侧人脸比对** (`utils/harmonyFaces.ets`)：
    后端配置为鸿蒙模式时，手机调用 Core Vision Kit 对服务器抓拍图进行分组比对。
 4. **分享与触感** (`components/AgentConversationPanel.ets`)：

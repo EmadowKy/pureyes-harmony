@@ -3,6 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { SecurityUtil } from '../utils/security';
 import { InvestigationTaskCenter } from '../utils/investigationTasks';
+import { CaptureProtection } from '../utils/captureProtection';
 
 const DOMAIN = 0x0000;
 
@@ -49,7 +50,14 @@ export default class EntryAbility extends UIAbility {
     });
   }
 
-  private loadMainContent(windowStage: window.WindowStage): void {
+  private async loadMainContent(windowStage: window.WindowStage): Promise<void> {
+    try {
+      const win = await windowStage.getMainWindow();
+      await CaptureProtection.bind(win);
+    } catch (error) {
+      hilog.error(DOMAIN, 'PrivacyMode', 'Unable to initialize capture protection');
+      return;
+    }
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
@@ -57,18 +65,11 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
 
-      // 开启鸿蒙系统原生 Window 隐私防截屏/防录屏模式
-      windowStage.getMainWindow().then((win: window.Window): void => {
-        win.setWindowPrivacyMode(true).then((): void => {
-          hilog.info(DOMAIN, 'PrivacyMode', 'Succeeded in setting window privacy mode to true.');
-        }).catch((pErr: Object): void => {
-          hilog.error(DOMAIN, 'PrivacyMode', 'Failed to set window privacy mode. Cause: %{public}s', JSON.stringify(pErr));
-        });
-      });
     });
   }
 
   onWindowStageDestroy(): void {
+    CaptureProtection.unbind();
     this.mainStage = undefined;
     // Main window is destroyed, release UI related resources
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');

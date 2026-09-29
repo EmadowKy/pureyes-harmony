@@ -19,6 +19,7 @@ def user_to_dict(user, include_private=True, include_settings=False):
     }
     if include_settings:
         data.update({
+            "screen_capture_allowed": bool(user.screen_capture_allowed),
             "llm_api_key_configured": bool(user.llm_api_key),
             "llm_base_url": user.llm_base_url,
             "llm_model": user.llm_model,

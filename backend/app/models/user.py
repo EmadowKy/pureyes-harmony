@@ -18,6 +18,7 @@ class User(db.Model):
     llm_base_url = db.Column(db.String(255), nullable=True)
     llm_model = db.Column(db.String(64), nullable=True)
     auth_version = db.Column(db.Integer, default=0, nullable=False)
+    screen_capture_allowed = db.Column(db.Boolean, default=False, nullable=False)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -41,6 +42,7 @@ class User(db.Model):
         }
         if include_settings:
             data.update({
+                "screen_capture_allowed": bool(self.screen_capture_allowed),
                 "llm_api_key_configured": bool(self.llm_api_key),
                 "llm_base_url": self.llm_base_url,
                 "llm_model": self.llm_model,
