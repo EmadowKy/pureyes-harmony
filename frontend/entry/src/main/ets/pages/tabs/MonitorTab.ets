@@ -1,5 +1,6 @@
 import { HttpUtil, BASE_HOST } from '../../utils/http'
 import { renewMediaUrl } from '../../utils/mediaAccess'
+import { BusinessError } from '@kit.BasicServicesKit'
 
 interface ToastOptions {
   message: string;
@@ -867,7 +868,11 @@ export struct MonitorTab {
                   this.seekPlaybackOffset();
                 }
               })
-              .onError((): void => {
+              .onError((error: BusinessError): void => {
+                // Live streams reject the Video component's default looping
+                // configuration; this warning does not mean playback failed.
+                if (this.playbackMode === 'live' && error && error.code === 801 &&
+                  error.message.indexOf('SetLooping') >= 0) return;
                 this.recoverMedia();
               })
               .onUpdate((event): void => {
