@@ -150,6 +150,28 @@ export struct MonitorTab {
   private mediaRenewedAt: number = 0;
   private mediaRefreshing: boolean = false;
   private mediaRefreshEpoch: number = 0;
+  @State private mediaErrorText: string = '';
+  private mediaErrorTimer: number = 0;
+
+  markMediaPlaying(): void {
+    if (this.mediaErrorTimer) {
+      clearTimeout(this.mediaErrorTimer);
+      this.mediaErrorTimer = 0;
+    }
+    this.mediaErrorText = '';
+  }
+
+  scheduleMediaRecovery(): void {
+    if (this.mediaErrorTimer) return;
+    const source = this.selectedMonitorUrl;
+    const monitorId = this.selectedMonitorId;
+    this.mediaErrorTimer = setTimeout((): void => {
+      this.mediaErrorTimer = 0;
+      if (monitorId === this.selectedMonitorId && source === this.selectedMonitorUrl) {
+        this.recoverMedia();
+      }
+    }, 1500);
+  }
 
   showToast(options: ToastOptions): void {
     try {
@@ -175,6 +197,8 @@ export struct MonitorTab {
   }
 
   aboutToDisappear(): void {
+    this.markMediaPlaying();
+    this.mediaRefreshEpoch++;
     if (this.coverRefreshTimer) {
       clearInterval(this.coverRefreshTimer);
       this.coverRefreshTimer = 0;
@@ -248,6 +272,8 @@ export struct MonitorTab {
   }
 
   resetSelection(): void {
+    this.markMediaPlaying();
+    this.mediaRefreshEpoch++;
     this.selectedMonitorId = 0;
     this.onDetailChange(false);
     this.selectedMonitorName = '';
@@ -728,11 +754,11 @@ export struct MonitorTab {
       if (epoch !== this.mediaRefreshEpoch || monitorId !== this.selectedMonitorId || mode !== this.playbackMode || previousUrl !== this.selectedMonitorUrl) return;
       this.selectedMonitorUrl = url;
       this.mediaRenewedAt = Date.now();
-      this.timelineErrorText = '';
+      this.markMediaPlaying();
     } catch (error) {
       if (epoch === this.mediaRefreshEpoch && monitorId === this.selectedMonitorId && mode === this.playbackMode) {
-        this.timelineErrorText = '视频加载失败，请检查网络或登录状态后重试';
-        this.showToast({ message: this.timelineErrorText, duration: 2200 });
+        this.mediaErrorText = '视频加载失败，请检查网络或登录状态后重试';
+        this.showToast({ message: this.mediaErrorText, duration: 2200 });
       }
     } finally {
       if (epoch === this.mediaRefreshEpoch) this.mediaRefreshing = false;
@@ -746,8 +772,8 @@ export struct MonitorTab {
       this.refreshSelectedMedia();
       return;
     }
-    this.timelineErrorText = '视频加载失败，请检查网络或登录状态后重试';
-    this.showToast({ message: this.timelineErrorText, duration: 2200 });
+    this.mediaErrorText = '视频加载失败，请检查网络或登录状态后重试';
+    this.showToast({ message: this.mediaErrorText, duration: 2200 });
   }
 
   async playNextContinuousSegment(): Promise<void> {
@@ -871,11 +897,13 @@ export struct MonitorTab {
               .onError((error: BusinessError): void => {
                 // Live streams reject the Video component's default looping
                 // configuration; this warning does not mean playback failed.
-                if (this.playbackMode === 'live' && error && error.code === 801 &&
-                  error.message.indexOf('SetLooping') >= 0) return;
-                this.recoverMedia();
+                if (this.playbackMode === 'live' && error &&
+                  (error.message || '').toLowerCase().indexOf('setlooping') >= 0) return;
+                this.scheduleMediaRecovery();
               })
+              .onStart((): void => { this.markMediaPlaying(); })
               .onUpdate((event): void => {
+                this.markMediaPlaying();
                 if (this.playbackMode === 'history') this.playbackOffsetSeconds = event.time;
               })
               .onFinish((): void => {
@@ -1067,8 +1095,8 @@ export struct MonitorTab {
               .fontSize(11)
               .fontColor($r('app.color.app_text_secondary'))
           }
-          if (this.timelineErrorText) {
-            Text(this.timelineErrorText)
+          if (this.timelineErrorText || this.mediaErrorText) {
+            Text(this.timelineErrorText || this.mediaErrorText)
               .fontSize(12)
               .fontColor($r('app.color.app_danger'))
           }
