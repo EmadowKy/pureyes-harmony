@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import secrets
 import sqlite3
 import subprocess
 import tarfile
@@ -138,7 +139,13 @@ def seed(password):
                 raise RuntimeError(f'Unexpected change to existing {table}')
         if con.execute('PRAGMA foreign_key_check').fetchall():
             raise RuntimeError('Foreign key verification failed')
-    print(json.dumps({'seeded': True, 'counts': after}, ensure_ascii=False))
+    credential_path = Path('/mnt/pureyes-recordings/checkpoints/demo-credentials.json')
+    with credential_path.open('x') as stream:
+        stream.write(json.dumps({'accounts': [row[0] for row in accounts],
+                                 'password': password,
+                                 'admin_password': 'unchanged'}, indent=2))
+    credential_path.chmod(0o600)
+    print(json.dumps({'seeded': True, 'counts': after, 'credentials': str(credential_path)}, ensure_ascii=False))
 
 
 def verify(source):
@@ -208,7 +215,7 @@ def main():
     parser.add_argument('--confirm-restore', action='store_true')
     args = parser.parse_args()
     if args.action == 'seed':
-        seed(os.environ['PUREYES_DEMO_PASSWORD'])
+        seed(os.environ.get('PUREYES_DEMO_PASSWORD') or secrets.token_urlsafe(15))
     elif not args.checkpoint:
         parser.error('--checkpoint is required')
     elif args.action == 'snapshot':
