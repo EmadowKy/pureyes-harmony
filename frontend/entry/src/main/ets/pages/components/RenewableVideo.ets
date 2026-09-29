@@ -1,4 +1,5 @@
 import { renewMediaUrl } from '../../utils/mediaAccess';
+import { FullscreenSegmentVideo } from './FullscreenSegmentVideo';
 
 @Component
 export struct RenewableVideo {
@@ -7,6 +8,7 @@ export struct RenewableVideo {
   controller: VideoController = new VideoController();
   @State playbackUrl: string = '';
   @State errorText: string = '';
+  @State private fullscreen: boolean = false;
   private playbackSeconds: number = 0;
   private retryCount: number = 0;
   private refreshing: boolean = false;
@@ -51,15 +53,38 @@ export struct RenewableVideo {
     this.refreshAddress();
   }
 
+  @Builder fullscreenPlayer() {
+    FullscreenSegmentVideo({
+      source: this.playbackUrl,
+      initialSeconds: this.playbackSeconds,
+      onPosition: (seconds: number): void => { this.playbackSeconds = seconds; },
+      onClose: (seconds: number): void => {
+        this.playbackSeconds = seconds;
+        this.fullscreen = false;
+      }
+    })
+  }
+
   build() {
     Stack() {
       if (this.playbackUrl) {
         Video({ src: this.playbackUrl, controller: this.controller })
-          .width('100%').height('100%').autoPlay(true).controls(true)
+          .width('100%').height('100%').autoPlay(!this.fullscreen).controls(true)
+          .objectFit(ImageFit.Contain)
+          .onFullscreenChange((event): void => {
+            if (event.fullscreen) {
+              this.controller.exitFullscreen();
+              this.controller.pause();
+              this.fullscreen = true;
+            }
+          })
           .onPrepared((): void => {
             if (this.playbackSeconds > 0) this.controller.setCurrentTime(this.playbackSeconds);
           })
-          .onUpdate((event): void => { this.playbackSeconds = event.time; })
+          .onStart((): void => { if (this.fullscreen) this.controller.pause(); })
+          .onUpdate((event): void => {
+            if (!this.fullscreen) this.playbackSeconds = event.time;
+          })
           .onError((): void => { this.recover(); })
       }
       if (this.errorText) {
@@ -73,5 +98,14 @@ export struct RenewableVideo {
           .justifyContent(FlexAlign.Center).backgroundColor(Color.Black)
       }
     }.width('100%').height('100%').backgroundColor(Color.Black)
+      .bindContentCover($$this.fullscreen, this.fullscreenPlayer(), {
+        modalTransition: ModalTransition.NONE,
+        onDisappear: (): void => {
+          if (this.active) {
+            this.controller.setCurrentTime(this.playbackSeconds);
+            this.controller.start();
+          }
+        }
+      })
   }
 }
