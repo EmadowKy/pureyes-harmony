@@ -1096,12 +1096,29 @@ class UserGroupApiTest(unittest.TestCase):
         signed = self.client.get(f"{media_url}&check=1")
         self.assertEqual(signed.status_code, 200, signed.get_json())
 
+        refresh_path = '/api/video/access?path=storage/slices/protected.mp4'
+        self.assertEqual(self.client.get(refresh_path).status_code, 401)
+        # Expiry is enforced for old links; renewal requires the login JWT.
+        with patch.dict(self.app.config, {"MEDIA_TOKEN_MAX_AGE_SECONDS": -1}):
+            self.assertEqual(self.client.get(f"{media_url}&check=1").status_code, 401)
+        refreshed = self.client.get(refresh_path, headers=member_headers)
+        self.assertEqual(refreshed.status_code, 200, refreshed.get_json())
+        renewed_url = refreshed.get_json()['data']['media_url']
+        self.assertEqual(self.client.get(f"{renewed_url}&check=1").status_code, 200)
+        self.assertEqual(self.client.get(
+            '/api/video/access?path=storage/slices/../secret', headers=member_headers
+        ).status_code, 400)
+        self.assertEqual(self.client.get(
+            '/api/video/access?path=storage/slices/missing.mp4', headers=member_headers
+        ).status_code, 403)
+
         removed = self.client.delete(
             f"/api/groups/{group_id}/members/media_member",
             headers=owner_headers,
         )
         self.assertEqual(removed.status_code, 200, removed.get_json())
         revoked = self.client.get(f"{media_url}&check=1")
+        self.assertEqual(self.client.get(refresh_path, headers=member_headers).status_code, 403)
         self.assertEqual(revoked.status_code, 401)
 
     def test_group_invitation_acceptance_and_membership_visibility(self):
@@ -1238,6 +1255,20 @@ class UserGroupApiTest(unittest.TestCase):
         self.assertEqual(playback_data["segment_end_time"], "2026-07-12T12:01:00")
         self.assertIn("media_token=", playback_data["playback_url"])
         self.assertNotIn("filename", playback_data)
+        renewed_playback = self.client.get(
+            f'/api/video/access?path=storage/streams/{monitor_id}/{recording_name}',
+            headers=member_headers,
+        )
+        self.assertEqual(renewed_playback.status_code, 200)
+        self.assertIn('media_token=', renewed_playback.get_json()['data']['media_url'])
+        renewed_live = self.client.get(
+            f'/api/video/access?path=live/{monitor_id}/index.m3u8', headers=member_headers,
+        )
+        self.assertEqual(renewed_live.status_code, 200)
+        self.assertIn('media_token=', renewed_live.get_json()['data']['media_url'])
+        self.assertEqual(self.client.get(
+            f'/api/video/access?path=live/{monitor_id}/../../secret', headers=member_headers,
+        ).status_code, 400)
 
         cover_recording_name = "20260712_120100.mp4"
         (recordings_dir / cover_recording_name).write_bytes(b"fake-video")

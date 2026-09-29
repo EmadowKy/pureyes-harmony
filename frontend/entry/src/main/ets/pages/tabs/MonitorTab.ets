@@ -1,4 +1,5 @@
 import { HttpUtil, BASE_HOST } from '../../utils/http'
+import { renewMediaUrl } from '../../utils/mediaAccess'
 
 interface ToastOptions {
   message: string;
@@ -144,6 +145,10 @@ export struct MonitorTab {
   isRefreshingLiveTimeline: boolean = false;
   @State isLoadingMonitors: boolean = false;
   private monitorLoadEpoch: number = 0;
+  private mediaRetryCount: number = 0;
+  private mediaRenewedAt: number = 0;
+  private mediaRefreshing: boolean = false;
+  private mediaRefreshEpoch: number = 0;
 
   showToast(options: ToastOptions): void {
     try {
@@ -184,6 +189,9 @@ export struct MonitorTab {
       clearInterval(this.coverRefreshTimer);
     }
     this.coverRefreshTimer = setInterval(async (): Promise<void> => {
+      if (this.selectedMonitorId && this.selectedMonitorUrl && Date.now() - this.mediaRenewedAt >= 3600000) {
+        await this.refreshSelectedMedia();
+      }
       if (this.groupId && this.selectedMonitorId === 0) {
         await this.loadMonitors();
       }
@@ -615,7 +623,9 @@ export struct MonitorTab {
     this.isLiveStream = true;
     this.playbackMode = 'live';
     this.playbackOffsetSeconds = 0;
-    this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
+    this.mediaRetryCount = 0;
+    this.selectedMonitorUrl = '';
+    await this.refreshSelectedMedia(`/api/video/live/${monitor.id}/index.m3u8`);
     this.selectedTimeText = this.formatDateTime(new Date());
     this.jumpTimeText = this.selectedTimeText;
     await this.loadTimeline(this.selectedTimeText);
@@ -700,6 +710,43 @@ export struct MonitorTab {
     this.timelineErrorText = '';
     // Keep the signed media token intact; buildHttpUrl only adds a cache buster.
     this.selectedMonitorUrl = this.buildHttpUrl(playbackUrl);
+    this.mediaRetryCount = 0;
+    this.mediaRenewedAt = Date.now();
+  }
+
+  async refreshSelectedMedia(source: string = this.selectedMonitorUrl): Promise<void> {
+    if (!source) return;
+    const epoch = ++this.mediaRefreshEpoch;
+    const monitorId = this.selectedMonitorId;
+    const mode = this.playbackMode;
+    const previousUrl = this.selectedMonitorUrl;
+    this.mediaRefreshing = true;
+    try {
+      const url = await renewMediaUrl(source);
+      // Do not let a late retry replace a different monitor or time selection.
+      if (epoch !== this.mediaRefreshEpoch || monitorId !== this.selectedMonitorId || mode !== this.playbackMode || previousUrl !== this.selectedMonitorUrl) return;
+      this.selectedMonitorUrl = url;
+      this.mediaRenewedAt = Date.now();
+      this.timelineErrorText = '';
+    } catch (error) {
+      if (epoch === this.mediaRefreshEpoch && monitorId === this.selectedMonitorId && mode === this.playbackMode) {
+        this.timelineErrorText = '视频加载失败，请检查网络或登录状态后重试';
+        this.showToast({ message: this.timelineErrorText, duration: 2200 });
+      }
+    } finally {
+      if (epoch === this.mediaRefreshEpoch) this.mediaRefreshing = false;
+    }
+  }
+
+  recoverMedia(): void {
+    if (this.mediaRefreshing) return;
+    if (this.mediaRetryCount < 1) {
+      this.mediaRetryCount += 1;
+      this.refreshSelectedMedia();
+      return;
+    }
+    this.timelineErrorText = '视频加载失败，请检查网络或登录状态后重试';
+    this.showToast({ message: this.timelineErrorText, duration: 2200 });
   }
 
   async playNextContinuousSegment(): Promise<void> {
@@ -774,7 +821,9 @@ export struct MonitorTab {
     this.timelineErrorText = '';
     this.liveTimelineRefreshTicks = 0;
     this.playbackOffsetSeconds = 0;
-    this.selectedMonitorUrl = this.buildSourceUrl(monitor.stream_url);
+    this.mediaRetryCount = 0;
+    this.selectedMonitorUrl = '';
+    await this.refreshSelectedMedia(`/api/video/live/${monitor.id}/index.m3u8`);
     const nowText = this.formatDateTime(new Date());
     this.selectedTimeText = nowText;
     this.jumpTimeText = nowText;
@@ -806,7 +855,7 @@ export struct MonitorTab {
         .padding({ left: 18, right: 18, top: 16, bottom: 12 })
 
         Stack({ alignContent: Alignment.TopStart }) {
-          if (this.playbackMode === 'live' || this.hasReplayAtSelectedTime) {
+          if (this.selectedMonitorUrl && (this.playbackMode === 'live' || this.hasReplayAtSelectedTime)) {
             Video({ src: this.selectedMonitorUrl, controller: this.videoController })
               .width('100%')
               .height(220)
@@ -819,12 +868,10 @@ export struct MonitorTab {
                 }
               })
               .onError((): void => {
-                this.timelineErrorText = this.playbackMode === 'history' ? '该时段录像加载失败，请重新选择时间' : '实时视频暂时不可用';
-                if (this.playbackMode === 'history') {
-                  this.hasReplayAtSelectedTime = false;
-                  this.selectedMonitorUrl = '';
-                }
-                this.showToast({ message: this.timelineErrorText, duration: 2200 });
+                this.recoverMedia();
+              })
+              .onUpdate((event): void => {
+                if (this.playbackMode === 'history') this.playbackOffsetSeconds = event.time;
               })
               .onFinish((): void => {
                 if (this.playbackMode === 'history') {

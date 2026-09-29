@@ -11,6 +11,8 @@ import hashlib
 import shutil
 from urllib.parse import quote
 from flask import Blueprint, send_file, abort, Response, request, send_from_directory
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.core.media_auth import build_media_url
 from werkzeug.exceptions import HTTPException
 from concurrent.futures import ThreadPoolExecutor
 from app.core.config import get_ffmpeg_path
@@ -38,9 +40,9 @@ def _is_group_member(group_id, emp_id):
     ).first() is not None
 
 
-def _media_path_access_allowed(video_path):
+def _media_path_access_allowed(video_path, identity=None):
     normalized = (video_path or "").replace("\\", "/").lstrip("/")
-    emp_id = media_access_identity(path_scope(normalized))
+    emp_id = identity or media_access_identity(path_scope(normalized))
     if not emp_id:
         return False
 
@@ -88,6 +90,29 @@ def _media_path_access_allowed(video_path):
         return bool(workspace and _is_group_member(workspace.group_id, emp_id))
 
     return False
+
+
+@video_stream_bp.get('/access')
+@jwt_required()
+def refresh_media_access():
+    """Renew an expiring player URL without weakening membership checks."""
+    path = (request.args.get('path') or '').replace('\\', '/').lstrip('/')
+    if not path or any(part in ('.', '..') for part in path.split('/')) or '?' in path or '#' in path:
+        abort(400, description="Invalid media path")
+    identity = get_jwt_identity()
+    if path.startswith('live/'):
+        parts = path.split('/')
+        if len(parts) != 3 or not parts[1].isdigit() or parts[2] != 'index.m3u8':
+            abort(400, description="Invalid live path")
+        monitor = db.session.get(Monitor, int(parts[1]))
+        if not monitor or not _is_group_member(monitor.group_id, identity):
+            abort(403)
+        scope = monitor_scope(monitor.id)
+    else:
+        if not _media_path_access_allowed(path, identity=identity):
+            abort(403)
+        scope = path_scope(path)
+    return {"code": 0, "data": {"media_url": build_media_url(f"/api/video/{path}", scope)}}
 
 
 def _monitor_media_access_allowed(monitor):

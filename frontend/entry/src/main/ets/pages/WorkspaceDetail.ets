@@ -1,4 +1,5 @@
 import { HttpUtil, BASE_HOST } from '../utils/http'
+import { RenewableVideo } from './components/RenewableVideo'
 import photoAccessHelper from '@ohos.file.photoAccessHelper';
 import picker from '@ohos.file.picker';
 import common from '@ohos.app.ability.common';
@@ -687,14 +688,12 @@ struct VideoRangeDialog {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          Video({
-            src: this.activeVideo.url,
+          RenewableVideo({
+            source: this.activeVideo.url,
             controller: this.videoController
           })
             .width('100%')
             .height(180)
-            .autoPlay(true)
-            .controls(true)
             .borderRadius(8)
 
           Column({ space: 8 }) {
@@ -1037,20 +1036,14 @@ struct SegmentDetailDialog {
           }
 
           // 视频播放器
-          Video({
-            src: BASE_HOST + this.segment.media_url,
+          RenewableVideo({
+            source: BASE_HOST + this.segment.media_url,
+            initialSeconds: this.jumpSeconds,
             controller: this.videoController
           })
             .width('100%')
             .height(180)
-            .autoPlay(true)
-            .controls(true)
             .borderRadius(8)
-            .onPrepared((event) => {
-              if (this.jumpSeconds > 0) {
-                this.videoController.setCurrentTime(this.jumpSeconds);
-              }
-            })
 
           // 视频信息：监控名称及时间范围
           Text(`${this.segment.video_name} (${this.segment.start_offset.toFixed(1)}s - ${this.segment.end_offset.toFixed(1)}s)`)
@@ -1790,11 +1783,11 @@ struct WorkspaceDetail {
       this.segmentLoadError = error instanceof Error ? error.message : '无法获取片段状态';
     } finally {
       this.loadingSegments = false;
-      if (hasProcessing && this.workspaceVisible) {
+      if (this.workspaceVisible) {
         this.segmentPollTimer = setTimeout((): void => {
           this.segmentPollTimer = 0;
           this.loadSegments();
-        }, 1500);
+        }, hasProcessing ? 1500 : 3600000);
       }
     }
   }
