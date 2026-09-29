@@ -17,7 +17,7 @@ docs/.vitepress/cache/
 frontend/node_modules/
 frontend/oh_modules/
 frontend/local.properties
-frontend/.idea/
+**/.idea/
 frontend/.hvigor/
 frontend/.cxx/
 frontend/.clangd/
