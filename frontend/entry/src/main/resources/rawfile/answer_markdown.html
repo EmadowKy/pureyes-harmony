@@ -6,7 +6,8 @@
   <style>
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: transparent; }
+    html, body { margin: 0; padding: 0; background: transparent; width: 100%; }
+    #answer { display: flow-root; width: 100%; min-width: 0; }
     body { color: #34465f; font: 15px/1.68 system-ui, sans-serif; overflow: hidden; overflow-wrap: anywhere; }
     #answer > :first-child { margin-top: 0; }
     #answer > :last-child { margin-bottom: 0; }
@@ -179,7 +180,11 @@ if(__exports != exports)module.exports = exports;return module.exports}));
         markdownBridge.onHeight(height);
       }
     }
-    window.renderAnswer = function (source, failed) {
+    window.renderAnswer = function (source, failed, width) {
+      if (Number.isFinite(width) && width > 0) {
+        document.querySelector('meta[name="viewport"]').content =
+          'width=' + width + ', initial-scale=1, maximum-scale=1';
+      }
       root.classList.toggle('failed', failed);
       root.innerHTML = marked.parse(source || '');
       root.querySelectorAll('table').forEach(table => {
@@ -190,6 +195,8 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       });
       lastHeight = 0;
       requestAnimationFrame(reportHeight);
+      // Force layout now and return it as a second, independent height delivery path.
+      return Math.ceil(root.getBoundingClientRect().height);
     };
     root.addEventListener('click', event => {
       const button = event.target.closest('.video-time');

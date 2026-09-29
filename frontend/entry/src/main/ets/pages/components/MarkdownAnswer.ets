@@ -29,6 +29,13 @@ export struct MarkdownAnswer {
   private controller: webview.WebviewController = new webview.WebviewController();
   private bridge: MarkdownBridge = new MarkdownBridge();
   private pageReady: boolean = false;
+  private contentWidth: number = 0;
+  private renderVersion: number = 0;
+
+  aboutToDisappear(): void {
+    this.pageReady = false;
+    this.renderVersion++;
+  }
 
   aboutToAppear(): void {
     this.bridge.onHeightChange = (height: number): void => {
@@ -55,8 +62,20 @@ export struct MarkdownAnswer {
 
   private renderMarkdown(): void {
     if (this.pageReady) {
+      const version = ++this.renderVersion;
       // JSON serialization makes the answer a JavaScript string, never executable source.
-      this.controller.runJavaScript(`window.renderAnswer(${JSON.stringify(this.markdown)}, ${this.failed});`);
+      // Also read the height directly: a missed proxy callback must not leave a 28vp viewport.
+      this.controller.runJavaScript(
+        `window.renderAnswer(${JSON.stringify(this.markdown)}, ${this.failed}, ${this.contentWidth});`
+      ).then((result: string): void => {
+        if (!this.pageReady || version !== this.renderVersion) {
+          return;
+        }
+        const height = Number(result);
+        if (Number.isFinite(height) && height > 0) {
+          this.contentHeight = Math.max(28, Math.ceil(height));
+        }
+      }).catch((): void => {});
     }
   }
 
@@ -75,6 +94,13 @@ export struct MarkdownAnswer {
       })
       .width('100%')
       .height(this.contentHeight)
+      .onAreaChange((_oldArea: Area, newArea: Area): void => {
+        const width = Number(newArea.width);
+        if (Number.isFinite(width) && width > 0 && Math.abs(width - this.contentWidth) > 1) {
+          this.contentWidth = width;
+          this.renderMarkdown();
+        }
+      })
       .backgroundColor(Color.Transparent)
   }
 }
