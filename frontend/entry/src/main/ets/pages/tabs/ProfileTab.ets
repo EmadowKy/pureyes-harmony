@@ -33,6 +33,7 @@ interface ToastOptions {
 const PAGE_HOME = 'home';
 const PAGE_INFO = 'info';
 const PAGE_SECURITY = 'security';
+const PAGE_PRIVACY = 'privacy';
 const PAGE_MESSAGES = 'messages';
 const PAGE_CREATE_GROUP = 'createGroup';
 const PAGE_ADMIN = 'admin';
@@ -81,6 +82,42 @@ class PasswordPayload {
 class ScreenCapturePayload {
   password: string = '';
   allowed: boolean = false;
+}
+
+@CustomDialog
+struct CapturePasswordDialog {
+  controller: CustomDialogController;
+  @State password: string = '';
+  confirm: (password: string) => void = (_password: string): void => {};
+  cancel: () => void = (): void => {};
+
+  aboutToDisappear(): void { this.password = ''; }
+
+  build() {
+    Column({ space: 16 }) {
+      Text('验证账号密码').fontSize(18).fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+      Text('修改截图与录屏权限需要验证当前账号密码。')
+        .fontSize(13).fontColor($r('app.color.app_text_secondary'))
+      TextInput({ placeholder: '当前账号密码', text: this.password })
+        .type(InputType.Password)
+        .onChange((value: string): void => { this.password = value; })
+      Row({ space: 12 }) {
+        Button('取消').layoutWeight(1).onClick((): void => {
+          this.cancel();
+          this.controller.close();
+        })
+        Button('验证并更改').layoutWeight(1).enabled(this.password.length > 0)
+          .onClick((): void => {
+            const password = this.password;
+            this.password = '';
+            this.controller.close();
+            this.confirm(password);
+          })
+      }
+    }.padding(24).width('90%')
+      .backgroundColor($r('app.color.app_card_bg')).borderRadius(12)
+  }
 }
 
 class CreateGroupPayload {
@@ -240,6 +277,7 @@ export struct ProfileTab {
   @State confirmPassword: string = '';
   @StorageLink('screen_capture_allowed') captureAllowed: boolean = false;
   @State captureChoice: boolean = false;
+  @State captureToggle: boolean = false;
   @State capturePassword: string = '';
   @State savingCapture: boolean = false;
   @State resetPassword: string = '';
@@ -256,6 +294,19 @@ export struct ProfileTab {
   @State editingConfigId: number = 0;
   @State modelConfigs: Array<ModelConfigOption> = [];
   @State configGroups: Array<ConfigGroupOption> = [];
+
+  capturePasswordDialog: CustomDialogController = new CustomDialogController({
+    builder: CapturePasswordDialog({
+      confirm: (password: string): void => {
+        this.capturePassword = password;
+        this.submitCapturePermission();
+      },
+      cancel: (): void => { this.captureToggle = this.captureAllowed; }
+    }),
+    cancel: (): void => { this.captureToggle = this.captureAllowed; },
+    autoCancel: true,
+    customStyle: true
+  });
 
   showToast(options: ToastOptions): void {
     try {
@@ -361,6 +412,7 @@ export struct ProfileTab {
     } finally {
       this.capturePassword = '';
       payload.password = '';
+      this.captureToggle = this.captureAllowed;
       this.savingCapture = false;
     }
   }
@@ -454,10 +506,12 @@ export struct ProfileTab {
       this.editName = this.user.name;
       this.editPhone = this.user.phone;
     } else if (page === PAGE_SECURITY) {
-      this.capturePassword = '';
-      this.captureChoice = this.captureAllowed;
       this.newPassword = '';
       this.confirmPassword = '';
+    } else if (page === PAGE_PRIVACY) {
+      this.capturePassword = '';
+      this.captureChoice = this.captureAllowed;
+      this.captureToggle = this.captureAllowed;
     } else if (page === PAGE_MESSAGES) {
       this.loadMessages();
     } else if (page === PAGE_CREATE_GROUP) {
@@ -1142,7 +1196,8 @@ export struct ProfileTab {
             .width('100%')
             .padding({ left: 2, top: 12, bottom: 5 })
           this.MenuItem('个人信息', PAGE_INFO, '', 'info')
-          this.MenuItem('账号安全', PAGE_SECURITY, '', 'lock')
+          this.MenuItem('修改密码', PAGE_SECURITY, '', 'lock')
+          this.MenuItem('窗口隐私', PAGE_PRIVACY, '', 'lock')
           this.MenuItem('我的消息', PAGE_MESSAGES, this.invites.length > 0 ? `${this.invites.length}` : '', 'message')
 
           Text('小组')
@@ -1278,9 +1333,9 @@ export struct ProfileTab {
       .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
-  @Builder SecurityPage() {
+  @Builder PrivacyPage() {
     Column({ space: 14 }) {
-      this.PageHeader('账号安全')
+      this.PageHeader('窗口隐私')
 
       Column({ space: 12 }) {
         Text('截图与录屏').fontSize(16).fontWeight(FontWeight.Medium)
@@ -1290,24 +1345,37 @@ export struct ProfileTab {
         Text('默认禁止。允许或禁止都需验证当前账号密码；允许后，请注意监控画面与人脸信息的隐私。')
           .fontSize(12).fontColor($r('app.color.app_text_secondary')).width('100%')
         Row({ space: 12 }) {
-          Button(this.captureChoice ? '允许 · 已选择' : '允许')
-            .layoutWeight(1).enabled(!this.savingCapture)
-            .onClick((): void => { this.captureChoice = true; })
-          Button(!this.captureChoice ? '禁止 · 已选择' : '禁止')
-            .layoutWeight(1).enabled(!this.savingCapture)
-            .onClick((): void => { this.captureChoice = false; })
+          Text('允许截图和录屏').layoutWeight(1)
+            .fontColor($r('app.color.app_text_primary'))
+          Toggle({ type: ToggleType.Switch, isOn: this.captureToggle })
+            .enabled(!this.savingCapture)
+            .onChange((allowed: boolean): void => {
+              if (allowed === this.captureAllowed || this.savingCapture) return;
+              this.captureChoice = allowed;
+              this.captureToggle = allowed;
+              this.capturePasswordDialog.open();
+            })
         }.width('100%')
-        TextInput({ placeholder: '当前账号密码', text: this.capturePassword })
-          .type(InputType.Password).height(42).width('100%')
-          .enabled(!this.savingCapture)
-          .onChange((value: string): void => { this.capturePassword = value; })
-        Button(this.savingCapture ? '正在验证…' : '验证密码并保存截图录屏权限')
-          .width('100%').enabled(!this.savingCapture)
-          .onClick((): void => { this.submitCapturePermission(); })
+        if (this.savingCapture) {
+          Text('正在验证密码…').fontSize(12)
+            .fontColor($r('app.color.app_text_secondary'))
+        }
       }.width('90%').padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') }).borderRadius(8)
+    }
+    .width('100%')
+    .height('100%')
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('app.color.app_page_bg'))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: 12 }))
+      .animation({ duration: 220, curve: Curve.EaseOut }))
+  }
 
+  @Builder SecurityPage() {
+    Column({ space: 14 }) {
+      this.PageHeader('修改密码')
       Column({ space: 12 }) {
         TextInput({ placeholder: '新密码，至少6位', text: this.newPassword })
           .type(InputType.Password)
@@ -2149,6 +2217,8 @@ export struct ProfileTab {
       this.InfoPage()
     } else if (this.activePage === PAGE_SECURITY) {
       this.SecurityPage()
+    } else if (this.activePage === PAGE_PRIVACY) {
+      this.PrivacyPage()
     } else if (this.activePage === PAGE_MESSAGES) {
       this.MessagesPage()
     } else if (this.activePage === PAGE_CREATE_GROUP) {
