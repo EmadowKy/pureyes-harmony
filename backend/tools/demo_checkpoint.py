@@ -86,6 +86,9 @@ def seed(password):
     from werkzeug.security import generate_password_hash
     if len(password) < 12:
         raise RuntimeError('Demo password must be at least 12 characters')
+    credential_path = Path('/mnt/pureyes-recordings/checkpoints/demo-credentials.json')
+    if credential_path.exists():
+        raise RuntimeError('Private demo credentials already exist; restore the checkpoint instead')
     now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(' ')
     accounts = [
         ('demo_analyst', '林知远 · 分析员', 'user', 1, '#2563EB'),
@@ -106,6 +109,7 @@ def seed(password):
     with connect() as con:
         assert_idle(con)
         baseline = counts(con)
+        baseline_fk = {tuple(row) for row in con.execute('PRAGMA foreign_key_check')}
         if not con.execute("SELECT 1 FROM users WHERE emp_id='admin'").fetchone():
             raise RuntimeError('Existing admin account required')
         group = con.execute("SELECT id FROM groups WHERE name='test1' AND creator_id='admin'").fetchall()
@@ -137,15 +141,16 @@ def seed(password):
                       'agent_conversations', 'qa_records'):
             if baseline[table] != after[table]:
                 raise RuntimeError(f'Unexpected change to existing {table}')
-        if con.execute('PRAGMA foreign_key_check').fetchall():
-            raise RuntimeError('Foreign key verification failed')
-    credential_path = Path('/mnt/pureyes-recordings/checkpoints/demo-credentials.json')
+        new_fk = {tuple(row) for row in con.execute('PRAGMA foreign_key_check')} - baseline_fk
+        if new_fk:
+            raise RuntimeError('New foreign key violation detected; all demo changes rolled back')
     with credential_path.open('x') as stream:
         stream.write(json.dumps({'accounts': [row[0] for row in accounts],
                                  'password': password,
                                  'admin_password': 'unchanged'}, indent=2))
     credential_path.chmod(0o600)
-    print(json.dumps({'seeded': True, 'counts': after, 'credentials': str(credential_path)}, ensure_ascii=False))
+    print(json.dumps({'seeded': True, 'counts': after, 'credentials': str(credential_path),
+                      'preserved_legacy_fk_violations': len(baseline_fk)}, ensure_ascii=False))
 
 
 def verify(source):
