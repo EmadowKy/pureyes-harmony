@@ -172,19 +172,7 @@ if(__exports != exports)module.exports = exports;return module.exports}));
         }
       }]
     });
-    let lastHeight = 0;
-    function reportHeight() {
-      const height = Math.ceil(root.getBoundingClientRect().height);
-      if (height !== lastHeight && window.markdownBridge) {
-        lastHeight = height;
-        markdownBridge.onHeight(height);
-      }
-    }
-    window.renderAnswer = function (source, failed, width) {
-      if (Number.isFinite(width) && width > 0) {
-        document.querySelector('meta[name="viewport"]').content =
-          'width=' + width + ', initial-scale=1, maximum-scale=1';
-      }
+    window.renderAnswer = function (source, failed) {
       root.classList.toggle('failed', failed);
       root.innerHTML = marked.parse(source || '');
       root.querySelectorAll('table').forEach(table => {
@@ -193,10 +181,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
         table.parentNode.insertBefore(wrap, table);
         wrap.appendChild(table);
       });
-      lastHeight = 0;
-      requestAnimationFrame(reportHeight);
-      // Force layout now and return it as a second, independent height delivery path.
-      return Math.ceil(root.getBoundingClientRect().height);
     };
     root.addEventListener('click', event => {
       const button = event.target.closest('.video-time');
@@ -211,6 +195,5 @@ if(__exports != exports)module.exports = exports;return module.exports}));
         if (window.markdownBridge) markdownBridge.onLink(link.href);
       }
     });
-    new ResizeObserver(reportHeight).observe(root);
   })();
 </script></body></html>
