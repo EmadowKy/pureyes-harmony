@@ -36,7 +36,9 @@ export default withMermaid(
               { text: '小组协作', link: '/user-guide/04-group-collaboration' },
               { text: '监控与回放', link: '/user-guide/05-live-monitoring' },
               { text: '工作区与视频片段', link: '/user-guide/06-workspace-management' },
-              { text: '调查问答', link: '/user-guide/07-ai-multimodal-qa' }
+              { text: '调查问答', link: '/user-guide/07-ai-multimodal-qa' },
+              { text: '调查通知与桌面小鸮', link: '/user-guide/10-investigation-notifications' },
+              { text: '功能截图导览', link: '/user-guide/11-interface-tour' }
             ]
           },
           {

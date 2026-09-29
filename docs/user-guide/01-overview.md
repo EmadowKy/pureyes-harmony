@@ -11,6 +11,8 @@
 | 看实时监控或回放录像 | [监控与回放](05-live-monitoring.md) |
 | 截取片段、查看预处理和人脸线索 | [工作区与视频片段](06-workspace-management.md) |
 | 对多个片段提问、查看证据、继续追问 | [调查问答](07-ai-multimodal-qa.md) |
+| 在通知栏或桌面查看调查进度 | [调查通知与桌面小鸮](10-investigation-notifications.md) |
+| 浏览各个功能的实际界面 | [功能截图导览](11-interface-tour.md) |
 | 修改资料、密码或模型配置 | [个人中心](09-profile-and-settings.md)与[账号安全](03-authentication.md) |
 | 管理员工账号（仅管理员） | [用户管理](08-admin-console.md) |
 
@@ -18,7 +20,18 @@
 
 ## 界面演示
 
-以下截图来自设备上的演示账号与演示小组，仅用于说明界面。演示环境没有接入录像或上传视频，所以截图中没有片段与调查结论。
+本页保留早期演示账号的截图，其中部分页面是空状态。新增的[功能截图导览](11-interface-tour.md)来自 2026-09-29 的模拟器，展示已有视频、真实预处理人脸线索、多轮调查和桌面卡片。截图中的测试名称与模型名称只是示例，不代表使用时必须采用相同配置。
+
+### 有视频、有线索的调查工作区
+
+进入工作区后，【片段】【人脸】【问答】三个主页面保留底栏；截取视频或进入具体调查时收起底栏，避免操作层级混淆。以下界面来自已有测试数据，不是生成的界面示意图。
+
+<div class="screenshot-grid">
+<figure><img src="/screenshots/20260929/15-face-groups.webp" alt="预处理生成的人脸分组卡片" loading="lazy" /><figcaption>人脸分组与跨视频记录</figcaption></figure>
+<figure><img src="/screenshots/20260929/23-investigation-references.webp" alt="调查详情展开引用的三个视频片段" loading="lazy" /><figcaption>固定证据范围与可定位的回答</figcaption></figure>
+</div>
+
+可从[工作区与视频片段](06-workspace-management.md)开始导入视频，也可直接阅读[调查问答](07-ai-multimodal-qa.md)。公开展示测试素材前请核对原数据集的使用范围和署名要求，详见[截图说明](11-interface-tour.md#截图来源与使用边界)。
 
 ### 账号与邀请
 

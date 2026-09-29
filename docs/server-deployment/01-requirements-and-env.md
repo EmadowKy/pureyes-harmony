@@ -14,7 +14,7 @@ Pureyes 系统的大模型推理全面采用 API 接入方式（支持在【我�
 | **操作系统** | Ubuntu 20.04 LTS | Ubuntu 22.04 LTS |
 | **CPU** | 4 核 Intel/AMD x86_64 | 8 核或以上 高频 CPU |
 | **系统内存 (RAM)** | 8 GB | 16 GB 及以上 |
-| **独立显卡 (GPU)** | NVIDIA GPU, 8 GB 显存 (如 RTX 3060 / 4060) | NVIDIA GPU, 16 GB 显存 (如 RTX 4060 Ti 16G / T4) |
+| **独立显卡 (GPU)** | 可使用 CPU 部署，但完整预处理耗时可能很长 | 建议可用的 NVIDIA CUDA GPU 加速目标、重识别与语义模型；按视频规模评估显存 |
 | **CUDA 环境** | CUDA 11.8 或 CUDA 12.6 | PyTorch 内建 CUDA 12.6 Wheel |
 | **磁盘空间** | 预留 20 GB 剩余空间 (NVMe SSD) | 预留 100 GB SSD (用于视频与切片存储) |
 | **系统工具依赖** | `ffmpeg`, `ffprobe`, `git` | `ffmpeg`, `ffprobe`, `git` |
@@ -22,6 +22,8 @@ Pureyes 系统的大模型推理全面采用 API 接入方式（支持在【我�
 ---
 
 ## 2. 完整 Python 依赖包清单 (`backend/requirements.txt`)
+
+表中的硬件是部署建议，不是算法吞吐保证。纯 API 服务与完整预处理的资源要求不同；CPU 实例能运行不代表适合现场等待长视频的预处理。使用本地 GPU 处理后迁移视频与索引需要维护人员同时校验片段、索引和人脸记录归属，不能只上传一个特征文件就视为完整迁移。
 
 后端基于 **Python 3.10** 环境建立，全量依赖清单存放在 `backend/requirements.txt` 文件中：
 

@@ -131,5 +131,7 @@ erDiagram
 - SQLite／PostgreSQL 上的部分唯一索引 `uq_qa_active_conversation` 约束同一会话最多一条 `processing` 记录；提交追问还会检查当前运行状态。超时及主动停止写回数据库，释放下一轮提交权限。
 - `qa_video_selections` 通过 `record_id` 关联具体轮次，通过 `segment_id` 关联片段；保留 `monitor_id` 和时间范围等兼容字段。工具调用链从轮次的进度记录提取，不单独建表。追问上下文从已保存的轮次重建，并有长度限制。
 
+调查轮次以 `created_at` 作为计时起点，终态事件的时间戳持久化在 `progress_json`，`QARecord.timing()` 序列化为 `elapsed_seconds` 与 `finished_at`；旧记录可回退到心跳时间，并未新增起止时间数据库列。工具调用、模型公开进度简报与证据卡片共用 `progress_json`，接口分别整理为 `tool_calls` 和 `process_entries`，不把内部帧观察直接混进答案。桌面任务总览按会话的最新 `turn_index` 聚合，不新增“通知任务”数据库表；移动端卡片快照属于本机缓存，不是后端权威状态。
+
 ### 2.6 JWT 黑名单 Token 表 `token_blacklist`
 仅保存 `id`, `jti` (JWT 唯一 ID) 与 `created_at`，不存储原始令牌。主动登出同时递增用户的 `auth_version`，因此访问令牌、刷新令牌和媒体令牌都会立即失效；过期黑名单记录会在启动时清理。

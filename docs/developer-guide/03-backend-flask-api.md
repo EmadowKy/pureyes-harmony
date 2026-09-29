@@ -165,7 +165,10 @@
 | 方法 | 路径 | 用途 |
 | :--- | :--- | :--- |
 | `GET` | `/api/workspaces/:id/agent/conversations` | 工作区调查列表，含最近一轮状态及轮数 |
-| `GET` | `/api/workspaces/agent/conversations/:conversation_id/messages` | 按轮次返回问题、状态、答案及整理后的 `tool_calls` |
+| `PUT` | `/api/workspaces/agent/conversations/:conversation_id` | 提交 `{"title":"案件标题"}` 修改标题，去空格后 1–160 字符 |
+| `DELETE` | `/api/workspaces/agent/conversations/:conversation_id` | 删除整条调查及各轮记录；运行中返回 409，不删除视频或索引 |
+| `GET` | `/api/workspaces/agent/conversations/:conversation_id/messages` | 按轮次返回问题、状态、答案、耗时、`tool_calls` 与 `process_entries` |
+| `GET` | `/api/workspaces/agent/tasks` | 当前账号已加入小组的最新轮次，用于通知与多任务卡片 |
 | `GET` | `/api/workspaces/qa/:task_id/status` | 当前状态、公开进度、答案／错误和会话定位 |
 | `GET` | `/api/workspaces/qa/:task_id/stream` | 带 JWT 的 SSE 进度与终态事件 |
 | `POST` | `/api/workspaces/qa/:task_id/stop` | 组员停止正在运行的 Agent 轮次 |
@@ -173,3 +176,15 @@
 | `DELETE` | `/api/workspaces/qa/:task_id` | 删除已结束的问答轮次；运行中返回 409 |
 
 状态为 `processing`、`completed`、`failed` 或 `stopped`。`status` 和 SSE 的公开进度仅提供阶段、脱敏后的工具参数与观察结果，不返回模型内部思考；`messages` 的 `tool_calls` 提供可展开的调用记录。客户端按任务及会话状态轮询，也可消费 SSE。服务端以数据库记录状态和心跳恢复卡住的任务，并以 `AGENT_TASK_TIMEOUT_SECONDS` 控制单轮时限（默认 1200 秒）。所有工作区、问答、视频、人脸和媒体接口都会再次校验当前用户是否仍为所属小组成员；媒体文件通过限时签名地址访问。
+
+### 7.3 公开过程、用时和任务总览
+
+`messages` 去掉内部 `progress_json`，另行整理为：
+
+- `process_entries`：按时间顺序排列的 `commentary` 简报与工具入口，前端用它展示连贯过程。简报是模型主动输出的公开进度，不是隐藏推理全文；内部帧观察、文件路径及原始工具指令不直接展示。
+- `tool_calls`：工具状态、中文可读摘要、公开参数及可跳转的证据时间点；批量画面分别关联片段。
+- `created_at`、`elapsed_seconds`、`finished_at`：每轮计时信息。开始时间取记录创建时间，结束时间从持久化终态事件恢复；旧记录可回退到心跳时间。客户端显示运行中用时，终态后使用接口返回的用时，重新进入仍可查看。
+
+调查列表的 `can_manage` 只供界面决定是否显示菜单，不能替代服务端权限检查。改名与删除要求仍是工作区小组成员，且为调查创建者、小组创建者或管理员；运行中禁止删除整条调查。历史引用关系随会话删除清除，片段本身保留。
+
+`GET /api/workspaces/agent/tasks` 返回 `tasks`、`active_count`、`completed_count`、`conversation_count`。`tasks` 包含所有运行任务及最近 20 条结束记录，每项包括任务／会话／工作区／小组 ID、标题、状态、阶段、步骤数、耗时和更新时间。计数按每条调查的最新轮次统计，不是问答轮次数。接口不返回问题、答案、视频或密钥，但标题仍可能敏感；移动端通知不展示标题，桌面卡片会展示。

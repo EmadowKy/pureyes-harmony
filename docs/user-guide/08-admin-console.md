@@ -16,6 +16,11 @@
 
 在【我的 → 用户管理】搜索姓名或工号，打开用户卡片查看详情。点击【新建】创建账号，填写工号、姓名、手机号（选填）和至少 6 位的初始密码，并将登录信息提供给使用者。普通账号创建后可通过小组邀请加入团队。
 
+<div class="screenshot-grid">
+<figure><img src="/screenshots/20260929/33-admin-users.webp" alt="管理员用户查询和新建入口" loading="lazy" /><figcaption>查询账号</figcaption></figure>
+<figure><img src="/screenshots/20260929/34-admin-create-user.webp" alt="创建用户时填写工号姓名手机号和初始密码" loading="lazy" /><figcaption>创建新账号</figcaption></figure>
+</div>
+
 ## 管理现有账号
 
 在用户详情中，管理员可以初始化密码、停用或启用账号，以及删除允许操作的账号。初始化密码时输入新密码并再次确认，再将新密码交给使用者；原有登录状态会失效。

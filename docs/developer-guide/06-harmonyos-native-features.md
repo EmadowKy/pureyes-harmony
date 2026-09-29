@@ -13,6 +13,7 @@
 | Form Kit 服务卡片 | `frontend/entry/src/main/ets/investigationform/`、`utils/investigationCard.ets` | 2×2 / 2×4 小鸮卡片展示调查阶段、用时、工具步骤和同步时间；支持切换多个任务、手动刷新、空闲总览及跳转调查。 |
 | Notification Kit / Background Tasks Kit | `frontend/entry/src/main/ets/utils/investigationTasks.ets` | 系统通知授权、每项调查进度与完成通知；运行期间申请 `dataTransfer` 连续后台任务，以同步服务端状态。最后一项任务结束后停止后台任务。 |
 | ArkUI 页面动效 | `frontend/entry/src/main/ets/pages/` | 主栏及工作区子栏选中态、列表卡片按压与入场、个人页切换、登录输入焦点和调查工具步骤采用短时属性动画及转场；调查记录标识使用 `geometryTransition` 共享元素转场。 |
+| 系统媒体／文件选择器 | `pages/WorkspaceDetail.ets`、`utils/localVideoUpload.ets` | PhotoViewPicker 选择相册视频，DocumentViewPicker 选择文件；读取用户授予的单文件 URI，私有缓存准备原生 multipart 上传，不扫描媒体库。 |
 
 ## 界面动效
 
@@ -39,6 +40,8 @@
 `FormExtensionAbility` 仅在添加、刷新和点击事件时执行，不进行常驻轮询。卡片的【↻】会重新读取安全登录状态，调用任务接口并更新快照；切换按钮读取本地快照。同步时间始终可见，避免将缓存当成实时状态。点击卡片或通知先走现有登录验证，再定位工作区与会话。
 
 ## 设备验证
+
+文档新增[功能截图导览](../user-guide/11-interface-tour.md)和[通知与桌面小鸮](../user-guide/10-investigation-notifications.md)。2026-09-29 模拟器截图展示已完成调查、工具链、人脸抓拍和 2×2 空闲卡片；不证明运行中通知、2×4 卡片或真机端侧人脸比对已经验收。采集只在临时构建关闭隐私窗口，正式源码与拍摄结束后的安装包仍启用隐私保护。
 
 在 HarmonyOS 6.1 手机上验证登录填充提示、隐私窗口的截屏表现、人脸重分类、系统分享面板及完成触感。卡片需额外验证：添加桌面后的首次加载、任务运行和完成时刷新、应用退出后的同步时刻、点击后的登录校验与调查定位、用户退出登录后的清空、重复添加和删除卡片。尤其要测试无振动设备或关闭振动、分享目标不可用及网络中断。本页描述的是代码接入状态，并不代替实机验收。
 

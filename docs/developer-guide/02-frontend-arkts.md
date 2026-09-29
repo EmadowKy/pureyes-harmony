@@ -28,6 +28,10 @@ frontend/
 │       │       └── ProfileTab.ets # 个人中心、控制台入口与设置
 │       └── utils/                 # 工具库
 │           ├── http.ets            # Network 请求封装、Base URL 管理与 Token 拦截
+│           ├── localVideoUpload.ets # 系统选择器 URI、私有缓存副本与上传清理
+│           ├── investigationTasks.ets # 应用级任务轮询、通知与连续后台任务
+│           ├── investigationCard.ets # 服务卡片快照、刷新与任务切换
+│           ├── investigationTaskState.ets # 通知／卡片共享的状态格式
 │           ├── security.ets        # 安全凭据与会话状态
 │           └── documentation.ets   # 在线使用说明入口
 ```
@@ -45,6 +49,10 @@ frontend/
 ## 3. HTTP 请求与启动会话校验
 
 工作区详情使用【片段 | 人脸 | 问答】三个子页。【问答】挂载 `AgentConversationPanel`：先加载持久化调查线与可选片段，再按会话读取各轮消息；运行期间轮询状态和会话记录并显示阶段、耗时及工具调用。提交控件在任何组员的会话运行中隐藏，仅提供【停止本轮】；结束后显示追问输入。失败的最新轮可重新提交同一问题。`MarkdownAnswer` 使用打包的 `answer_markdown.html` 渲染 Markdown，并将视频时间标记交回工作区播放器定位。跨用户状态以服务端会话为准，切换页面或重新进入后重新同步。
+
+`process_entries` 按事件顺序交织工具步骤与模型 `commentary`。运行中默认展开，结束后默认收起；显式展开状态按轮次保存。工具参数按工具类型映射中文字段，批量画面逐项展示来源与时间。`elapsed_seconds` 由记录创建时间与持久化终态事件派生，历史轮次显示耗时；顶部引用列表按会话固定片段顺序展示。列表的三点按钮遵循服务端 `can_manage`，改名和删除均由接口重新校验权限。
+
+本地视频通过 `PhotoViewPicker` 或 `DocumentViewPicker` 选择，`localVideoUpload.ets` 用授权描述符读取文件并复制到应用私有缓存；`HttpUtil.uploadFile` 使用原生 multipart `filePath` 上传并报告进度，不把整段视频放入内存。校验扩展名、非空文件和 2 GB 客户端上限，结束后关闭描述符、删除私有副本，不删除用户原视频。上传成功只建立工作区私有视频源；确认截取才创建片段及可选预处理任务。
 
 `http.ets` 根据官方或自定义服务器设置构造请求，返回业务码及 HTTP 状态码，并区分网络异常。普通受保护接口使用 `AppStorage` 中的访问令牌；登录请求不发送旧令牌，续期请求明确使用刷新令牌。
 
@@ -157,6 +165,10 @@ Image($r('app.media.business_monitor'))
 4. **分享与触感** (`components/AgentConversationPanel.ets`)：
    完成的调查结论可由用户调用 Share Kit 分享；页面看到任务完成时调用 Sensor Service Kit 发出轻触感。
 5. **调查服务卡片** (`investigationform/`)：
-   Form Kit 的桌面卡片显示最近同步的调查状态和工具步骤数；点击后验证会话并定位到对应工作区。卡片不显示监控隐私内容，应用关闭后不会自行轮询服务端。
+   Form Kit 的 2×2 / 2×4 小鸮卡片显示阶段、用时、工具步骤与同步时间；支持多任务切换、刷新、空闲总览及验证登录后定位。卡片含标题但不展示问题、答案或画面；标题本身也可能敏感。
+6. **通知与连续后台任务** (`utils/investigationTasks.ets`)：
+   应用级任务中心轮询 `/workspaces/agent/tasks`，以 Notification Kit 展示进度与终态，运行时申请 `dataTransfer` 连续后台任务。最后一个任务结束后停止后台任务；退出登录清空快照并取消通知。系统取消后台任务或杀进程后不能保证继续更新，尚未接入服务端 Push Kit 推送。
+7. **系统视频选择** (`WorkspaceDetail.ets`)：
+   调用 PhotoViewPicker 与 DocumentViewPicker，只读取用户明确选中的视频，不扫描整个媒体库。
 
 实现边界见 [鸿蒙原生能力接入](06-harmonyos-native-features.md)。

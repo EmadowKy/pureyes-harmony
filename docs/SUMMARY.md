@@ -14,6 +14,8 @@
 * [监控与回放](user-guide/05-live-monitoring.md)
 * [工作区与视频片段](user-guide/06-workspace-management.md)
 * [调查问答](user-guide/07-ai-multimodal-qa.md)
+* [调查通知与桌面小鸮](user-guide/10-investigation-notifications.md)
+* [功能截图导览](user-guide/11-interface-tour.md)
 
 ### 个人与管理
 * [个人中心与模型配置](user-guide/09-profile-and-settings.md)
