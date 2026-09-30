@@ -2,6 +2,10 @@
 
 本文记录客户端实际接入的 HarmonyOS 能力、使用位置和适用范围。项目当前面向手机，工作区协作与视频 Agent 由服务端实现；它们本身不等于鸿蒙跨设备协同。
 
+![清眸的五类鸿蒙原生能力：端侧人脸比对、桌面小部件、任务通知、交互动效、安全与隐私](/illustrations/harmony-native-features.webp)
+
+图中结合人脸、调查、桌面卡片和系统通知的真实截图展示使用场景，下表对应具体代码与接入方式。
+
 | 能力 | 代码位置 | 当前用途 |
 | --- | --- | --- |
 | Core Vision Kit 人脸比对 | `frontend/entry/src/main/ets/utils/harmonyFaces.ets`、`pages/WorkspaceDetail.ets` | 在启用手机端重分类的后端配置下，下载待分组的人脸抓拍图，在手机上调用 `faceComparator` 比对并提交分组结果。视频抽帧、人脸检测及轨迹生成仍由后端完成。 |

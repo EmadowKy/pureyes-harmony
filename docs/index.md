@@ -28,6 +28,14 @@ features:
     details: 支持安防小组隔离、组长候选卡片邀请，实现监控与工作区资产组内完全共享。
 ---
 
-![清眸客户端、服务端、视频索引与调查 Agent 的功能架构示意](./illustrations/pureyes-architecture.png)
+## 系统架构
 
-从[快速开始](/user-guide/02-quick-start)了解操作；技术细节参见[开发者文档](/developer-guide/01-architecture-design)。本图为示意，实际页面见[设备截图](/user-guide/01-overview#界面演示)。
+![清眸客户端、服务端、视频索引与调查 Agent 的系统架构](/illustrations/pureyes-architecture.webp)
+
+从[快速开始](/user-guide/02-quick-start)了解操作；技术细节参见[开发者文档](/developer-guide/01-architecture-design)。
+
+## 鸿蒙原生能力
+
+![端侧人脸比对、桌面小部件、调查通知、交互动效与安全隐私](/illustrations/harmony-native-features.webp)
+
+查看[鸿蒙能力接入](/developer-guide/06-harmonyos-native-features)，或从[功能截图导览](/user-guide/11-interface-tour)浏览实际操作页面。

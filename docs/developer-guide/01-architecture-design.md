@@ -2,9 +2,9 @@
 
 本文面向软件架构师与系统工程师，详细阐述 Pureyes 鸿蒙多模态视觉监控与分析系统的分层架构、通信协议与端到端数据流向。
 
-![客户端、Flask 服务、视频与索引、调查 Agent 之间的功能关系](../illustrations/pureyes-architecture.png)
+![鸿蒙客户端、Flask 服务、视频存储、可复用索引与调查 Agent 的系统架构](/illustrations/pureyes-architecture.webp)
 
-图中展示功能边界，下面的 Mermaid 图与接口说明给出更具体的数据流；图片中的图标与卡片不是实际应用界面。
+图中将真实客户端界面与各层功能关系放在一起；下面的 Mermaid 图与接口说明进一步展开数据流。
 
 ---
 

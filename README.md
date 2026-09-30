@@ -2,9 +2,7 @@
 
 面向 HarmonyOS 的小组视频调查应用。成员在工作区整理多个监控或上传视频的片段，提出问题，查看 Agent 的工具执行记录、证据时间点与回答，并在同一调查中继续追问。
 
-![清眸客户端、Flask 服务、视频索引与调查 Agent 的总体架构示意](docs/illustrations/pureyes-architecture.png)
-
-> 上图是功能架构示意；实际界面请看[用户指南中的设备截图](docs/user-guide/01-overview.md#界面演示)。
+![清眸系统架构：鸿蒙客户端、Flask 服务、可复用视频索引与调查 Agent](docs/public/illustrations/pureyes-architecture.webp)
 
 ## 主要功能
 
@@ -22,7 +20,21 @@
 
 实际界面见[功能截图导览](docs/user-guide/11-interface-tour.md)，卡片与通知的使用边界见[用户说明](docs/user-guide/10-investigation-notifications.md)。
 
-![导入视频、截取片段、预处理、跨视频提问与核对证据的流程示意](docs/illustrations/multi-video-investigation.png)
+![清眸多视频调查：导入与截取、建立索引、工具核验、证据结论与连续追问](docs/public/illustrations/multi-video-investigation.webp)
+
+## 协作工作区
+
+小组成员共享片段库、人脸线索和调查记录。来自监控与本地上传的视频汇集到工作区，成员可沿用同一证据范围继续追问，并通过时间点回到原视频。
+
+![清眸协作工作区：小组成员、视频来源、片段、人脸线索与多轮调查](docs/public/illustrations/collaborative-workspace.webp)
+
+## 鸿蒙原生能力
+
+端侧人脸比对、桌面小部件、调查任务通知、ArkUI 交互动效，以及安全存储与隐私窗口，共同连接手机内的调查与桌面上的任务状态。
+
+![清眸鸿蒙原生能力：端侧人脸比对、桌面小部件、通知、交互动效、安全与隐私](docs/public/illustrations/harmony-native-features.webp)
+
+使用方法见[通知与桌面小部件](docs/user-guide/10-investigation-notifications.md)，接入方式见[鸿蒙原生能力](docs/developer-guide/06-harmonyos-native-features.md)。
 
 ## 文档入口
 
@@ -41,5 +53,3 @@
 | `docs/user-guide/` | 面向用户和管理员的操作说明 |
 | `docs/developer-guide/` | 前后端与 AI 模块设计 |
 | `docs/server-deployment/` | 环境、模型文件和部署维护 |
-
-示意图用于解释工作流程，不能代替实际截图、算法评测或身份鉴定结果；视频中的人脸归类及跨镜头关联需要人工核对。
