@@ -1,14 +1,6 @@
 # 功能截图导览
 
-以下截图来自 2026-09-29 的鸿蒙模拟器，以已有视频和调查记录展示主要功能。点击图片可在浏览器中查看原图；每组可展开。具体步骤以各章操作说明为准。
-
-## 截图来源与使用边界
-
-- 这些原有截图采用临时截图构建采集，拍摄后已恢复正常构建。当前版本默认开启隐私保护，用户也可在账号安全页验证密码后允许截图与录屏；见[权限设置](09-profile-and-settings.md#截图与录屏权限)。
-- 原图分辨率为 1256 × 2760，文档使用同分辨率 WebP 压缩图。没有生成或替换应用画面。
-- 早期演示账号截图仍保留在相关章节。这里的管理员、test1、test、模型名称和视频备注只用于界面说明。
-- 人脸示例使用 ChokePoint 研究数据，导入说明标明非商业研究用途；视频问答使用已有 UCF-Crime 测试素材。本文图像不授予原数据集的再使用许可，公开宣传前需核对授权、署名与人物隐私。
-- 未纳入实时监控黑屏、部分缩略图缺失及人脸证据弹窗状态不一致的画面，不将待核查问题作为正常功能示例。运行中通知、登录页和系统选择器未在本次采集，不宣称已经展示所有状态。
+本页按使用场景展示清眸的功能界面。展开各组查看截图，点击图片可打开原图；操作步骤见各组对应的指南。
 
 ## 开始使用、监控与回放
 
@@ -39,7 +31,7 @@
 
 ## 人脸线索
 
-操作说明：[人脸线索](06-workspace-management.md#_4-人脸线索)。分组和抓拍是候选线索，不等于身份鉴定。
+操作说明：[人脸线索](06-workspace-management.md#_4-人脸线索)。
 
 <details><summary>展开人脸分组与跨视频出现记录</summary>
 <div class="screenshot-grid">
@@ -49,7 +41,7 @@
 
 ## 多视频调查与追问
 
-操作说明：[调查问答](07-ai-multimodal-qa.md)。过程截图是已完成调查的历史记录，非当前正在运行的新任务。
+操作说明：[调查问答](07-ai-multimodal-qa.md)。
 
 <details><summary>展开 8 张调查截图</summary>
 <div class="screenshot-grid">
@@ -65,7 +57,7 @@
 
 ## 小组、个人中心与管理员
 
-操作说明：[小组协作](04-group-collaboration.md)、[个人中心](09-profile-and-settings.md)、[用户管理](08-admin-console.md)。表单仅展示入口，没有提交修改。
+操作说明：[小组协作](04-group-collaboration.md)、[个人中心](09-profile-and-settings.md)、[用户管理](08-admin-console.md)。
 
 <details><summary>展开 11 张设置与管理截图</summary>
 <div class="screenshot-grid">
@@ -82,8 +74,16 @@
 <figure><a href="/screenshots/20260929/37-member-detail.webp"><img src="/screenshots/20260929/37-member-detail.webp" alt="成员资料" loading="lazy" /></a><figcaption>成员资料</figcaption></figure>
 </div></details>
 
-## 桌面小鸮
+## 桌面小部件
 
-操作说明：[调查通知与桌面小鸮](10-investigation-notifications.md)。
+操作说明：[调查通知与桌面小部件](10-investigation-notifications.md)。
 
 ![桌面服务卡片展示调查完成记录](/screenshots/20260929/35-desktop-widget.webp)
+
+<span id="截图来源与使用边界"></span>
+
+## 截图与素材说明
+
+截图采集于 2026-09-29 的鸿蒙模拟器，原图为 1256 × 2760，网页使用同分辨率 WebP 图片。账号、小组、模型名称和视频备注为示例内容，可按团队需要设置。
+
+人脸示例来自 ChokePoint 研究数据，视频调查示例使用 UCF-Crime 素材。素材再使用遵循原数据集许可；公开展示时请确认使用范围、署名要求与人物隐私。截图与录屏权限的设置方法见[窗口隐私](09-profile-and-settings.md#截图与录屏权限)。

@@ -1,6 +1,6 @@
 # 02-后端服务部署、轻量模型权重与运行维护
 
-本指南详细说明如何在自建 Linux GPU 服务器或云服务器中安装部署 Pureyes 后端服务，配置轻量模型权重与多模态大模型 API。
+在 Linux 服务器上部署 Pureyes，需要准备 Python 环境、预处理模型、服务密钥和视觉模型 API 配置。本章按安装、启动和运行维护介绍部署步骤。
 
 ---
 
@@ -44,7 +44,7 @@ python -m pip install -U pip setuptools wheel
 # 安装 PyTorch CUDA 12.6 Wheel
 pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu126
 
-# 验证 GPU 部署的 CUDA 状态；CPU 部署输出 False 不代表服务无法启动
+# 检查 CUDA 加速是否可用；CPU 部署时输出 False
 python -c "import torch; print('PyTorch CUDA available:', torch.cuda.is_available()); print('Device Name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No GPU')"
 ```
 
@@ -67,7 +67,7 @@ pip install -r backend/requirements.txt
 3. **ByteTrack 多目标追踪配置 (`bytetrack_fixed.yaml`)**：
    - 放置于 `backend/app/mva_v2/bytetrack_fixed.yaml`。
 4. **人脸模型或鸿蒙端侧归类**：
-   - `server` 模式配置 YuNet 与 SFace；`harmony` 模式由手机端比对归类，需支持 Core Vision Kit 的设备。不能拿 OSNet 身体特征代替人脸模型。
+   - `server` 模式配置 YuNet 与 SFace；`harmony` 模式由支持 Core Vision Kit 的手机完成比对与归类。
 5. **CLIP 和 OCR 本地模型**：
    - 配置 `CLIP_MODEL_PATH` 及 `OCR_MODEL_ROOT`，CLIP 目录含模型与 processor，OCR 目录含检测、识别、分类三个 ONNX 文件。缺失时对应索引不可用，不会在用户提问时临时下载。
 6. **多模态视觉大模型 API 配置**：
@@ -139,7 +139,7 @@ curl http://127.0.0.1:8000/api/health
 | `MONITOR_MIN_FREE_DISK_GB` | `2` | 低空间保护阈值。 |
 | `MONITOR_RECORDER_SUPERVISOR_SECONDS` | `30` | 录像进程检查间隔，最小 15 秒。 |
 
-清理逻辑避开正在写入、尚在收尾的文件；Linux 使用录像进程锁防止同一设备重复录制。磁盘容量、断流、转码失败都会影响可回放范围。迁移后确认目录实际解析到数据盘、有写入权限，并测试最新录像与历史定位；不要只用 API 健康检查证明录像已保存。
+清理逻辑避开正在写入和收尾的文件，Linux 使用进程锁防止同一设备重复录制。磁盘容量、断流和转码失败会影响可回放范围。迁移后检查数据盘挂载与写入权限，并通过最新录像、历史定位和片段截取确认录像可用。
 
 ## 8. 编译与发布文档站点
 
@@ -151,6 +151,6 @@ npm install
 npm run docs:build
 ```
 
-构建输出为 `docs/.vitepress/dist/`。先检查构建成功和截图文件完整，再将输出内容同步到 Web 服务的文档目录。例如当前演示部署的根目录是 `/var/www/docs`，里面同时包含直播的 `live/`；发布文档不得删除直播目录或使用未经排除规则核对的整目录清空操作。
+构建输出为 `docs/.vitepress/dist/`。构建成功后，将输出同步到 Web 服务的文档目录。演示站点使用 `/var/www/docs`，其中 `live/` 存放直播文件；文档发布时保留该目录，只更新文档输出。
 
-仅修改 Markdown、文档主题和截图，不需要重启后端或录像进程。更新后分别访问用户指南、新增页面和图片，确认不是旧缓存；涉及后端代码时另行按服务管理方式部署。运行时数据库、权重、上传视频、录像和 `.runtime` 不应进入文档发布包。
+文档发布不需要重启后端或录像进程。发布后检查主页、操作指南、图片和站内链接；后端代码按服务部署流程更新。发布范围仅包含文档构建输出，数据库、模型权重、上传视频、录像和运行时密钥保留在各自的存储目录。

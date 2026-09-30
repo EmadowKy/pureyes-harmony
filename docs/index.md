@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "Pureyes (清眸)"
   text: "鸿蒙多模态视觉监控与分析系统"
-  tagline: 多视频调查 · 可核验证据 · 连续追问 · 鸿蒙桌面小鸮
+  tagline: 多视频调查 · 可核验证据 · 连续追问 · 鸿蒙桌面小部件
   actions:
     - theme: brand
       text: 📖 终端用户指南

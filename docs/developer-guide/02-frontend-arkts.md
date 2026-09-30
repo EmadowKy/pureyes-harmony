@@ -1,6 +1,6 @@
 # 02-鸿蒙前端 ArkTS 架构与组件设计
 
-本文档面向鸿蒙前端开发人员，详细拆解工程目录结构、ArkTS 页面组件设计、网络请求拦截器机制以及系统 Symbol 矢量符号的使用规范。
+前端使用 ArkTS 与 ArkUI，按页面、复用组件和工具库组织代码。本章介绍页面状态、网络请求、视觉规范及系统能力接入。
 
 ---
 
@@ -62,11 +62,11 @@ frontend/
 
 ## 4. Pureyes 视觉系统与图标规范
 
-界面采用“取证控制台”视觉方向：中性雾灰承载长时间工作，深海军蓝表示主流程工具，钴蓝只表示选择与可跳转内容，琥珀色用于实时、待处理和关键刻线。设计语言来自调查卷宗、时间轴和视频标注轨，不使用通用管理后台常见的渐变色块、大面积蓝色胶囊和漂浮阴影。
+界面采用“取证控制台”视觉方向：中性雾灰作为页面背景，深海军蓝用于主流程工具，钴蓝表示选择与可跳转内容，琥珀色标记实时、待处理和关键刻线。通过调查卡片、时间轴和状态轨组织信息层级。
 
 ### 4.1 色彩语义
 
-颜色统一从 `resources/base/element/color.json` 和 `resources/dark/element/color.json` 读取，页面代码不应继续新增无语义的蓝色、灰色常量。
+颜色统一从 `resources/base/element/color.json` 和 `resources/dark/element/color.json` 读取，通过语义 Token 适配浅色与深色主题。
 
 | Token | 浅色模式 | 用途 |
 | :--- | :--- | :--- |
@@ -90,7 +90,7 @@ frontend/
 
 ### 4.3 操作层级
 
-同一个页面不得把所有动作都画成同样的实心圆角按钮。按下面的层级选择样式：
+按操作层级选择控件样式：
 
 | 层级 | 典型动作 | 样式 |
 | :--- | :--- | :--- |
@@ -128,7 +128,7 @@ SymbolGlyph($r('sys.symbol.chevron_left'))
   .fontColor([$r('app.color.app_text_primary')])
 ```
 
-主要业务入口使用审核通过的 Pureyes 光学图标。资源统一为 512×512 RGBA PNG，保存在 `resources/base/media/`，选中和未选中状态通过容器背景与透明度区分，不对图片动态染色：
+主要业务入口使用 Pureyes 光学图标。资源统一为 512×512 RGBA PNG，保存在 `resources/base/media/`，选中和未选中状态通过容器背景与透明度区分：
 
 | 业务功能 | 媒体资源 | 主要使用位置 |
 | :--- | :--- | :--- |
@@ -148,18 +148,18 @@ Image($r('app.media.business_monitor'))
   .objectFit(ImageFit.Contain)
 ```
 
-新增品牌化功能图标时，必须先提交图标清单和预览图进行人工审核；审核通过后再生成独立资源、清理透明通道并接入。品牌图片不得替代返回、Home、刷新、删除等系统操作图标。
+业务图标按统一尺寸与透明通道规格保存；返回、Home、刷新和删除等通用操作使用系统符号。
 
 ---
 
 ## 5. 鸿蒙原生安全与交互能力
 
-前端接入以下系统能力，实际效果需在目标设备上验证：
+前端接入以下系统能力：
 
 1. **系统凭据填充** (`Login.ets`)：
    使用 `.contentType(ContentType.USER_NAME)` 与 `.contentType(ContentType.PASSWORD)` 标记输入框；凭据保存和解锁提示由系统及用户设置决定。
 2. **隐私窗口** (`EntryAbility.ets`)：
-   配置 `ohos.permission.PRIVACY_WINDOW`，通过 `CaptureProtection` 默认限制系统截屏与录屏。账号安全页验证当前账号密码后可更改联合权限，设置按账号保存；启动先保护、登录后恢复，退出登录重新保护。未接入注视感知。
+   配置 `ohos.permission.PRIVACY_WINDOW`，通过 `CaptureProtection` 默认限制系统截屏与录屏。窗口隐私页验证当前账号密码后可更改联合权限，设置按账号保存；启动先保护、登录后恢复，退出登录重新保护。
 3. **端侧人脸比对** (`utils/harmonyFaces.ets`)：
    后端配置为鸿蒙模式时，手机调用 Core Vision Kit 对服务器抓拍图进行分组比对。
 4. **分享与触感** (`components/AgentConversationPanel.ets`)：
@@ -167,8 +167,8 @@ Image($r('app.media.business_monitor'))
 5. **调查服务卡片** (`investigationform/`)：
    Form Kit 的 2×2 / 2×4 小鸮卡片显示阶段、用时、工具步骤与同步时间；支持多任务切换、刷新、空闲总览及验证登录后定位。卡片含标题但不展示问题、答案或画面；标题本身也可能敏感。
 6. **通知与连续后台任务** (`utils/investigationTasks.ets`)：
-   应用级任务中心轮询 `/workspaces/agent/tasks`，以 Notification Kit 展示进度与终态，运行时申请 `dataTransfer` 连续后台任务。最后一个任务结束后停止后台任务；退出登录清空快照并取消通知。系统取消后台任务或杀进程后不能保证继续更新，尚未接入服务端 Push Kit 推送。
+   应用级任务中心轮询 `/workspaces/agent/tasks`，以 Notification Kit 展示进度与终态，运行时申请 `dataTransfer` 连续后台任务。最后一个任务结束后停止后台任务；退出登录清空快照并取消通知。系统终止后台任务或应用进程后，同步暂停，重新打开应用时恢复。
 7. **系统视频选择** (`WorkspaceDetail.ets`)：
    调用 PhotoViewPicker 与 DocumentViewPicker，只读取用户明确选中的视频，不扫描整个媒体库。
 
-实现边界见 [鸿蒙原生能力接入](06-harmonyos-native-features.md)。
+系统能力的数据流、配置与开发测试要点见[鸿蒙原生能力接入](06-harmonyos-native-features.md)。

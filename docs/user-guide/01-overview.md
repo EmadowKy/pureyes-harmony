@@ -11,7 +11,7 @@
 | 看实时监控或回放录像 | [监控与回放](05-live-monitoring.md) |
 | 截取片段、查看预处理和人脸线索 | [工作区与视频片段](06-workspace-management.md) |
 | 对多个片段提问、查看证据、继续追问 | [调查问答](07-ai-multimodal-qa.md) |
-| 在通知栏或桌面查看调查进度 | [调查通知与桌面小鸮](10-investigation-notifications.md) |
+| 在通知栏或桌面查看调查进度 | [调查通知与桌面小部件](10-investigation-notifications.md) |
 | 浏览各个功能的实际界面 | [功能截图导览](11-interface-tour.md) |
 | 修改资料、密码或模型配置 | [个人中心](09-profile-and-settings.md)与[账号安全](03-authentication.md) |
 | 管理员工账号（仅管理员） | [用户管理](08-admin-console.md) |
@@ -20,18 +20,18 @@
 
 ## 界面演示
 
-本页保留早期演示账号的截图，其中部分页面是空状态。新增的[功能截图导览](11-interface-tour.md)来自 2026-09-29 的模拟器，展示已有视频、真实预处理人脸线索、多轮调查和桌面卡片。截图中的测试名称与模型名称只是示例，不代表使用时必须采用相同配置。
+下面按工作区、账号邀请和监控介绍主要页面。更多界面见[功能截图导览](11-interface-tour.md)。
 
 ### 有视频、有线索的调查工作区
 
-进入工作区后，【片段】【人脸】【问答】三个主页面保留底栏；截取视频或进入具体调查时收起底栏，避免操作层级混淆。以下界面来自已有测试数据，不是生成的界面示意图。
+进入工作区后，【片段】【人脸】【问答】三个主页面保留底栏；截取视频或进入具体调查时收起底栏，点击左上角返回按钮可回到原主页面。
 
 <div class="screenshot-grid">
 <figure><img src="/screenshots/20260929/15-face-groups.webp" alt="预处理生成的人脸分组卡片" loading="lazy" /><figcaption>人脸分组与跨视频记录</figcaption></figure>
 <figure><img src="/screenshots/20260929/23-investigation-references.webp" alt="调查详情展开引用的三个视频片段" loading="lazy" /><figcaption>固定证据范围与可定位的回答</figcaption></figure>
 </div>
 
-可从[工作区与视频片段](06-workspace-management.md)开始导入视频，也可直接阅读[调查问答](07-ai-multimodal-qa.md)。公开展示测试素材前请核对原数据集的使用范围和署名要求，详见[截图说明](11-interface-tour.md#截图来源与使用边界)。
+可从[工作区与视频片段](06-workspace-management.md)开始导入视频，也可直接阅读[调查问答](07-ai-multimodal-qa.md)。
 
 ### 账号与邀请
 
@@ -45,11 +45,11 @@
 
 ### 工作区与监控
 
-选择小组后，在【工作区】点击【新建】建立一项调查。进入工作区后，可截取视频片段，再在【问答】中选择片段提问。下图中的工作区尚无片段和调查记录。详见[工作区与视频片段](06-workspace-management.md)。
+选择小组后，在【工作区】点击【新建】创建工作区。进入后截取视频片段，再在【问答】中选择片段提问。工作区卡片显示名称与调查轮数。详见[工作区与视频片段](06-workspace-management.md)。
 
 ![清眸演示组中建立的展厅视频排查演示工作区](../image/workspace-created.png)
 
-【监控】页可添加摄像头或视频流。下图是尚未接入视频源时的空状态；接入可用视频后，才能查看画面并从录像截取片段。详见[监控与回放](05-live-monitoring.md)。
+【监控】页用于添加摄像头或视频流。没有设备时显示添加入口；接入后可查看实时画面、回放录像和截取片段。详见[监控与回放](05-live-monitoring.md)。
 
 ![清眸演示组的监控页提示尚未添加视频源](../image/monitor-no-video-source.png)
 

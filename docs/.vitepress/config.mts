@@ -37,7 +37,7 @@ export default withMermaid(
               { text: '监控与回放', link: '/user-guide/05-live-monitoring' },
               { text: '工作区与视频片段', link: '/user-guide/06-workspace-management' },
               { text: '调查问答', link: '/user-guide/07-ai-multimodal-qa' },
-              { text: '调查通知与桌面小鸮', link: '/user-guide/10-investigation-notifications' },
+              { text: '调查通知与桌面小部件', link: '/user-guide/10-investigation-notifications' },
               { text: '功能截图导览', link: '/user-guide/11-interface-tour' }
             ]
           },
