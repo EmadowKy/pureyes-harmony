@@ -6,13 +6,9 @@ hero:
   text: "鸿蒙多模态视觉监控与分析系统"
   tagline: 多视频调查 · 可核验证据 · 连续追问 · 鸿蒙桌面小部件
   actions:
-    - theme: brand
+    - theme: alt
       text: 📖 终端用户指南
       link: /user-guide/01-overview
-    - theme: alt
-      text: 网页版 Beta
-      link: /web/
-      target: _self
     - theme: alt
       text: 功能截图导览
       link: /user-guide/11-interface-tour
