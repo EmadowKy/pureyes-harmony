@@ -12,6 +12,7 @@ export default withMermaid(
       // 顶部导航栏
       nav: [
         { text: '首页', link: '/' },
+        { text: '网页版 Beta', link: '/web/', target: '_self' },
         { text: '用户指南', link: '/user-guide/01-overview' },
         { text: '开发者文档', link: '/developer-guide/01-architecture-design' },
         { text: '服务器部署', link: '/server-deployment/01-requirements-and-env' }

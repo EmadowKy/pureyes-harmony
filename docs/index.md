@@ -10,6 +10,10 @@ hero:
       text: 📖 终端用户指南
       link: /user-guide/01-overview
     - theme: alt
+      text: 网页版 Beta
+      link: /web/
+      target: _self
+    - theme: alt
       text: 功能截图导览
       link: /user-guide/11-interface-tour
     - theme: alt
