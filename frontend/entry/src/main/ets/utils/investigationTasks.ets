@@ -3,6 +3,7 @@ import { notificationManager } from '@kit.NotificationKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { HttpUtil } from './http';
 import { InvestigationCard } from './investigationCard';
+import { InvestigationFloat } from './investigationFloat';
 import { InvestigationDashboard, InvestigationTaskSnapshot, parseInvestigationDashboard, taskDuration } from './investigationTaskState';
 
 export class InvestigationTaskCenter {
@@ -29,6 +30,7 @@ export class InvestigationTaskCenter {
         backgroundTaskManager.on('continuousTaskCancel', (): void => {
           InvestigationTaskCenter.backgroundStarted = false;
           if (InvestigationTaskCenter.dashboard.activeCount > 0) {
+            if (!InvestigationTaskCenter.foreground) InvestigationFloat.backgroundCancelled();
             AppStorage.setOrCreate('investigation_notification_hint', '后台同步已被系统取消；返回应用可继续同步。');
           }
         });
@@ -124,14 +126,20 @@ export class InvestigationTaskCenter {
     InvestigationTaskCenter.busy = true;
     const epoch = InvestigationTaskCenter.epoch;
     InvestigationTaskCenter.lastRefresh = Date.now();
+    let synchronized = false;
     try {
       const res = await HttpUtil.get('/workspaces/agent/tasks');
-      if (res.code !== 0 || !res.data) return;
+      if (res.code !== 0 || !res.data) {
+        if (epoch === InvestigationTaskCenter.epoch) InvestigationFloat.syncFailed();
+        return;
+      }
       const next = parseInvestigationDashboard(JSON.parse(res.data) as Record<string, Object>);
       if (!AppStorage.get<string>('access_token') || epoch !== InvestigationTaskCenter.epoch) return;
       const previous = InvestigationTaskCenter.dashboard;
       InvestigationTaskCenter.dashboard = next;
-      await InvestigationCard.publishDashboard(context, next);
+      InvestigationFloat.update(next);
+      synchronized = true;
+      try { await InvestigationCard.publishDashboard(context, next); } catch (_error) {}
       if (epoch !== InvestigationTaskCenter.epoch) return;
       for (const old of previous.tasks) {
         if (!next.tasks.some((task: InvestigationTaskSnapshot): boolean => task.taskId === old.taskId)) {
@@ -165,11 +173,13 @@ export class InvestigationTaskCenter {
         InvestigationTaskCenter.backgroundStarted = false;
       }
     } catch (_error) {
+      if (!synchronized && epoch === InvestigationTaskCenter.epoch) InvestigationFloat.syncFailed();
       // Preserve the last synchronized card during transient connection failures.
     } finally { InvestigationTaskCenter.busy = false; }
   }
   static async clear(context: common.Context): Promise<void> {
     InvestigationTaskCenter.epoch++;
+    await InvestigationFloat.clear();
     InvestigationTaskCenter.initialized = false;
     if (InvestigationTaskCenter.timer) clearInterval(InvestigationTaskCenter.timer);
     InvestigationTaskCenter.timer = 0;

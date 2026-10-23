@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "investigation_float_reason",
+      "value": "用于在其他应用上方展示您主动开启的视频调查进度，并快捷返回调查"
+    },
+    {
       "name": "module_desc",
       "value": "module description"
     },

@@ -16,6 +16,7 @@
 | Sensor Service Kit 触感 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 页面在轮询中看到任务完成时发出一次 60 ms 轻触感。设备无马达或系统禁用振动时静默退化，结果仍正常显示。 |
 | Form Kit 服务卡片 | `frontend/entry/src/main/ets/investigationform/`、`utils/investigationCard.ets` | 2×2 / 2×4 小鸮卡片展示调查阶段、用时、工具步骤和同步时间；支持切换多个任务、手动刷新、空闲总览及跳转调查。 |
 | Notification Kit / Background Tasks Kit | `frontend/entry/src/main/ets/utils/investigationTasks.ets` | 系统通知授权、每项调查进度与完成通知；运行期间申请 `dataTransfer` 连续后台任务，以同步服务端状态。最后一项任务结束后停止后台任务。 |
+| Window Kit 闪控窗／闪控球 | `utils/investigationFloat.ets`、`utils/investigationFloatState.ets`、`pages/InvestigationFloatWindow.ets` | HarmonyOS 7 上由用户主动开启跨应用任务窗口，支持系统窗球联动、多任务切换、阶段与耗时展示，以及返回所选调查。 |
 | ArkUI 页面动效 | `frontend/entry/src/main/ets/pages/` | 主栏及工作区子栏选中态、列表卡片按压与入场、个人页切换、登录输入焦点和调查工具步骤采用短时属性动画及转场；调查记录标识使用 `geometryTransition` 共享元素转场。 |
 | 系统媒体／文件选择器 | `pages/WorkspaceDetail.ets`、`utils/localVideoUpload.ets` | PhotoViewPicker 选择相册视频，DocumentViewPicker 选择文件；读取用户授予的单文件 URI，私有缓存准备原生 multipart 上传，不扫描媒体库。 |
 
@@ -48,6 +49,39 @@
 状态通过前台及连续后台任务期间的轮询同步。普通进度通知同一任务约 15 秒更新一次，完成通知在观察到状态变化后立即发出并去重。系统为 `dataTransfer` 连续后台任务提供常驻入口；系统终止后台任务或应用进程后，同步暂停，重新打开应用时恢复。
 
 `FormExtensionAbility` 仅在添加、刷新和点击事件时执行，不进行常驻轮询。卡片的【↻】会重新读取安全登录状态，调用任务接口并更新快照；切换按钮读取本地快照。同步时间始终可见，避免将缓存当成实时状态。点击卡片或通知先走现有登录验证，再定位工作区与会话。
+
+## 闪控窗与闪控球
+
+### 系统能力与签名授权
+
+闪控使用 `@kit.ArkUI` 的 `floatView`（API 26）与 `floatingBall`，不使用应用内遮罩模拟悬浮窗。调用前通过 `deviceInfo.apiAvailable('26.0.0')`、系统能力与两个模块的可用性检查；最低 API 23 的应用仍可构建，不支持闪控的设备使用现有通知、卡片和应用内进度。
+
+`module.json5` 声明以下权限：
+
+| 权限 | 授权条件 |
+| --- | --- |
+| `ohos.permission.FLOAT_VIEW` | 用户授权；声明用途说明与使用场景，首次主动开启时申请，拒绝后再次点击才进入系统授权设置。 |
+| `ohos.permission.USE_FLOAT_BALL` | 系统授权，用于创建与绑定闪控球。 |
+
+SDK 26.0.0.105 的权限定义中，两项均为 `system_basic`、`provisionEnable: true`。接入设备前，需按华为应用能力申请流程取得对应授权，并重新生成包含权限的签名 Profile；仅在模块声明权限或获得运行时弹窗授权并不足够。检查 Profile 的 `acls.allowed-acls`，不要手改已签名 Profile、提升应用等级或将密钥提交到仓库。构建与签名通过不替代设备上的权限验收。
+
+权限申请需描述真实业务场景：用户主动开启视频调查进度展示，查看阶段、用时与步骤，点击返回核验证据，不展示营销内容或敏感画面。华为[闪控球权限申请答复](https://developer.huawei.com/consumer/cn/forum/topic/0204223829402686257)对开放场景作了限制；不在列举范围的场景可提交 UX 设计等材料申请例外审核。清眸的视频调查进度应按实际用途说明，不套用其他业务类型，是否批准以审核结果为准。接口参考见 [floatView](https://developer.huawei.com/consumer/cn/doc/harmonyos-references/js-apis-floatview)。
+
+### 状态与交互
+
+任务中心每次成功获取 `/api/workspaces/agent/tasks` 后把状态传入 `InvestigationFloat.update()`，再通过独立 `LocalStorage` 提供给窗口页面；窗口不读取接口密钥，不单独轮询，也不下载画面。只复制任务与路由标识、通用阶段、步骤数和耗时，不复制标题、问题、答案及工具参数。退出登录先清空共享快照，再关闭系统窗口；通过代次校验丢弃迟到的授权结果和窗口更新。
+
+先创建两个控制器，设置窗口页面，再调用 `floatView.bind()`，最后启动闪控窗；系统负责收起为球和点击展开。初始尺寸约为 280×220 vp，根据设备像素密度及系统尺寸、宽高比约束调整，窗口内可滚动。串行队列避免创建、更新、关闭互相穿插；`start()` 返回后继续等待 `STARTED`，关闭时等待窗和球的 `STOPPED` 回调后再解绑，并设有超时清理。
+
+窗口每秒更新本地耗时，闪控球普通内容更新至多每 10 秒一次，所选任务状态变化立即更新；网络数据仍来自任务中心。请求失败时冻结计时，超过 20 秒没有新快照的运行中任务标记同步中断，终态用时不再增加。已完成任务不会仅因后台停止轮询而被误报为中断。追问替换任务 ID 时继续跟随同一会话，删除记录后选择仍有权限的其他任务或显示空状态。
+
+完成时保留结果状态，不自动打开主界面。只有用户点击【查看】才调用 `restoreMainWindow()`，沿用通知与卡片的登录及工作区校验，再关闭闪控；未申请自动拉起主窗口权限。用户或系统关闭窗口后，后续轮询不会重新创建窗口，服务器调查不受关闭影响。系统取消后台同步时显示提示，恢复同步后清除；进程被终止后需要重新打开应用。
+
+### 验证
+
+`frontend/tests/investigationFloat.test.cjs` 覆盖任务选择与切换、追问跟随、隐私字段、密度与比例约束、过期与断网计时、拒绝授权、重复开启、窗球切换、异步关闭、返回路由，以及退出登录与迟到授权竞态。`investigationTasks.test.cjs` 验证任务中心与通知、卡片、闪控之间的状态分发。
+
+设备验收需使用具备闪控能力的 HarmonyOS 7 环境及已授权 Profile，检查系统授权弹窗、跨应用展示、窗球联动、旋转与字体放大、并发调查、断网恢复、完成返回、主动关闭及退出登录。模块测试使用模拟系统接口，不代表系统窗口已在设备上运行。
 
 ## 开发测试要点
 

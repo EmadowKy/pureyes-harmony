@@ -11,9 +11,16 @@ const compile = file => ts.transpileModule(fs.readFileSync(path.join(root, file)
 let now = 100000, current, deferred, lastCard;
 const notifications = [], cancellations = [];
 let starts = 0, stops = 0;
+const floatSnapshots = [];
+let floatFailures = 0, floatClears = 0, floatCancellations = 0, cancelBackground;
+let failCardPublish = false;
 const values = new Map([['access_token', 'test-token']]);
 const prefs = new Map();
 const context = vm.createContext({
+  InvestigationFloat: {
+    update(value) { floatSnapshots.push(value); }, syncFailed() { floatFailures++; },
+    backgroundCancelled() { floatCancellations++; }, clear: async () => { floatClears++; }
+  },
   Date: class extends Date { static now() { return now; } },
   setInterval: () => 1, clearInterval() {},
   AppStorage: { get: key => values.get(key), setOrCreate: (key, value) => values.set(key, value) },
@@ -23,7 +30,7 @@ const context = vm.createContext({
     publish: async request => notifications.push(request), cancel: async id => cancellations.push(id) },
   wantAgent: { OperationType: { START_ABILITY: 1 }, WantAgentFlags: { UPDATE_PRESENT_FLAG: 1 },
     getWantAgent: async value => value },
-  backgroundTaskManager: { BackgroundMode: { DATA_TRANSFER: 1 }, on() {},
+  backgroundTaskManager: { BackgroundMode: { DATA_TRANSFER: 1 }, on(_type, handler) { cancelBackground = handler; },
     startBackgroundRunning: async () => { starts++; }, stopBackgroundRunning: async () => { stops++; } },
   preferences: { removePreferencesFromCache: async () => {}, getPreferences: async (_context, { name }) => {
     if (!prefs.has(name)) prefs.set(name, new Map());
@@ -32,7 +39,10 @@ const context = vm.createContext({
       put: async (key, value) => file.set(key, value), delete: async key => file.delete(key), flush: async () => {} };
   } },
   formBindingData: { createFormBindingData: value => value },
-  formProvider: { updateForm: async (_id, binding) => { lastCard = binding; } }
+  formProvider: { updateForm: async (_id, binding) => {
+    if (failCardPublish) throw new Error('Card delivery unavailable');
+    lastCard = binding;
+  } }
 });
 vm.runInContext(`${compile('investigationTaskState.ets')}\n${compile('investigationCard.ets')}\n${compile('investigationTasks.ets')}
 globalThis.api = { InvestigationTaskCenter, InvestigationCard, parseInvestigationDashboard, taskPool, taskDuration };`, context);
@@ -67,10 +77,18 @@ async function refresh(tasks) { now += 5000; current = dashboard(tasks); await c
   await flush(); await flush();
   assert.equal(notifications.length, 2);
   assert.equal(starts, 1);
+  assert.equal(floatSnapshots.at(-1).activeCount, 2, 'fresh API snapshots reach the flash window');
+  cancelBackground();
+  assert.equal(floatCancellations, 0, 'foreground polling is not marked interrupted');
+  center.setForeground(false);
+  cancelBackground();
+  assert.equal(floatCancellations, 1, 'background cancellation reaches flash display');
+  center.setForeground(true);
   await refresh([task('a'), task('b')]);
   assert.equal(notifications.length, 2, 'progress throttled');
   await refresh([task('a', 'completed'), task('b')]);
   assert.equal(notifications.length, 3, 'completion immediately delivered');
+  assert.equal(floatSnapshots.at(-1).tasks[0].status, 'completed', 'completion reaches flash display');
   await refresh([task('a', 'completed'), task('b')]);
   assert.equal(notifications.filter(n => n.content.normal.title.includes('已完成')).length, 1);
   await refresh([task('a', 'completed'), task('b', 'completed')]);
@@ -82,6 +100,17 @@ async function refresh(tasks) { now += 5000; current = dashboard(tasks); await c
   await center.submitted('fast', 'conversation-fast', 1);
   assert.ok(notifications.some(n => n.wantAgent.wants[0].parameters.conversationId === 'conversation-fast'
     && n.content.normal.title.includes('已完成')), 'fast tasks still notify completion');
+  failCardPublish = true;
+  await refresh([task('card-failed')]);
+  assert.equal(floatFailures, 0, 'card delivery errors do not mark flash network state stale');
+  assert.ok(notifications.some(n => n.wantAgent.wants[0].parameters.conversationId === 'conversation-card-failed'),
+    'card delivery failure cannot suppress task notifications');
+  failCardPublish = false;
+  deferred = Promise.reject(new Error('Offline'));
+  now += 5000;
+  await center.refresh();
+  assert.equal(floatFailures, 1, 'network failures reach the flash window');
+  deferred = undefined;
   let resolve;
   deferred = new Promise(done => { resolve = done; });
   now += 5000;
@@ -89,10 +118,12 @@ async function refresh(tasks) { now += 5000; current = dashboard(tasks); await c
   await flush();
   values.set('access_token', '');
   await center.clear({});
+  assert.equal(floatClears, 1, 'logout clears the flash display');
   const count = notifications.length;
   resolve({ code: 0, data: JSON.stringify(dashboard([task('stale')])) });
   await pending;
   assert.equal(notifications.length, count, 'late response after logout cannot notify');
+  assert.equal(floatSnapshots.at(-1).tasks[0].taskId, 'card-failed', 'late response cannot repopulate flash data');
   assert.equal((await card.dashboard({})).tasks.length, 0, 'logout clears card');
   console.log('PASS: task selection, per-widget cycling, notification throttling/dedup, fast tasks, logout races');
 })().catch(error => { console.error(error); process.exitCode = 1; });

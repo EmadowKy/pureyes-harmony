@@ -4,6 +4,7 @@ import { window } from '@kit.ArkUI';
 import { SecurityUtil } from '../utils/security';
 import { InvestigationTaskCenter } from '../utils/investigationTasks';
 import { CaptureProtection } from '../utils/captureProtection';
+import { InvestigationFloat } from '../utils/investigationFloat';
 
 const DOMAIN = 0x0000;
 
@@ -33,6 +34,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    InvestigationFloat.clear();
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
   }
 
@@ -69,6 +71,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    InvestigationFloat.clear();
     CaptureProtection.unbind();
     this.mainStage = undefined;
     // Main window is destroyed, release UI related resources

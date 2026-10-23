@@ -21,6 +21,17 @@
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
       },
       {
+        "name": "ohos.permission.FLOAT_VIEW",
+        "reason": "$string:investigation_float_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.USE_FLOAT_BALL"
+      },
+      {
         "name": "ohos.permission.PRIVACY_WINDOW",
         "reason": "$string:privacy_window_reason",
         "usedScene": {

@@ -7,6 +7,7 @@ import { common } from '@kit.AbilityKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { cleanAnswerForDisplay } from '../../utils/answerFormatting';
 import { InvestigationTaskCenter } from '../../utils/investigationTasks';
+import { InvestigationFloat } from '../../utils/investigationFloat';
 
 @CustomDialog
 struct ConversationTitleDialog {
@@ -194,6 +195,9 @@ export struct AgentConversationPanel {
   @State conversationActionError: string = '';
   @StorageLink('investigation_notification_hint') notificationHint: string = '';
   @StorageLink('investigation_notifications_enabled') notificationsEnabled: boolean = false;
+  @StorageLink('investigation_float_active') floatActive: boolean = false;
+  @StorageLink('investigation_float_busy') floatBusy: boolean = false;
+  @StorageLink('investigation_float_hint') floatHint: string = '';
   private titleDialog?: CustomDialogController;
   private pollTimer: number = 0;
   private pollEpoch: number = 0;
@@ -1898,6 +1902,27 @@ export struct AgentConversationPanel {
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
 
+      Row({ space: 8 }) {
+        Text(this.floatActive ? '闪控已开启 · 可跨应用查看进度' : '离开清眸也能查看调查进度')
+          .fontSize(11).fontColor($r('app.color.app_text_muted')).layoutWeight(1)
+          .maxLines(2)
+        Button(this.floatBusy ? '开启中…' : this.floatActive ? '关闭闪控' : '开启闪控')
+          .fontSize(12).height(32).enabled(!this.floatBusy)
+          .backgroundColor(Color.Transparent).fontColor($r('app.color.app_primary'))
+          .onClick((): void => {
+            if (this.floatActive) { InvestigationFloat.close(); }
+            else {
+              InvestigationTaskCenter.refresh();
+              InvestigationFloat.open(this.getUIContext().getHostContext() as common.UIAbilityContext,
+                this.selectedConversationId, this.workspaceId);
+            }
+          })
+      }.width('100%').padding({ left: 14, right: 14, top: 2, bottom: 2 })
+        .backgroundColor($r('app.color.app_card_bg'))
+      if (this.floatHint) {
+        Text(this.floatHint).fontSize(11).fontColor($r('app.color.app_text_muted'))
+          .width('100%').padding({ left: 20, right: 20, top: 6, bottom: 6 })
+      }
       if (this.notificationHint) {
         Text(this.notificationHint).fontSize(11).fontColor($r('app.color.app_text_muted'))
           .width('100%').padding({ left: 20, right: 20, top: 6, bottom: 6 })
