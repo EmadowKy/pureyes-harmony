@@ -2,6 +2,49 @@
 
 前端使用 ArkTS 与 ArkUI，按页面、复用组件和工具库组织代码。本章介绍页面状态、网络请求、视觉规范及系统能力接入。
 
+## 开发环境与构建
+
+工程使用 HarmonyOS 26.0.0 开发套件，目标系统为 HarmonyOS 7，最低兼容 HarmonyOS 6.1。开发环境使用配套的 DevEco Studio 26.0.0 正式版及内置 SDK；工具与系统的版本对应关系见[华为官方升级指南](https://developer.huawei.com/consumer/cn/doc/harmonyos-releases/upgrade-adaptation)。
+
+| 配置 | 值 | 作用 |
+| --- | --- | --- |
+| `modelVersion` | `26.0.0` | 工程与 Hvigor 配置使用相同开发套件版本。 |
+| `targetSdkVersion` | `26.0.0` | 采用 API 26 对应的系统行为。 |
+| `compatibleSdkVersion` | `6.1.0(23)` | 保留原有设备的最低安装要求。 |
+| `apiCompatibilityCheck` | `error` | 调用超出最低兼容版本的 API 时，要求显式兼容处理。 |
+
+`compileSdkVersion` 使用 DevEco 内置 SDK。目标版本升级不代表最低兼容版本也要提高；新增 API 需要依据其版本与设备能力进行保护。视频播放、人脸比对、ArkWeb 回答渲染、通知、服务卡片及隐私窗口都需要在新旧系统上验证，编译通过不能替代设备测试。
+
+### 打开工程与签名
+
+1. 在 DevEco 中打开仓库的 `frontend/` 目录。
+2. 首次配置时，将 `build-profile.example.json5` 复制为 `build-profile.json5`。已有本机配置时，保留其中的签名信息，只同步目标版本、最低兼容版本与 `strictMode` 设置。
+3. 使用配套的 ohpm 安装依赖，执行 Sync。
+4. 在 **File → Project Structure → Signing Configs** 配置自动签名。连接调试设备，或按华为流程登记设备后生成匹配的调试 Profile。
+
+本机 `build-profile.json5`、证书、私钥与密码不提交仓库。调试证书与 Profile 都有有效期；签名工具报过期时，应重新申请，不能沿用旧包或修改系统日期绕过验证。调试包的可安装设备由其 Profile 决定。
+
+### Windows 命令行构建
+
+在 `frontend/` 目录运行，`$devecoPath` 指向实际安装目录。环境变量仅作用于当前终端：
+
+```powershell
+$devecoPath = 'C:\Program Files\Huawei\DevEco Studio'
+$env:DEVECO_SDK_HOME = Join-Path $devecoPath 'sdk'
+$env:JAVA_HOME = Join-Path $devecoPath 'jbr'
+$env:PATH = (Join-Path $devecoPath 'tools\node') + ';' +
+    (Join-Path $devecoPath 'tools\ohpm\bin') + ';' + $env:PATH
+
+& (Join-Path $devecoPath 'tools\node\node.exe') `
+    (Join-Path $devecoPath 'tools\hvigor\bin\hvigorw.js') `
+    --mode module -p product=default -p module=entry@default `
+    -p buildMode=debug assembleHap --no-daemon --no-incremental
+```
+
+成功签名后的文件是 `entry/build/default/outputs/default/entry-default-signed.hap`。构建失败时，该目录可能仍有历史签名包，应核对本次构建结果与文件时间，不把旧包当成新产物。
+
+仅验证源码和打包、无需安装时，可在上述命令中添加 `-c properties.enableSignTask=false`，生成 `entry-default-unsigned.hap`。未签名包不能替代交付给真机的签名调试包；此选项不更新证书，也不验证真机安装权限。
+
 ---
 
 ## 1. 前端源码目录结构 (frontend/)

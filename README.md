@@ -36,6 +36,8 @@
 
 使用方法见[通知与桌面小部件](docs/user-guide/10-investigation-notifications.md)，接入方式见[鸿蒙原生能力](docs/developer-guide/06-harmonyos-native-features.md)。
 
+客户端目标版本为 HarmonyOS 7（API 26.0.0），最低兼容 HarmonyOS 6.1（API 23）。开发工具、签名与构建方法见[鸿蒙前端开发环境](docs/developer-guide/02-frontend-arkts.md#开发环境与构建)。
+
 ## 文档入口
 
 - [在线使用说明](http://116.62.178.139/) · [快速开始](docs/user-guide/02-quick-start.md) · [调查问答](docs/user-guide/07-ai-multimodal-qa.md)
