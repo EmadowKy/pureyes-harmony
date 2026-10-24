@@ -5,6 +5,7 @@ import { SecurityUtil } from '../utils/security';
 import { InvestigationTaskCenter } from '../utils/investigationTasks';
 import { CaptureProtection } from '../utils/captureProtection';
 import { InvestigationFloat } from '../utils/investigationFloat';
+import { AppMotion } from '../utils/appMotion';
 
 const DOMAIN = 0x0000;
 
@@ -23,6 +24,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    AppMotion.start();
     const route = this.cardTarget(want);
     if (route) AppStorage.setOrCreate('widget_route', route);
     try {
@@ -34,6 +36,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    AppMotion.stop();
     InvestigationFloat.clear();
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
   }

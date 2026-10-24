@@ -83,6 +83,20 @@ SDK 26.0.0.105 的权限定义中，两项均为 `system_basic`、`provisionEnab
 
 设备验收需使用具备闪控能力的 HarmonyOS 7 环境及已授权 Profile，检查系统授权弹窗、跨应用展示、窗球联动、旋转与字体放大、并发调查、断网恢复、完成返回、主动关闭及退出登录。模块测试使用模拟系统接口，不代表系统窗口已在设备上运行。
 
+## 沉浸光感与调查动效
+
+API 26 的 ArkUI 沉浸光感用于主导航、工作区底栏、菜单、模型选择及小型系统弹窗。入口模块通过 `ohos.arkui.UIMaterial.state = enable` 开启；底栏使用原生 `Tabs`、`BottomTabBarStyle` 和 `barFloatingStyle`，不在普通 `Row` 上模拟系统材质。原生材质的表现随设备算力、系统光感强度和深浅色模式调整。
+
+`utils/appMotion.ets` 集中管理动效时长、材质兼容分支和系统“减弱动效”监听。API 23—25 保留普通原生底栏，不调用 API 26 材质接口。进入工作区页面时采用短距离位移与淡入；切换页面的待执行动画会取消，页面退出后不保留动画计时器。
+
+调查中的引用片段、工具参数与过程记录采用展开收起和箭头旋转。新工具步骤出现时提供轻量反馈，已有工具轮询更新不重复播放整条消息的入场动画；任务结束时，运行区域收起并过渡到答案。会话列表与调查详情继续使用共享标识转场。
+
+片段预览由原生弹窗承载，打开与关闭采用短时过渡。包含视频的预览弹窗禁用沉浸材质，保持不透明阅读底色，不在持续播放的视频上叠加折射和模糊。普通界面也避免反复嵌套材质。
+
+系统开启“减弱动效”后，这些自定义位移、旋转和入场过渡时长归零；状态、内容与操作入口仍保留。系统材质效果由系统设置管理。
+
+参考：[开启沉浸光感](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-immersive-light-sense-enable)、[功耗优化](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-immersive-light-sense-constraints)。
+
 ## 开发测试要点
 
 开发测试覆盖设备兼容性、权限、任务生命周期和异常恢复。

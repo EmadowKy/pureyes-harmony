@@ -9,6 +9,8 @@ import { AgentConversationPanel } from './components/AgentConversationPanel'
 import { MarkdownAnswer } from './components/MarkdownAnswer'
 import { timeToSeconds } from '../utils/answerFormatting'
 import { FaceQueueRecord, FaceAssignment, classifyOnHarmonyPhone } from '../utils/harmonyFaces'
+import { AppMotion, NativeMaterial, FloatingTabsStyle, navigationTab } from '../utils/appMotion';
+import { MotionStage } from './components/MotionStage';
 
 interface ToastOptions {
   message: string;
@@ -1338,10 +1340,12 @@ struct SegmentDetailDialog {
       }
       .layoutWeight(1)
       .scrollBar(BarState.Auto)
+      .align(Alignment.Top)
       .width('100%')
     }
     .padding(16)
     .width('95%')
+    .alignItems(HorizontalAlign.Start)
     .constraintSize({ maxHeight: '85%' })
     .backgroundColor($r('app.color.app_card_bg'))
     .borderRadius(12)
@@ -1351,6 +1355,7 @@ struct SegmentDetailDialog {
 @Entry
 @Component
 struct WorkspaceDetail {
+  @StorageLink('reduce_motion') reduceMotion: boolean = false;
   workspaceId: number = 0;
   workspaceName: string = '';
   initialConversationId: string = '';
@@ -1483,7 +1488,9 @@ struct WorkspaceDetail {
         this.submitDeleteSegmentFeatures(this.selectedSegment.id);
       }
     }),
-    autoCancel: true
+    autoCancel: true,
+    customStyle: true,
+    systemMaterial: NativeMaterial.none()
   })
 
   qaSegmentPreviewDialogController: CustomDialogController = new CustomDialogController({
@@ -1494,7 +1501,9 @@ struct WorkspaceDetail {
         this.toggleSegmentSelection(this.selectedSegmentIndex, true);
       }
     }),
-    autoCancel: true
+    autoCancel: true,
+    customStyle: true,
+    systemMaterial: NativeMaterial.none()
   })
 
   timestampPreviewDialogController: CustomDialogController = new CustomDialogController({
@@ -1503,7 +1512,9 @@ struct WorkspaceDetail {
       showSelectionActions: false,
       jumpSeconds: this.jumpSeconds
     }),
-    autoCancel: true
+    autoCancel: true,
+    customStyle: true,
+    systemMaterial: NativeMaterial.none()
   })
 
   aboutToAppear(): void {
@@ -1659,16 +1670,13 @@ struct WorkspaceDetail {
       return;
     }
 
-    const s = new WorkspaceVideoSegment();
-    s.id = rec.segment_id;
-    s.video_name = rec.video_name;
-    s.filepath = rec.segment_filepath;
-    s.media_url = rec.segment_media_url;
-    s.start_offset = 0;
-    s.end_offset = rec.end_time_offset + 5;
-    s.duration = rec.end_time_offset + 5;
-
-    this.selectedSegment = s;
+    const segment = this.segments.find((item: WorkspaceVideoSegment): boolean => item.id === rec.segment_id);
+    if (!segment) {
+      this.showToast({ message: '片段信息尚未加载，请刷新后重试', duration: 2000 });
+      this.loadSegments();
+      return;
+    }
+    this.selectedSegment = segment;
     this.jumpSeconds = rec.start_time_offset;
     this.timestampPreviewDialogController.open();
   }
@@ -2407,73 +2415,21 @@ struct WorkspaceDetail {
     this.segments = [...this.segments];
   }
 
-  @Builder WorkspaceSubTabIcon(index: number, isSelected: boolean) {
+  selectWorkspaceTab(index: number): void {
+    if (this.currentSubTab === index) return;
+    this.currentSubTab = index;
+    this.showCreateQA = false;
+    this.showSelectExampleVideo = false;
+    this.agentDetailOpen = false;
     if (index === 0) {
-      Image($r('app.media.business_clip_trim'))
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
-        .opacity(isSelected ? 1 : 0.52)
+      this.loadSegments();
     } else if (index === 1) {
-      Image($r('app.media.business_face_library'))
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
-        .opacity(isSelected ? 1 : 0.52)
+      this.loadFaceGroups();
+      this.loadHarmonyQueueCount();
+      this.loadFaceBackend();
     } else {
-      Image($r('app.media.business_ai_qa'))
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
-        .opacity(isSelected ? 1 : 0.52)
+      this.loadQARecords();
     }
-  }
-
-  @Builder WorkspaceSubTabItem(index: number, label: string) {
-    Column({ space: 2 }) {
-      Row()
-        .width(38)
-        .height(3)
-        .backgroundColor(this.currentSubTab === index ? $r('app.color.app_accent') : Color.Transparent)
-        .borderRadius(2)
-        .animation({ duration: 180, curve: Curve.EaseOut })
-
-      Stack() {
-        this.WorkspaceSubTabIcon(index, this.currentSubTab === index)
-      }
-      .width(46)
-      .height(32)
-      .backgroundColor(this.currentSubTab === index ? $r('app.color.app_primary_soft') : Color.Transparent)
-      .borderRadius(11)
-      .scale({ x: this.currentSubTab === index ? 1 : 0.94, y: this.currentSubTab === index ? 1 : 0.94 })
-      .animation({ duration: 180, curve: Curve.EaseOut })
-
-      Text(label)
-        .fontSize(11)
-        .fontWeight(this.currentSubTab === index ? FontWeight.Bold : FontWeight.Medium)
-        .fontColor(this.currentSubTab === index ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
-    }
-    .height(52)
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .onClick((): void => {
-      if (this.currentSubTab === index) return;
-      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
-        this.currentSubTab = index;
-        this.showCreateQA = false;
-        this.showSelectExampleVideo = false;
-        this.agentDetailOpen = false;
-      });
-      if (index === 0) {
-        this.loadSegments();
-      } else if (index === 1) {
-        this.loadFaceGroups();
-        this.loadHarmonyQueueCount();
-        this.loadFaceBackend();
-      } else {
-        this.loadQARecords();
-      }
-    })
   }
 
   @Builder WorkspaceHeaderButton(name: string, action: () => void) {
@@ -2834,6 +2790,8 @@ struct WorkspaceDetail {
       } else {
         // ===== Workspace Internal Tab View =====
         Column() {
+          MotionStage({ sceneKey: `${this.currentSubTab}-${this.showSelectExampleVideo}-${this.showCreateQA}` }) {
+          Column() {
           if (this.currentSubTab === 0) {
             // ================== "片段" Tab Content ==================
             if (this.showSelectExampleVideo) {
@@ -3515,18 +3473,27 @@ struct WorkspaceDetail {
             }
           }
 
-          // ===== Workspace Bottom Navigation =====
+          }
+          .width('100%')
+          .layoutWeight(1)
+          }
+
+          // Routed panels own their state; Tabs supplies the native bottom navigation surface.
           if (!this.isNestedView()) {
-            Row() {
-              this.WorkspaceSubTabItem(0, '片段')
-              this.WorkspaceSubTabItem(1, '人脸')
-              this.WorkspaceSubTabItem(2, '问答')
+            Tabs({ barPosition: BarPosition.End, index: this.currentSubTab }) {
+              TabContent() {}.tabBar(navigationTab($r('app.media.business_clip_trim'), '片段'))
+              TabContent() {}.tabBar(navigationTab($r('app.media.business_face_library'), '人脸'))
+              TabContent() {}.tabBar(navigationTab($r('app.media.business_ai_qa'), '问答'))
             }
             .width('100%')
-            .height(60)
-            .padding({ top: 4, bottom: 4 })
+            .height(NativeMaterial.available() ? 76 : 60)
+            .barHeight(60)
+            .barOverlap(true)
+            .scrollable(false)
+            .animationDuration(this.reduceMotion ? 0 : 280)
             .backgroundColor($r('app.color.app_nav_bar_bg'))
-            .border({ width: { top: 1 }, color: $r('app.color.app_border') })
+            .attributeModifier(new FloatingTabsStyle())
+            .onChange((index: number): void => { this.selectWorkspaceTab(index); })
           }
         }
         .width('100%')

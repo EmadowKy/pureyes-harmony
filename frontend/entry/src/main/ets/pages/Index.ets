@@ -6,6 +6,8 @@ import { HttpResult, HttpUtil, getBaseUrl } from '../utils/http'
 import { SecurityUtil } from '../utils/security'
 import { CaptureProtection } from '../utils/captureProtection'
 import { common } from '@kit.AbilityKit';
+import { AppMotion, FloatingTabsStyle, navigationTab } from '../utils/appMotion';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 
 export class GroupInfo {
   id: number = 0;
@@ -16,16 +18,10 @@ export class SelectItem {
   value: string = '';
 }
 
-enum NavIconType {
-  Monitor,
-  Workspace,
-  Group,
-  Profile
-}
-
 @Entry
 @Component
 struct Index {
+  @StorageLink('reduce_motion') reduceMotion: boolean = false;
   @State currentIndex: number = 0;
   @StorageLink('currentGroupId') currentGroupId: number = 0; 
   @StorageLink('refreshGroupFlag') @Watch('onRefreshFlagChange') refreshGroupFlag: number = 0;
@@ -283,68 +279,6 @@ struct Index {
     .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
   }
 
-  @Builder NavIcon(iconType: NavIconType, isSelected: boolean) {
-    if (iconType === NavIconType.Monitor) {
-      Image($r('app.media.business_monitor'))
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
-        .opacity(isSelected ? 1 : 0.52)
-    } else if (iconType === NavIconType.Workspace) {
-      Image($r('app.media.business_workspace'))
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
-        .opacity(isSelected ? 1 : 0.52)
-    } else if (iconType === NavIconType.Group) {
-      Image($r('app.media.business_team'))
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
-        .opacity(isSelected ? 1 : 0.52)
-    } else {
-      SymbolGlyph($r('sys.symbol.person'))
-        .fontSize(21)
-        .fontColor([isSelected ? $r('app.color.app_nav_icon_selected') : $r('app.color.app_nav_icon')])
-    }
-  }
-
-  @Builder NavBarItem(index: number, label: string, iconType: NavIconType) {
-    Column({ space: 0 }) {
-      Blank()
-        .width(26)
-        .height(3)
-        .backgroundColor(this.currentIndex === index ? $r('app.color.app_accent') : Color.Transparent)
-        .borderRadius(2)
-        .animation({ duration: 180, curve: Curve.EaseOut })
-
-      Stack() {
-        this.NavIcon(iconType, this.currentIndex === index)
-      }
-      .width(46)
-      .height(34)
-      .margin({ top: 4 })
-      .backgroundColor(this.currentIndex === index ? $r('app.color.app_primary_soft') : Color.Transparent)
-      .borderRadius(12)
-      .scale({ x: this.currentIndex === index ? 1 : 0.94, y: this.currentIndex === index ? 1 : 0.94 })
-      .animation({ duration: 180, curve: Curve.EaseOut })
-
-      Text(label)
-        .fontSize(11)
-        .fontWeight(this.currentIndex === index ? FontWeight.Bold : FontWeight.Medium)
-        .fontColor(this.currentIndex === index ? $r('app.color.app_nav_text_selected') : $r('app.color.app_nav_text'))
-    }
-    .width('100%')
-    .height(64)
-    .justifyContent(FlexAlign.Start)
-    .onClick((): void => {
-      if (this.currentIndex === index) return;
-      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
-        this.currentIndex = index;
-      });
-      this.tabsController.changeIndex(index);
-    })
-  }
 
   @Builder GroupRequiredState() {
     Column({ space: 14 }) {
@@ -481,36 +415,43 @@ struct Index {
               groupId: this.currentGroupId,
               onDetailChange: (open: boolean): void => { this.monitorDetailOpen = open; }
             })
-          }.tabBar(this.NavBarItem(0, '监控', NavIconType.Monitor))
+          }.padding({ bottom: this.isSubpageOpen() ? 0 : 82 })
+          .tabBar(navigationTab($r('app.media.business_monitor'), '监控'))
 
           TabContent() {
             WorkspaceTab({ groupId: this.currentGroupId })
-          }.tabBar(this.NavBarItem(1, '工作区', NavIconType.Workspace))
+          }.padding({ bottom: 82 })
+          .tabBar(navigationTab($r('app.media.business_workspace'), '工作区'))
 
           TabContent() {
             GroupTab({
               groupId: this.currentGroupId,
               onDetailChange: (open: boolean): void => { this.groupDetailOpen = open; }
             })
-          }.tabBar(this.NavBarItem(2, '小组', NavIconType.Group))
+          }.padding({ bottom: this.isSubpageOpen() ? 0 : 82 })
+          .tabBar(navigationTab($r('app.media.business_team'), '小组'))
 
           TabContent() {
             ProfileTab({
               onDetailChange: (open: boolean): void => { this.profileDetailOpen = open; }
             })
-          }.tabBar(this.NavBarItem(3, '我的', NavIconType.Profile))
+          }.padding({ bottom: this.isSubpageOpen() ? 0 : 82 })
+          .tabBar(navigationTab({ normal: new SymbolGlyphModifier($r('sys.symbol.person')),
+            selected: new SymbolGlyphModifier($r('sys.symbol.person')) }, '我的'))
         }
         .onChange((index: number) => {
           if (this.currentIndex !== index) {
-            this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+            this.getUIContext().animateTo(AppMotion.options(220), (): void => {
               this.currentIndex = index;
             });
           }
         })
         .barHeight(this.isSubpageOpen() ? 0 : 66)
+        .barOverlap(true)
         .barBackgroundColor($r('app.color.app_nav_bar_bg'))
+        .attributeModifier(new FloatingTabsStyle(this.isSubpageOpen()))
+        .animationDuration(this.reduceMotion ? 0 : 280)
         .layoutWeight(1)
-        .animation({ duration: 180, curve: Curve.EaseOut })
       }
       .width('100%')
       .height('100%')

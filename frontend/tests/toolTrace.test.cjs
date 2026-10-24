@@ -19,11 +19,12 @@ const harness = `${classes}\nclass Harness {
   collapsedRunningProcessTurns: Array<string> = [];
   messageScroller = { isAtEnd: (): boolean => false };
   scheduleScrollToEnd(_delay: number): void {}
+  getUIContext() { return { animateTo: (_options: Object, update: () => void): void => update() }; }
   ${methods}
   ${processMethods}
   ${durationMethod}
 }\nglobalThis.harness = new Harness();`;
-const context = vm.createContext({});
+const context = vm.createContext({ AppMotion: { options: () => ({ duration: 0 }) } });
 vm.runInContext(ts.transpileModule(harness, {
   compilerOptions: { target: ts.ScriptTarget.ES2020 }
 }).outputText, context);

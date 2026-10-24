@@ -8,6 +8,7 @@ import { vibrator } from '@kit.SensorServiceKit';
 import { cleanAnswerForDisplay } from '../../utils/answerFormatting';
 import { InvestigationTaskCenter } from '../../utils/investigationTasks';
 import { InvestigationFloat } from '../../utils/investigationFloat';
+import { AppMotion } from '../../utils/appMotion';
 
 @CustomDialog
 struct ConversationTitleDialog {
@@ -408,7 +409,7 @@ export struct AgentConversationPanel {
     this.stopPolling();
     const epoch = this.pollEpoch;
     this.onDetailChange(true);
-    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo(AppMotion.options(260), (): void => {
       this.selectedConversationId = conversationId;
       this.referenceSegmentsExpanded = false;
       this.evidenceSegmentIds = [];
@@ -491,8 +492,12 @@ export struct AgentConversationPanel {
     if (this.evidenceSegmentIds.length === 0 && mapped.length > 0) {
       this.evidenceSegmentIds = [...mapped[0].segmentIds];
     }
-    if (this.messages.length > 0 && mapped.length > this.messages.length) {
-      this.getUIContext().animateTo({ duration: 170, curve: Curve.EaseOut }, (): void => {
+    const statusChanged = mapped.some((turn: AgentTurnItem): boolean => {
+      const previous = this.messages.find((item: AgentTurnItem): boolean => item.id === turn.id);
+      return previous !== undefined && previous.status !== turn.status;
+    });
+    if (this.messages.length > 0 && (mapped.length > this.messages.length || statusChanged)) {
+      this.getUIContext().animateTo(AppMotion.options(300), (): void => {
         this.messages = mapped;
         this.messageSource.setItems(mapped);
       });
@@ -575,7 +580,7 @@ export struct AgentConversationPanel {
       return;
     }
     this.liveProgress = '';
-    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo(AppMotion.options(160), (): void => {
       const index = this.selectedSegmentIds.indexOf(segmentId);
       if (index >= 0) {
         this.selectedSegmentIds.splice(index, 1);
@@ -591,7 +596,7 @@ export struct AgentConversationPanel {
     this.stopPolling();
     this.stopSync();
     this.onDetailChange(true);
-    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo(AppMotion.options(260), (): void => {
       this.selectedConversationId = '';
       this.conversationReady = false;
       this.evidenceSegmentIds = [];
@@ -612,7 +617,7 @@ export struct AgentConversationPanel {
     this.stopPolling();
     this.stopSync();
     this.onDetailChange(false);
-    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo(AppMotion.options(260), (): void => {
       this.selectedConversationId = '';
       this.conversationReady = false;
       this.evidenceSegmentIds = [];
@@ -1142,7 +1147,7 @@ export struct AgentConversationPanel {
   }
 
   toggleCall(key: string): void {
-    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo(AppMotion.options(220), (): void => {
       const index = this.expandedCallKeys.indexOf(key);
       if (index >= 0) {
         this.expandedCallKeys.splice(index, 1);
@@ -1164,15 +1169,17 @@ export struct AgentConversationPanel {
   }
 
   toggleProcess(turn: AgentTurnItem): void {
-    if (turn.status === 'processing') {
-      this.collapsedRunningProcessTurns = this.isProcessExpanded(turn) ?
-        [...this.collapsedRunningProcessTurns, turn.id] :
-        this.collapsedRunningProcessTurns.filter((id: string): boolean => id !== turn.id);
-    } else {
-      this.expandedProcessTurns = this.isProcessExpanded(turn) ?
-        this.expandedProcessTurns.filter((id: string): boolean => id !== turn.id) :
-        [...this.expandedProcessTurns, turn.id];
-    }
+    this.getUIContext().animateTo(AppMotion.options(280), (): void => {
+      if (turn.status === 'processing') {
+        this.collapsedRunningProcessTurns = this.isProcessExpanded(turn) ?
+          [...this.collapsedRunningProcessTurns, turn.id] :
+          this.collapsedRunningProcessTurns.filter((id: string): boolean => id !== turn.id);
+      } else {
+        this.expandedProcessTurns = this.isProcessExpanded(turn) ?
+          this.expandedProcessTurns.filter((id: string): boolean => id !== turn.id) :
+          [...this.expandedProcessTurns, turn.id];
+      }
+    });
   }
 
   @Builder ToolStep(turn: AgentTurnItem, call: AgentToolCall, index: number) {
@@ -1193,11 +1200,12 @@ export struct AgentConversationPanel {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
-            Text(this.isCallExpanded(`${turn.id}-${index}`) ? '⌄' : '›')
-              .fontSize(18)
-              .fontColor($r('app.color.app_text_muted'))
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(12)
+              .fontColor([$r('app.color.app_text_muted')])
               .width(20)
-              .textAlign(TextAlign.Center)
+              .rotate({ angle: this.isCallExpanded(`${turn.id}-${index}`) ? 90 : 0 })
+              .animation(AppMotion.options(220))
           }
           .width('100%')
           .constraintSize({ minHeight: 36 })
@@ -1265,17 +1273,22 @@ export struct AgentConversationPanel {
             .alignItems(HorizontalAlign.Start)
             .width('100%')
             .padding({ left: 24, right: 8, top: 2, bottom: 12 })
+            .transition(AppMotion.reveal(6))
           }
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
+        .transition(index === turn.toolCalls.length - 1 && call.status === 'running' ?
+          AppMotion.reveal(8) : TransitionEffect.IDENTITY)
   }
 
   @Builder ToolTrace(turn: AgentTurnItem) {
     Column({ space: 4 }) {
       Row({ space: 8 }) {
-        Text(this.isProcessExpanded(turn) ? '⌄' : '›')
-          .fontSize(18).fontColor($r('app.color.app_text_muted')).width(16)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12).fontColor([$r('app.color.app_text_muted')]).width(16)
+          .rotate({ angle: this.isProcessExpanded(turn) ? 90 : 0 })
+          .animation(AppMotion.options(220))
         Text(`${turn.status === 'processing' ? '调查过程' : '查看调查过程'} · ${turn.toolCalls.length} 次工具调用`)
           .fontSize(12).fontColor($r('app.color.app_text_muted')).layoutWeight(1)
       }
@@ -1384,15 +1397,17 @@ export struct AgentConversationPanel {
     .backgroundColor($r('app.color.app_card_bg'))
     .transition(TransitionEffect.OPACITY
       .combine(TransitionEffect.translate({ x: -16 }))
-      .animation({ duration: 260, curve: Curve.EaseOut }))
+      .animation(AppMotion.options(260)))
   }
 
   @Builder ReferenceSegments() {
     Column() {
       Row({ space: 8 }) {
-        Text(this.referenceSegmentsExpanded ? '⌄' : '›')
-          .fontSize(20).width(18).textAlign(TextAlign.Center)
-          .fontColor($r('app.color.app_text_secondary'))
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12).width(18)
+          .fontColor([$r('app.color.app_text_secondary')])
+          .rotate({ angle: this.referenceSegmentsExpanded ? 90 : 0 })
+          .animation(AppMotion.options(220))
         Text(`引用片段 · ${this.evidenceSegmentIds.length}`)
           .fontSize(12).fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_primary')).layoutWeight(1)
@@ -1402,7 +1417,7 @@ export struct AgentConversationPanel {
       .width('100%').padding({ left: 16, right: 18, top: 10, bottom: 10 })
       .accessibilityText(`引用片段，共 ${this.evidenceSegmentIds.length} 个，${this.referenceSegmentsExpanded ? '点击收起' : '点击展开'}`)
       .onClick((): void => {
-        this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+        this.getUIContext().animateTo(AppMotion.options(180), (): void => {
           this.referenceSegmentsExpanded = !this.referenceSegmentsExpanded;
         });
       })
@@ -1435,6 +1450,7 @@ export struct AgentConversationPanel {
           }, (segmentId: number): string => `${segmentId}`)
         }
         .width('100%').height(Math.min(180, this.evidenceSegmentIds.length * 60))
+        .transition(AppMotion.reveal(8))
         if (this.segmentLoadError) {
           Button('重新加载片段信息').fontSize(12).backgroundColor(Color.Transparent)
             .fontColor($r('app.color.app_primary')).onClick((): void => { this.loadSegments(); })
@@ -1512,6 +1528,7 @@ export struct AgentConversationPanel {
                 }
               }
               .padding({ left: 0, right: 0, top: 4, bottom: 4 })
+              .transition(AppMotion.reveal(6))
             }
             if (turn.processEntries.length > 0) {
               this.ToolTrace(turn)
@@ -1553,6 +1570,7 @@ export struct AgentConversationPanel {
               }
               .width('100%')
               .alignItems(HorizontalAlign.Start)
+              .transition(AppMotion.reveal(14))
             }
           }
           .width('100%')
@@ -1560,7 +1578,7 @@ export struct AgentConversationPanel {
           .padding({ left: 18, right: 18, top: 20, bottom: 23 })
           .backgroundColor($r('app.color.app_card_bg'))
           .border({ width: { bottom: 1 }, color: $r('app.color.app_border') })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 170, curve: Curve.EaseOut }))
+          .transition(turn.traceRevision > 0 ? TransitionEffect.IDENTITY : AppMotion.reveal(10))
         }
       }, (turn: AgentTurnItem): string => `${turn.id}-${turn.traceRevision}`)
     }
@@ -1570,7 +1588,7 @@ export struct AgentConversationPanel {
     .backgroundColor($r('app.color.app_card_bg'))
     .transition(TransitionEffect.OPACITY
       .combine(TransitionEffect.translate({ x: 16 }))
-      .animation({ duration: 260, curve: Curve.EaseOut }))
+      .animation(AppMotion.options(260)))
   }
 
   @Builder Composer() {
@@ -1592,13 +1610,13 @@ export struct AgentConversationPanel {
             .onClick((): void => { this.stopTask(); })
         }
         .width('100%')
-        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+        .transition(TransitionEffect.OPACITY.animation(AppMotion.options(160)))
       } else if (this.isSending) {
         Row({ space: 8 }) {
           LoadingProgress().width(17).height(17).color($r('app.color.app_selection'))
           Text('正在提交调查…').fontSize(13).fontColor($r('app.color.app_text_muted'))
         }
-        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
+        .transition(TransitionEffect.OPACITY.animation(AppMotion.options(160)))
       } else {
         if (this.liveProgress.length > 0) {
           Text(this.liveProgress)
@@ -1613,7 +1631,7 @@ export struct AgentConversationPanel {
           .border({ width: 1, color: this.composerFocused ? $r('app.color.app_selection') : $r('app.color.app_border') })
           .borderRadius(16)
           .padding(10)
-          .animation({ duration: 160, curve: Curve.EaseOut })
+          .animation(AppMotion.options(160))
           .onFocus((): void => {
             this.composerFocused = true;
             this.scheduleScrollToEnd(250);
@@ -1640,7 +1658,7 @@ export struct AgentConversationPanel {
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: { top: 1 }, color: $r('app.color.app_border') })
-    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+    .transition(TransitionEffect.OPACITY.animation(AppMotion.options(180)))
   }
 
   @Builder ModelSelector() {
@@ -1769,7 +1787,7 @@ export struct AgentConversationPanel {
                 $r('app.color.app_card_bg')))
             .border({ width: 1, color: this.isSelected(segment.id) ? $r('app.color.app_selection') : $r('app.color.app_border') })
             .borderRadius(10)
-            .animation({ duration: 160, curve: Curve.EaseOut })
+            .animation(AppMotion.options(160))
             .onClick((): void => { this.toggleSegment(segment.id); })
           }
         }, (segment: AgentSegmentChoice): string => `${segment.id}`)
@@ -1822,7 +1840,7 @@ export struct AgentConversationPanel {
     .padding(18)
     .transition(TransitionEffect.OPACITY
       .combine(TransitionEffect.translate({ x: 16 }))
-      .animation({ duration: 260, curve: Curve.EaseOut }))
+      .animation(AppMotion.options(260)))
   }
 
   @Builder ConversationSkeletonRow() {
