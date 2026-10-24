@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { formBindingData, formProvider } from '@kit.FormKit';
 import { common } from '@kit.AbilityKit';
+import { accessibility } from '@kit.AccessibilityKit';
 import { InvestigationDashboard, InvestigationTaskSnapshot, taskPool, taskDuration } from './investigationTaskState';
 
 const FILE_NAME = 'investigation_card';
@@ -9,12 +10,18 @@ const SELECTION_FILE = 'investigation_card_selection';
 const FORM_IDS_KEY = 'form_ids';
 export class InvestigationCardSnapshot extends InvestigationTaskSnapshot {}
 
+function reducedMotion(): boolean {
+  // The form provider and UIAbility do not share AppStorage across their processes.
+  try { return accessibility.isAnimationReduceEnabledSync(); } catch (_error) { return true; }
+}
+
 function binding(dashboard: InvestigationDashboard, selectedId: string = ''): formBindingData.FormBindingData {
   const pool = taskPool(dashboard);
   const index = Math.max(0, pool.findIndex((task: InvestigationTaskSnapshot): boolean => task.taskId === selectedId));
   const task = pool[index] || new InvestigationTaskSnapshot();
   return formBindingData.createFormBindingData({
     status: task.status, stage: task.stage, steps: task.steps.toString(),
+    reduceMotion: reducedMotion(),
     title: task.title, elapsed: taskDuration(task.elapsedSeconds),
     updatedAt: dashboard.updatedAt ? `${new Date(dashboard.updatedAt).getHours().toString().padStart(2, '0')}:${new Date(dashboard.updatedAt).getMinutes().toString().padStart(2, '0')}` : '',
     workspaceId: task.workspaceId.toString(), groupId: task.groupId.toString(), conversationId: task.conversationId,
@@ -26,6 +33,10 @@ function binding(dashboard: InvestigationDashboard, selectedId: string = ''): fo
 export class InvestigationCard {
   private static pending: Promise<void> = Promise.resolve();
   static empty(): formBindingData.FormBindingData { return binding(new InvestigationDashboard()); }
+  static async selectedBinding(context: common.Context, formId: string): Promise<formBindingData.FormBindingData> {
+    const store = await InvestigationCard.store(context, SELECTION_FILE);
+    return binding(await InvestigationCard.dashboard(context), await store.get(`selected_${formId}`, '') as string);
+  }
   private static async store(context: common.Context, name: string = FILE_NAME): Promise<preferences.Preferences> {
     // UIAbility and FormExtension run in separate processes. Reload committed data,
     // and keep their independently owned registry/selection outside the dashboard.
@@ -68,8 +79,7 @@ export class InvestigationCard {
     await selection.flush();
   }
   static async refresh(context: common.Context, formId: string): Promise<void> {
-    const store = await InvestigationCard.store(context, SELECTION_FILE);
-    await formProvider.updateForm(formId, binding(await InvestigationCard.dashboard(context), await store.get(`selected_${formId}`, '') as string));
+    await formProvider.updateForm(formId, await InvestigationCard.selectedBinding(context, formId));
   }
   static async cycle(context: common.Context, formId: string, direction: number): Promise<void> {
     const pool = taskPool(await InvestigationCard.dashboard(context));

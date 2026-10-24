@@ -3,7 +3,7 @@ let storage = new LocalStorage();
 @Entry(storage)
 @Component
 struct InvestigationCard {
-  @LocalStorageProp('status') status: string = 'idle';
+  @LocalStorageProp('status') @Watch('onTaskChanged') status: string = 'idle';
   @LocalStorageProp('stage') stage: string = '等待调查';
   @LocalStorageProp('steps') steps: string = '0';
   @LocalStorageProp('title') title: string = '视频调查';
@@ -11,12 +11,60 @@ struct InvestigationCard {
   @LocalStorageProp('updatedAt') updatedAt: string = '';
   @LocalStorageProp('workspaceId') workspaceId: string = '0';
   @LocalStorageProp('groupId') groupId: string = '0';
-  @LocalStorageProp('conversationId') conversationId: string = '';
+  @LocalStorageProp('conversationId') @Watch('onTaskChanged') conversationId: string = '';
+  @LocalStorageProp('reduceMotion') @Watch('motionPreferenceChanged') reduceMotion: boolean = true;
+  @State petLift: number = 0;
+  @State petTilt: number = 0;
+  private visible: boolean = false;
+  private animationGeneration: number = 0;
   @LocalStorageProp('activeCount') runningCount: string = '0';
   @LocalStorageProp('completedCount') completedCount: string = '0';
   @LocalStorageProp('conversationCount') conversationCount: string = '0';
   @LocalStorageProp('taskPosition') taskPosition: string = '0';
   @LocalStorageProp('taskCount') taskCount: string = '0';
+
+  aboutToAppear(): void { this.visible = true; }
+
+  aboutToDisappear(): void { this.visible = false; this.animationGeneration++; }
+
+  onTaskChanged(): void { this.greet(); }
+
+  motionPreferenceChanged(): void {
+    if (!this.reduceMotion) return;
+    this.animationGeneration++;
+    this.petLift = 0;
+    this.petTilt = 0;
+  }
+
+  private greet(): void {
+    if (!this.visible || this.reduceMotion) return;
+    const generation = ++this.animationGeneration;
+    animateTo({ duration: 320, curve: Curve.Friction, onFinish: (): void => {
+      if (!this.visible || generation !== this.animationGeneration) return;
+      animateTo({ duration: 260, curve: Curve.Friction }, (): void => {
+        this.petLift = 0; this.petTilt = 0;
+      });
+    } }, (): void => {
+      this.petLift = -3;
+      this.petTilt = this.status === 'completed' ? 8 : -6;
+    });
+  }
+
+  private interact(): void {
+    this.greet();
+    postCardAction(this, { action: 'message', params: { command: 'interact' } });
+  }
+
+  private command(value: string): void {
+    postCardAction(this, { action: 'message', params: { command: value } });
+  }
+
+  private open(): void {
+    postCardAction(this, { action: 'router', abilityName: 'EntryAbility', params: {
+      fromInvestigationCard: 'true', workspaceId: this.workspaceId,
+      groupId: this.groupId, conversationId: this.conversationId
+    } });
+  }
 
   private pet(): Resource {
     if (this.status === 'processing') return $r('app.media.investigation_owl_working');
@@ -61,7 +109,9 @@ struct InvestigationCard {
           .fontColor($r('app.color.app_text_primary'))
           .layoutWeight(1)
           .maxLines(1)
-        FormLink({ action: 'message', params: { command: 'refresh' } }) {
+          .onClick((): void => this.interact())
+          .accessibilityText('清眸小鸮，点击互动')
+        Row() {
           Row() {
             Text('刷新')
               .fontSize(9)
@@ -76,28 +126,24 @@ struct InvestigationCard {
           .justifyContent(FlexAlign.Center)
           .alignItems(VerticalAlign.Center)
         }
+        .onClick((): void => this.command('refresh'))
       }
       .width('100%')
       .height(24)
       .alignItems(VerticalAlign.Center)
 
       // 2. 中部 Bento 核心信息卡（点击进入对应工作区调查）
-      FormLink({
-        action: 'router',
-        abilityName: 'EntryAbility',
-        params: {
-          fromInvestigationCard: 'true',
-          workspaceId: this.workspaceId,
-          groupId: this.groupId,
-          conversationId: this.conversationId
-        }
-      }) {
+      Column() {
         Column({ space: 4 }) {
           Row({ space: 6 }) {
             Image(this.pet())
               .width(38)
               .height(38)
               .objectFit(ImageFit.Contain)
+              .translate({ y: this.petLift })
+              .rotate({ angle: this.petTilt })
+              .onClick((): void => this.interact())
+              .accessibilityText('小鸮，点击互动')
             Column({ space: 2 }) {
               Text(this.statusLabel())
                 .fontSize(11)
@@ -124,6 +170,7 @@ struct InvestigationCard {
             }
             .layoutWeight(1)
             .alignItems(HorizontalAlign.Start)
+            .onClick((): void => this.open())
           }
           .width('100%')
 
@@ -143,6 +190,7 @@ struct InvestigationCard {
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
+          .onClick((): void => this.open())
         }
         .width('100%')
         .height('100%')
@@ -158,7 +206,7 @@ struct InvestigationCard {
       // 3. 底部胶囊控制栏
       Row({ space: 4 }) {
         if (Number(this.taskCount) > 1) {
-          FormLink({ action: 'message', params: { command: 'previous' } }) {
+          Row() {
             Row() {
               Text('‹')
                 .fontSize(14)
@@ -174,13 +222,14 @@ struct InvestigationCard {
             .justifyContent(FlexAlign.Center)
             .alignItems(VerticalAlign.Center)
           }
+          .onClick((): void => this.command('previous'))
           Text(`${this.taskPosition} / ${this.taskCount}${this.updatedAt ? ' · ' + this.updatedAt : ''}`)
             .fontSize(9)
             .fontColor($r('app.color.app_text_secondary'))
             .layoutWeight(1)
             .textAlign(TextAlign.Center)
             .maxLines(1)
-          FormLink({ action: 'message', params: { command: 'next' } }) {
+          Row() {
             Row() {
               Text('›')
                 .fontSize(14)
@@ -196,16 +245,14 @@ struct InvestigationCard {
             .justifyContent(FlexAlign.Center)
             .alignItems(VerticalAlign.Center)
           }
+          .onClick((): void => this.command('next'))
         } else {
           Text(this.updatedAt ? `同步 ${this.updatedAt}` : '打开清眸开始调查')
             .fontSize(9)
             .fontColor($r('app.color.app_text_muted'))
             .layoutWeight(1)
             .maxLines(1)
-          FormLink({ action: 'router', abilityName: 'EntryAbility', params: {
-            fromInvestigationCard: 'true', workspaceId: this.workspaceId,
-            groupId: this.groupId, conversationId: this.conversationId
-          } }) {
+          Row() {
             Row() {
               Text('查看 ↗')
                 .fontSize(9)
@@ -217,6 +264,7 @@ struct InvestigationCard {
             .borderRadius(9)
             .backgroundColor($r('app.color.app_primary_soft'))
           }
+          .onClick((): void => this.open())
         }
       }
       .width('100%')

@@ -1,4 +1,5 @@
-import { formBindingData, formInfo, FormExtensionAbility } from '@kit.FormKit';
+import { formBindingData, formInfo, formProvider, FormExtensionAbility } from '@kit.FormKit';
+import { accessibility } from '@kit.AccessibilityKit';
 import { Want } from '@kit.AbilityKit';
 import { InvestigationCard } from '../utils/investigationCard';
 import { HttpUtil } from '../utils/http';
@@ -39,7 +40,9 @@ export default class InvestigationFormAbility extends FormExtensionAbility {
     const value = JSON.parse(message) as Record<string, Object>;
     const params = (value['params'] as Record<string, Object>) || value;
     const command = params['command'] as string;
-    if (command === 'next' || command === 'previous') {
+    if (command === 'interact') {
+      await this.interact(formId);
+    } else if (command === 'next' || command === 'previous') {
       await InvestigationCard.cycle(this.context, formId, command === 'next' ? 1 : -1);
     } else if (command === 'refresh') {
       await SecurityUtil.initSecureState();
@@ -53,6 +56,22 @@ export default class InvestigationFormAbility extends FormExtensionAbility {
         }
       }
       await InvestigationCard.refresh(this.context, formId);
+    }
+  }
+
+  private async interact(formId: string): Promise<void> {
+    try {
+      if (accessibility.isAnimationReduceEnabledSync()) return;
+      const rect = await formProvider.getFormRect(formId);
+      if (rect.width <= 0 || rect.height <= 0) return;
+      await formProvider.requestOverflow(formId, {
+        area: { left: 0, top: 0, width: rect.width, height: rect.height },
+        duration: 2200,
+        useDefaultAnimation: true
+      });
+    } catch (_error) {
+      // Unsupported hosts retain the ordinary card's click feedback and all navigation controls.
+      console.info('[InvestigationCard] Host retained the ordinary card');
     }
   }
 }

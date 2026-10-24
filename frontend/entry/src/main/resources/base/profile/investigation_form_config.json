@@ -6,7 +6,10 @@
       "description": "$string:investigation_card_desc",
       "src": "./ets/investigationform/InvestigationCard.ets",
       "uiSyntax": "arkts",
-      "isDynamic": false,
+      "isDynamic": true,
+      "sceneAnimationParams": {
+        "abilityName": "InvestigationLiveFormAbility"
+      },
       "window": {
         "designWidth": 720,
         "autoDesignWidth": true

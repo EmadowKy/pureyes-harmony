@@ -14,7 +14,8 @@
 | 系统凭据填充 | `frontend/entry/src/main/ets/pages/Login.ets` | 账号与密码输入框分别标注 `ContentType.USER_NAME`、`ContentType.PASSWORD`，允许系统识别凭据字段。是否提示保存及如何解锁由设备和用户设置决定。 |
 | Share Kit 系统分享 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 已完成且有结论的调查轮次提供“分享结论”；点击后分享问题与 Markdown 原文，由用户在系统面板选择目标。不会自动分享视频、截图、令牌或服务器地址。 |
 | Sensor Service Kit 触感 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 页面在轮询中看到任务完成时发出一次 60 ms 轻触感。设备无马达或系统禁用振动时静默退化，结果仍正常显示。 |
-| Form Kit 服务卡片 | `frontend/entry/src/main/ets/investigationform/`、`utils/investigationCard.ets` | 2×2 / 2×4 小鸮卡片展示调查阶段、用时、工具步骤和同步时间；支持切换多个任务、手动刷新、空闲总览及跳转调查。 |
+| Form Kit 互动服务卡片 | `frontend/entry/src/main/ets/investigationform/`、`pages/InvestigationLiveCard.ets`、`utils/investigationCard.ets` | 2×2 / 2×4 小鸮卡片展示调查状态；动态卡片支持点击反馈、任务切换与跳转，LiveForm 扩展提供短时互动面板。 |
+| Ability Kit 应用 Skill | `frontend/entry/skills/pureyes-investigation/`、`utils/investigationSkill.ets` | API 26 的应用 Skill 声明查询调查进度、打开已有会话两项能力，供完成平台接入的小艺调用。 |
 | Notification Kit / Background Tasks Kit | `frontend/entry/src/main/ets/utils/investigationTasks.ets` | 系统通知授权、每项调查进度与完成通知；运行期间申请 `dataTransfer` 连续后台任务，以同步服务端状态。最后一项任务结束后停止后台任务。 |
 | Window Kit 闪控窗／闪控球 | `utils/investigationFloat.ets`、`utils/investigationFloatState.ets`、`pages/InvestigationFloatWindow.ets` | HarmonyOS 7 上由用户主动开启跨应用任务窗口，支持系统窗球联动、多任务切换、阶段与耗时展示，以及返回所选调查。 |
 | ArkUI 页面动效 | `frontend/entry/src/main/ets/pages/` | 主栏及工作区子栏选中态、列表卡片按压与入场、个人页切换、登录输入焦点和调查工具步骤采用短时属性动画及转场；调查记录标识使用 `geometryTransition` 共享元素转场。 |
@@ -50,6 +51,29 @@
 
 `FormExtensionAbility` 仅在添加、刷新和点击事件时执行，不进行常驻轮询。卡片的【↻】会重新读取安全登录状态，调用任务接口并更新快照；切换按钮读取本地快照。同步时间始终可见，避免将缓存当成实时状态。点击卡片或通知先走现有登录验证，再定位工作区与会话。
 
+### 动态卡片与互动面板
+
+卡片配置 `isDynamic: true`，点击通过 `postCardAction` 发送 `message` 或 `router`。动态卡片不使用静态卡片的 `FormLink` 命中区域。所选会话或状态变化时播放一次约 580 ms 的抬起、转头动作；耗时和同步时间变化不触发动作。卡片无持续动画定时器，系统减少动态效果设置通过绑定数据传入。
+
+点击小鸮或名称后，`InvestigationFormAbility` 先读取系统动效偏好，再使用 `getFormRect` 和 `requestOverflow` 请求 2200 ms 互动状态。`sceneAnimationParams.abilityName` 绑定 `InvestigationLiveFormAbility`，由 `UIExtensionContentSession.loadContent` 加载 `InvestigationLiveCard`，提供状态、耗时、步骤与查看入口。当前请求区域与卡片区域相同，不扩展到桌面其他区域。
+
+互动界面只在点击时请求，不通过每次轮询强制激活。设备不支持、宿主拒绝或系统中断时保留普通动态卡片。扩展销毁后清理共享数据；页面退出取消尚未执行的入场回调，动画回调使用可见状态保护。互动面板的查看按钮在点击事件中直接调用 `startAbilityByLiveForm`，返回后仍经过应用登录和工作区校验。
+
+### 小艺应用 Skill
+
+应用使用 API 26 的 ArkTS 脚本 Skill，目录为 `frontend/entry/skills/pureyes-investigation/`。`SKILL.md` 声明触发话术、参数约束、成功与失败结果；模块的 `skillProfiles` 将脚本绑定到 `EntryAbility`，可见范围为 `system`。入口类通过 `scriptManager.completeArkTSScriptInApp` 返回任务标题与状态摘要，不返回令牌、媒体地址、原始问题字段或答案。
+
+| 方法 | 参数 | 行为 |
+| --- | --- | --- |
+| `getInvestigationProgress` | 可选调查名称或 `conversationId` | 无参数返回整体计数和最多 20 项摘要；有参数返回单项进度，重名时返回候选项。 |
+| `openInvestigation` | 可选调查名称或 `conversationId` | 从最新授权响应中匹配唯一会话，再打开对应工作区；无参数且有多项调查时要求选择。 |
+
+业务适配层每次从安全存储读取登录状态，检查登录服务器与当前服务器一致，再请求 `/workspaces/agent/tasks`。服务器按已接受的小组成员关系过滤。返回结果前再次比较账号令牌与服务器，丢弃退出登录或切换账号期间的迟到响应。精确名称与会话编号优先于部分名称；不匹配时不自动打开其他记录。查询范围是全部运行任务与最近结束记录，不能用它断言历史调查不存在。
+
+未登录、网络失败、状态格式异常、未找到、名称歧义与页面启动失败分别返回明确错误。打开接口不新建会话，不发起分析或追问。安装 HAP 仅完成应用侧能力注册；小艺平台仍需按[应用 Skill 开发指导](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/arkts-skill-development-guide)导入含 Skill 的 HAP、完成设备测试与分发配置。系统语音调度、账户资质及发布结果需在平台和支持设备上验收。
+
+`frontend/tests/investigationSkill.test.cjs` 覆盖契约适配、权限失败、歧义、字段过滤、切换账号与服务器竞态。设备集成测试位于 `src/ohosTest/ets/test/InvestigationSkill.test.ets`，只在 `aa test` 显式传入 `-s pureyesSkillIntegration true` 时运行，使用设备已有登录状态读取真实服务器并打开已有记录，不创建测试对话。系统智能体的实际调度需另外通过平台联调验证。
+
 ## 闪控窗与闪控球
 
 ### 系统能力与签名授权
@@ -75,7 +99,7 @@ SDK 26.0.0.105 的权限定义中，两项均为 `system_basic`、`provisionEnab
 
 窗口每秒更新本地耗时，闪控球普通内容更新至多每 10 秒一次，所选任务状态变化立即更新；网络数据仍来自任务中心。请求失败时冻结计时，超过 20 秒没有新快照的运行中任务标记同步中断，终态用时不再增加。已完成任务不会仅因后台停止轮询而被误报为中断。追问替换任务 ID 时继续跟随同一会话，删除记录后选择仍有权限的其他任务或显示空状态。
 
-闪控面板在切换任务、阶段变化和完成时使用短距离过渡，每秒计时与步骤数刷新不重播入场。同步中断时小鸮切回待命形态，并显示同步提示；后台窗口不持续播放装饰动画。桌面卡片保留静态轻量渲染，展示所选任务的阶段、用时和步骤，查看入口与主体内容均可返回调查。
+闪控面板在切换任务、阶段变化和完成时使用短距离过渡，每秒计时与步骤数刷新不重播入场。同步中断时小鸮切回待命形态，并显示同步提示；后台窗口不持续播放装饰动画。桌面卡片展示所选任务的阶段、用时和步骤，查看入口与主体文字均可返回调查。
 
 完成时保留结果状态，不自动打开主界面。只有用户点击【查看】才调用 `restoreMainWindow()`，沿用通知与卡片的登录及工作区校验，再关闭闪控；未申请自动拉起主窗口权限。用户或系统关闭窗口后，后续轮询不会重新创建窗口，服务器调查不受关闭影响。系统取消后台同步时显示提示，恢复同步后清除；进程被终止后需要重新打开应用。
 

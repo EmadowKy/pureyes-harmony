@@ -14,9 +14,11 @@ let starts = 0, stops = 0;
 const floatSnapshots = [];
 let floatFailures = 0, floatClears = 0, floatCancellations = 0, cancelBackground;
 let failCardPublish = false;
+let reduceMotion = false;
 const values = new Map([['access_token', 'test-token']]);
 const prefs = new Map();
 const context = vm.createContext({
+  accessibility: { isAnimationReduceEnabledSync: () => reduceMotion },
   InvestigationFloat: {
     update(value) { floatSnapshots.push(value); }, syncFailed() { floatFailures++; },
     backgroundCancelled() { floatCancellations++; }, clear: async () => { floatClears++; }
@@ -67,6 +69,11 @@ async function refresh(tasks) { now += 5000; current = dashboard(tasks); await c
   assert.equal(lastCard.groupId, '4', 'widget carries the authorized task group');
   await card.refresh({}, 'form-two');
   assert.equal(lastCard.conversationId, 'conversation-a', 'each form has its own task selection');
+  assert.equal(lastCard.reduceMotion, false, 'form refresh reads system motion preference across processes');
+  reduceMotion = true;
+  await card.refresh({}, 'form-two');
+  assert.equal(lastCard.reduceMotion, true);
+  reduceMotion = false;
   await card.cycle({}, 'form-one', 1);
   assert.equal(lastCard.conversationId, 'conversation-a', 'cycling wraps');
   await card.clear({});

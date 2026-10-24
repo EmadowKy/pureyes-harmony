@@ -3,6 +3,7 @@
     "pages/Index",
     "pages/Login",
     "pages/WorkspaceDetail",
-    "pages/InvestigationFloatWindow"
+    "pages/InvestigationFloatWindow",
+    "pages/InvestigationLiveCard"
   ]
 }
