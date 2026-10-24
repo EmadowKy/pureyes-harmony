@@ -50,3 +50,18 @@ test('late error from previous source does not retry current video', () => {
   [...timers.values()][0]();
   assert.equal(player.retries, 0);
 });
+
+test('empty recording state does not schedule a media failure', () => {
+  const { player, timers } = harness();
+  player.selectedMonitorUrl = '';
+  player.scheduleMediaRecovery();
+  assert.equal(timers.size, 0);
+  player.selectedMonitorUrl = 'old'; player.playbackMode = 'history'; player.hasReplayAtSelectedTime = false;
+  player.scheduleMediaRecovery();
+  assert.equal(timers.size, 0);
+});
+
+test('changing time or returning live clears the previous media error', () => {
+  assert.match(source, /async goHistory\([^]*?this\.markMediaPlaying\(\)/);
+  assert.match(source, /async goLive\([^]*?this\.markMediaPlaying\(\)/);
+});

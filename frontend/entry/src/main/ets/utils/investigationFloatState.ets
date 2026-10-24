@@ -119,6 +119,11 @@ export function floatStatusLabel(status: string): string {
   return '清眸调查';
 }
 
+// Clock ticks and step counts must not replay a task-switch animation.
+export function floatMotionKey(task: InvestigationFloatSnapshot): string {
+  return `${task.taskId}:${task.status}:${task.stage}:${task.stale}`;
+}
+
 export function floatErrorHint(code: number): string {
   if (code === 201) return '未获得闪控权限，请在系统设置中允许；若未显示权限入口，需检查应用签名授权。';
   if (code === 801) return '当前设备不支持闪控，请使用应用内进度或任务通知。';

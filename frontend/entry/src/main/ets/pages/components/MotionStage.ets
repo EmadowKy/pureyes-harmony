@@ -3,6 +3,8 @@ import { AppMotion } from '../../utils/appMotion';
 @Component
 export struct MotionStage {
   @Prop @Watch('reveal') sceneKey: string = '';
+  @Prop fillAvailable: boolean = true;
+  @Prop distance: number = 12;
   @StorageLink('reduce_motion') @Watch('onMotionPreference') reduceMotion: boolean = false;
   @BuilderParam content: () => void = this.empty;
   @State private contentOpacity: number = 1;
@@ -36,7 +38,7 @@ export struct MotionStage {
       return;
     }
     this.contentOpacity = 0.4;
-    this.contentOffset = 12;
+    this.contentOffset = this.distance;
     this.frameTimer = setTimeout((): void => {
       this.frameTimer = 0;
       if (!this.visible) return;
@@ -52,7 +54,7 @@ export struct MotionStage {
       this.content()
     }
     .width('100%')
-    .layoutWeight(1)
+    .layoutWeight(this.fillAvailable ? 1 : 0)
     .opacity(this.contentOpacity)
     .translate({ y: this.contentOffset })
   }
