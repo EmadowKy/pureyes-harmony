@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require(process.argv[2] || 'typescript');
 const values = new Map([['access_token', 'local-session']]);
-const registrations = new Map(), shared = [], removed = [], written = [];
+const registrations = new Map(), shared = [], removed = [], removedDirectories = [], written = [];
 class SharedData {
   constructor(record) { this.records = [record]; }
   getRecords() { return this.records; }
@@ -20,7 +20,7 @@ const sandbox = vm.createContext({ Date, console, setTimeout, clearTimeout,
   fileUri: { getUriFromPath: p => 'file://app' + p,
     FileUri: class { constructor(uri) { this.name = decodeURIComponent(uri.split('/').at(-1)); this.path = uri.replace('file://app', ''); } } },
   videoContentType: name => /\.(mp4|mov|avi|mkv|webm)$/i.test(name) ? 'video/test' : '',
-  fs: { mkdirSync() {}, rmdirSync() {}, unlinkSync: p => removed.push(p),
+  fs: { mkdirSync() {}, rmdirSync: p => removedDirectories.push(p), unlinkSync: p => removed.push(p),
     OpenMode: { CREATE: 1, WRITE_ONLY: 2, TRUNC: 4 },
     openSync: path => ({ fd: path }), writeSync: (path, text) => written.push({ path, text }), closeSync() {} },
   systemShare: { SharedData,
@@ -55,9 +55,18 @@ assert.deepEqual(Array.from(uris(dropped([new FileRecord('file://app/a.mp4'), ne
   share.enqueue([record('file://app/cache/received-video-lookalike/a.mp4')]);
   share.remove('file://app/cache/received-video-lookalike/a.mp4'); assert.equal(removed.length, 0);
   let receiveArgs;
+  registrations.get('dataReceive')({ receive: () => { throw new Error('native receive unavailable'); } });
+  assert.match(values.get('share_hint'), /无法接收/);
+  assert.equal(removedDirectories.length, 1, 'synchronous native failure releases the temporary directory');
+  registrations.get('dataReceive')({ receive: async (directory, callbacks) => { receiveArgs = { directory, callbacks }; } });
+  receiveArgs.callbacks.onDataReceived({ getRecords() { throw new Error('malformed transfer'); } });
+  assert.match(values.get('share_hint'), /无法读取/);
+  assert.equal(removedDirectories.length, 2, 'invalid transfer releases the receiver for another attempt');
   registrations.get('dataReceive')({ receive: async (directory, callbacks) => { receiveArgs = { directory, callbacks }; } });
   const received = receiveArgs.directory + '/a.mp4';
   receiveArgs.callbacks.onDataReceived(new SharedData(record(received)));
+  receiveArgs.callbacks.onDataReceived(new SharedData(record(received)));
+  assert.equal(removedDirectories.length, 2, 'duplicate completion cannot delete the queued video');
   assert.equal(share.pendingName(), 'a.mp4');
   share.remove(received); assert.equal(removed.length, 1);
   share.setConclusion('结论内容'); assert.ok(registrations.has('knockShare'));

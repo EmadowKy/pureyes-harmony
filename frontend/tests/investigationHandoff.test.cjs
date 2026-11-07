@@ -31,6 +31,49 @@ assert.equal(read({ seconds: -10 }).seconds, 0);
 assert.equal(read({ segmentId: -1 }).segmentId, 0);
 assert.equal(read({ draft: 'x'.repeat(10000) }).draft.length, 4000);
 assert.ok(!JSON.stringify(read({ access_token: 'secret', mediaUrl: 'signed-secret', api_key: 'secret' })).includes('secret'));
+
+const panel = fs.readFileSync(path.join(__dirname,
+  '../entry/src/main/ets/pages/components/AgentConversationPanel.ets'), 'utf8');
+const restoreMethod = panel.slice(panel.indexOf('  private restoreHandoff()'), panel.indexOf('  @Builder ContinuationControls()'));
+const restoreContext = vm.createContext({
+  parseHandoff: parse, getBaseUrl: () => server,
+  AppStorage: { get: k => values.get(k), setOrCreate: (k, v) => values.set(k, v) }
+});
+vm.runInContext(ts.transpileModule(`class RestoreHarness {
+  panelActive = true; conversationReady = true; workspaceId = 1; selectedConversationId = 'case-1';
+  segmentsLoaded = false; pendingHandoffEvidence = undefined; composerText = '';
+  continuationHint = ''; resumedEvidenceId = 0; resumedEvidenceSeconds = 0; evidencePlaybackSeconds = 0;
+  selectEvidence(id: number, seconds: number) {
+    if (id !== 13) return false;
+    this.evidencePlaybackSeconds = seconds;
+    return true;
+  }
+  ${restoreMethod}
+  restore() { this.restoreHandoff(); }
+}
+globalThis.panel = new RestoreHarness();`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2020 }
+}).outputText, restoreContext);
+const restored = restoreContext.panel;
+values.set('currentGroupId', 4);
+values.set('handoff_restore', JSON.stringify(good));
+restored.restore();
+assert.equal(restored.composerText, '', 'the draft belongs only to the incoming group');
+values.set('currentGroupId', 3);
+restored.restore();
+assert.equal(restored.composerText, good.draft, 'video metadata must not delay draft recovery');
+assert.equal(restored.resumedEvidenceId, 0);
+restored.composerText = '修改后的草稿';
+restored.segmentsLoaded = true;
+restored.restore();
+assert.equal(restored.resumedEvidenceId, 13);
+assert.equal(restored.resumedEvidenceSeconds, 9);
+assert.equal(restored.composerText, '修改后的草稿', 'a later video load must not overwrite a user edit');
+values.set('handoff_restore', JSON.stringify({ ...good, segmentId: 999 }));
+restored.restore();
+assert.equal(restored.composerText, good.draft, 'an unavailable clip must not drop the draft');
+assert.match(restored.continuationHint, /原视频片段暂不可播放/);
+
 (async () => {
   handoff.bind({ setMissionContinueState: async state => states.push(state) });
   const state = Object.assign(new State(), good);

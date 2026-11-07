@@ -105,6 +105,32 @@ flushSeeks();
 assert.deepEqual(Array.from(player.seeks), [0, 0, 24], 'rapid clicks apply only the newest requested position');
 console.log('Inline player preparation, repeated seeking, fullscreen and teardown guards passed.');
 
+const restoreInlineMethod = video.slice(video.indexOf('  private restoreInlinePlayback()'),
+  video.indexOf('  @Builder fullscreenPlayer()'));
+const fullscreenContext = vm.createContext({});
+vm.runInContext(ts.transpileModule(`class FullscreenReturnHarness {
+  active = true; prepared = true; fullscreen = false; fullscreenOpen = true;
+  playbackSeconds = 8; fullscreenSeconds = 23; fullscreenPlaying = false;
+  positions: number[] = []; seeks: boolean[] = []; resumeOnPrepare: boolean | undefined;
+  onPosition(seconds: number) { this.positions.push(seconds); }
+  scheduleSeek(resume: boolean) { this.seeks.push(resume); }
+  ${restoreInlineMethod}
+  restore() { this.restoreInlinePlayback(); }
+}
+globalThis.player = new FullscreenReturnHarness();`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2020 }
+}).outputText, fullscreenContext);
+const fullscreenReturn = fullscreenContext.player;
+fullscreenReturn.restore();
+fullscreenReturn.restore();
+assert.deepEqual(Array.from(fullscreenReturn.positions), [23], 'modal dismissal restores the last fullscreen position once');
+assert.deepEqual(Array.from(fullscreenReturn.seeks), [false], 'returning from a paused fullscreen keeps playback paused');
+fullscreenReturn.fullscreenOpen = true;
+fullscreenReturn.prepared = false;
+fullscreenReturn.fullscreenPlaying = true;
+fullscreenReturn.restore();
+assert.equal(fullscreenReturn.resumeOnPrepare, true, 'the fullscreen play state survives a pending source reload');
+
 async function checkMediaRaces() {
   const requests = [];
   const mediaContext = vm.createContext({

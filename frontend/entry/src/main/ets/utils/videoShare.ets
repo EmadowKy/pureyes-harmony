@@ -79,22 +79,32 @@ export class VideoShare {
     VideoShare.receiveDirectories.add(directory);
     VideoShare.receiveDirectory = directory;
     const generation = VideoShare.generation;
-    target.receive(fileUri.getUriFromPath(directory), {
-      onDataReceived: (data: systemShare.SharedData): void => {
-        if (generation === VideoShare.generation && VideoShare.receiveDirectory === directory &&
-          AppStorage.get<string>('access_token')) {
-          VideoShare.receiveDirectory = '';
-          VideoShare.enqueue(data.getRecords());
-          VideoShare.pruneReceiveDirectory(directory);
-        } else VideoShare.cleanDirectory(directory);
-      },
-      onResult: (code: harmonyShare.ShareResultCode): void => {
-        if (code !== harmonyShare.ShareResultCode.SHARE_SUCCESS)
-          VideoShare.receiveFailed(directory, generation, '视频传输未完成，请重新发送');
-      }
-    }).catch((): void => {
+    try {
+      target.receive(fileUri.getUriFromPath(directory), {
+        onDataReceived: (data: systemShare.SharedData): void => {
+          if (VideoShare.receiveDirectory !== directory || generation !== VideoShare.generation) return;
+          if (!AppStorage.get<string>('access_token')) {
+            VideoShare.receiveFailed(directory, generation, '');
+            return;
+          }
+          try {
+            VideoShare.enqueue(data.getRecords());
+            VideoShare.receiveDirectory = '';
+            VideoShare.pruneReceiveDirectory(directory);
+          } catch (_error) {
+            VideoShare.receiveFailed(directory, generation, '无法读取收到的视频，请重新发送');
+          }
+        },
+        onResult: (code: harmonyShare.ShareResultCode): void => {
+          if (code !== harmonyShare.ShareResultCode.SHARE_SUCCESS)
+            VideoShare.receiveFailed(directory, generation, '视频传输未完成，请重新发送');
+        }
+      }).catch((): void => {
+        VideoShare.receiveFailed(directory, generation, '无法接收视频，请重试');
+      });
+    } catch (_error) {
       VideoShare.receiveFailed(directory, generation, '无法接收视频，请重试');
-    });
+    }
   };
 
   static bind(context: common.UIAbilityContext, windowId: number): void {

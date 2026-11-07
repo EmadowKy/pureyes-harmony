@@ -176,7 +176,7 @@ export struct AgentConversationPanel {
   @State modelConfigs: Array<ModelConfigOption> = [];
   @State selectedModelConfigId: number = 0;
   @State @Watch('publishHandoff') messages: Array<AgentTurnItem> = [];
-  @State @Watch('restoreHandoff') segments: Array<AgentSegmentChoice> = [];
+  @State segments: Array<AgentSegmentChoice> = [];
   @State @Watch('publishHandoff') selectedConversationId: string = '';
   @State evidenceSegmentIds: Array<number> = [];
   @State referenceSegmentsExpanded: boolean = false;
@@ -208,6 +208,8 @@ export struct AgentConversationPanel {
   @State evidenceRevision: number = 0;
   private evidencePlaybackSegmentId: number = 0;
   private evidencePlaybackSeconds: number = 0;
+  private pendingHandoffEvidence?: InvestigationHandoffState;
+  private segmentsLoaded: boolean = false;
   @State modelLoadError: string = '';
   @State shareErrorTurnId: string = '';
   @State conversationActionError: string = '';
@@ -289,20 +291,30 @@ export struct AgentConversationPanel {
   }
 
   private restoreHandoff(): void {
+    if (!this.panelActive || !this.conversationReady) return;
     const raw = AppStorage.get<string>('handoff_restore') || '';
-    if (!raw || !this.panelActive || !this.conversationReady) return;
-    const state = parseHandoff(raw, getBaseUrl().replace(/\/+$/, ''), Date.now());
-    if (!state || state.workspaceId !== this.workspaceId || state.conversationId !== this.selectedConversationId) return;
-    if (state.segmentId && this.segments.length === 0) return;
-    AppStorage.setOrCreate('handoff_restore', '');
-    this.composerText = state.draft;
-    const restored = state.segmentId > 0 && this.selectEvidence(state.segmentId, state.seconds, false);
+    if (raw) {
+      const state = parseHandoff(raw, getBaseUrl().replace(/\/+$/, ''), Date.now());
+      if (!state) {
+        AppStorage.setOrCreate('handoff_restore', '');
+      } else if (state.groupId === AppStorage.get<number>('currentGroupId') &&
+        state.workspaceId === this.workspaceId && state.conversationId === this.selectedConversationId) {
+        AppStorage.setOrCreate('handoff_restore', '');
+        this.composerText = state.draft;
+        this.pendingHandoffEvidence = state.segmentId > 0 ? state : undefined;
+        this.continuationHint = '已接续调查，已恢复追问草稿';
+      }
+    }
+    const evidence = this.pendingHandoffEvidence;
+    if (!evidence || !this.segmentsLoaded) return;
+    this.pendingHandoffEvidence = undefined;
+    const restored = this.selectEvidence(evidence.segmentId, evidence.seconds, false);
     if (restored) {
-      this.resumedEvidenceId = state.segmentId;
+      this.resumedEvidenceId = evidence.segmentId;
       this.resumedEvidenceSeconds = this.evidencePlaybackSeconds;
     }
     this.continuationHint = restored ? '已接续调查，已恢复视频位置与追问草稿' :
-      '已接续调查，已恢复追问草稿';
+      '已恢复追问草稿，原视频片段暂不可播放';
   }
 
   @Builder ContinuationControls() {
@@ -468,6 +480,7 @@ export struct AgentConversationPanel {
       mapped.push(segment);
     }
     this.segments = mapped;
+    this.segmentsLoaded = true;
     this.reconcileEvidence();
     this.restoreHandoff();
     this.publishHandoff();
@@ -718,6 +731,7 @@ export struct AgentConversationPanel {
     this.focusedSegmentId = 0; this.focusedSeconds = 0; this.evidenceRevision = 0;
     this.resumedEvidenceId = 0;
     this.resumedEvidenceSeconds = 0;
+    this.pendingHandoffEvidence = undefined;
     this.continuationHint = '';
     this.evidencePlaybackSegmentId = 0;
     this.evidencePlaybackSeconds = 0;
@@ -757,6 +771,7 @@ export struct AgentConversationPanel {
       } catch (_error) { /* A detached page cannot display a toast. */ }
       return false;
     }
+    this.pendingHandoffEvidence = undefined;
     this.evidencePlaybackSegmentId = segmentId;
     this.evidencePlaybackSeconds = focus.seconds;
     this.focusedSegmentId = focus.segmentId;

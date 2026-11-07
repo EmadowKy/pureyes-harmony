@@ -20,13 +20,19 @@ export struct RenewableVideo {
   private prepared: boolean = false;
   private addressEpoch: number = 0;
   private seekTimer: number = 0;
-  private fullscreenReturnSeconds: number = -1;
+  private inlinePlaying: boolean = false;
+  private fullscreenSeconds: number = 0;
+  private fullscreenPlaying: boolean = false;
+  private fullscreenOpen: boolean = false;
+  private resumeOnPrepare: boolean | undefined;
 
   private onSourceChanged(): void {
     clearTimeout(this.seekTimer);
     this.addressEpoch++;
     this.refreshing = false;
     this.prepared = false;
+    this.inlinePlaying = false;
+    this.resumeOnPrepare = undefined;
     this.retryCount = 0;
     this.playbackSeconds = Math.max(0, this.initialSeconds);
     this.playbackUrl = '';
@@ -77,8 +83,11 @@ export struct RenewableVideo {
     try {
       const url = await renewMediaUrl(source);
       if (!this.active || epoch !== this.addressEpoch) return;
-      this.prepared = false;
-      this.playbackUrl = url;
+      if (this.playbackUrl !== url) {
+        if (this.prepared) this.resumeOnPrepare = this.inlinePlaying;
+        this.prepared = false;
+        this.playbackUrl = url;
+      }
       this.errorText = '';
     } catch (error) {
       if (this.active && epoch === this.addressEpoch) this.errorText = '视频加载失败，请检查网络或登录状态后重试';
@@ -97,15 +106,25 @@ export struct RenewableVideo {
     this.refreshAddress();
   }
 
+  private restoreInlinePlayback(): void {
+    if (!this.active || !this.fullscreenOpen) return;
+    this.fullscreenOpen = false;
+    this.fullscreen = false;
+    this.playbackSeconds = this.fullscreenSeconds;
+    this.onPosition(this.playbackSeconds);
+    if (this.prepared) this.scheduleSeek(this.fullscreenPlaying);
+    else this.resumeOnPrepare = this.fullscreenPlaying;
+  }
+
   @Builder fullscreenPlayer() {
     FullscreenSegmentVideo({
       source: this.playbackUrl,
-      initialSeconds: this.playbackSeconds,
-      onPosition: (seconds: number): void => { this.playbackSeconds = seconds; this.onPosition(seconds); },
+      initialSeconds: this.fullscreenSeconds,
+      initialPlaying: this.fullscreenPlaying,
+      onPosition: (seconds: number): void => { this.fullscreenSeconds = seconds; this.onPosition(seconds); },
+      onPlayingChange: (playing: boolean): void => { this.fullscreenPlaying = playing; },
       onClose: (seconds: number): void => {
-        this.playbackSeconds = seconds;
-        this.fullscreenReturnSeconds = seconds;
-        this.onPosition(seconds);
+        this.fullscreenSeconds = seconds;
         this.fullscreen = false;
       }
     })
@@ -115,10 +134,13 @@ export struct RenewableVideo {
     Stack() {
       if (this.playbackUrl) {
         Video({ src: this.playbackUrl, controller: this.controller })
-          .width('100%').height('100%').autoPlay(this.autoPlay && !this.fullscreen).controls(true)
+          .width('100%').height('100%').autoPlay(false).controls(true)
           .objectFit(ImageFit.Contain)
           .onFullscreenChange((event): void => {
-            if (event.fullscreen) {
+            if (event.fullscreen && !this.fullscreenOpen) {
+              this.fullscreenSeconds = this.playbackSeconds;
+              this.fullscreenPlaying = this.inlinePlaying;
+              this.fullscreenOpen = true;
               this.controller.exitFullscreen();
               this.controller.pause();
               this.fullscreen = true;
@@ -127,11 +149,19 @@ export struct RenewableVideo {
           .onPrepared((): void => {
             if (!this.active) return;
             this.prepared = true;
-            this.scheduleSeek(this.autoPlay);
+            if (!this.fullscreenOpen) {
+              this.scheduleSeek(this.resumeOnPrepare ?? this.autoPlay);
+              this.resumeOnPrepare = undefined;
+            }
           })
-          .onStart((): void => { if (this.fullscreen) this.controller.pause(); })
+          .onStart((): void => {
+            if (this.fullscreenOpen) this.controller.pause();
+            else this.inlinePlaying = true;
+          })
+          .onPause((): void => { this.inlinePlaying = false; })
+          .onFinish((): void => { this.inlinePlaying = false; })
           .onUpdate((event): void => {
-            if (this.active && this.prepared && !this.fullscreen) {
+            if (this.active && this.prepared && !this.fullscreenOpen) {
               this.playbackSeconds = event.time;
               this.onPosition(event.time);
             }
@@ -151,15 +181,7 @@ export struct RenewableVideo {
     }.width('100%').height('100%').backgroundColor(Color.Black)
       .bindContentCover($$this.fullscreen, this.fullscreenPlayer(), {
         modalTransition: ModalTransition.NONE,
-        onDisappear: (): void => {
-          if (this.active) {
-            if (this.fullscreenReturnSeconds >= 0) {
-              this.playbackSeconds = this.fullscreenReturnSeconds;
-              this.fullscreenReturnSeconds = -1;
-            }
-            this.scheduleSeek(true);
-          }
-        }
+        onDisappear: (): void => { this.restoreInlinePlayback(); }
       })
   }
 }

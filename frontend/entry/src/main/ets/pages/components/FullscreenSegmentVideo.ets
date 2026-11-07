@@ -5,8 +5,10 @@ import { common } from '@kit.AbilityKit';
 export struct FullscreenSegmentVideo {
   source: string = '';
   initialSeconds: number = 0;
+  initialPlaying: boolean = true;
   onClose: (seconds: number) => void = (_seconds: number): void => {};
   onPosition: (seconds: number) => void = (_seconds: number): void => {};
+  onPlayingChange: (playing: boolean) => void = (_playing: boolean): void => {};
   private controller: VideoController = new VideoController();
   @State private seconds: number = 0;
   @State private duration: number = 0;
@@ -29,6 +31,7 @@ export struct FullscreenSegmentVideo {
   aboutToAppear(): void {
     this.active = true;
     this.seconds = this.initialSeconds;
+    this.playing = this.initialPlaying;
     this.orientationTask = this.enterLandscape();
   }
 
@@ -71,25 +74,34 @@ export struct FullscreenSegmentVideo {
     return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
   }
 
+  private updatePlaying(playing: boolean): void {
+    if (!this.active) return;
+    this.playing = playing;
+    this.onPlayingChange(playing);
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       Stack() {
         Video({ src: this.source, controller: this.controller })
           .width('100%').height('100%').objectFit(ImageFit.Contain)
-          .autoPlay(true).controls(false)
+          .autoPlay(false).controls(false)
           .scale({ x: this.scaleValue, y: this.scaleValue })
           .translate({ x: this.offsetX, y: this.offsetY })
           .onPrepared((event): void => {
             this.duration = event.duration;
             clearTimeout(this.prepareSeekTimer);
             this.prepareSeekTimer = setTimeout((): void => {
-              if (this.active) this.controller.setCurrentTime(Math.max(0, this.initialSeconds), SeekMode.Accurate);
+              if (!this.active) return;
+              this.controller.setCurrentTime(Math.max(0, this.seconds), SeekMode.Accurate);
+              if (this.playing) this.controller.start();
             }, 32);
           })
-          .onStart((): void => { this.playing = true; this.errorText = ''; })
-          .onPause((): void => { this.playing = false; })
-          .onFinish((): void => { this.playing = false; })
+          .onStart((): void => { this.updatePlaying(true); this.errorText = ''; })
+          .onPause((): void => { this.updatePlaying(false); })
+          .onFinish((): void => { this.updatePlaying(false); })
           .onUpdate((event): void => {
+            if (!this.active) return;
             this.seconds = event.time; this.onPosition(this.seconds); this.errorText = '';
           })
           .onError((): void => { this.errorText = '视频暂时无法播放，请返回后重试'; })
