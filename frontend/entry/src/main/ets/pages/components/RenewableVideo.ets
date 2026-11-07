@@ -57,12 +57,12 @@ export struct RenewableVideo {
     this.seekTimer = setTimeout((): void => {
       this.seekTimer = 0;
       if (!this.active || !this.prepared || this.fullscreen || epoch !== this.addressEpoch) return;
-      if (resume && this.inlineCompleted) {
+      if (this.inlineCompleted) {
         // A completed native player can seek to a frame without leaving the completed state.
         this.prepared = false;
         this.inlineCompleted = false;
         this.playbackSeconds = seconds;
-        this.resumeOnPrepare = true;
+        this.resumeOnPrepare = resume;
         this.playerGeneration++;
         return;
       }

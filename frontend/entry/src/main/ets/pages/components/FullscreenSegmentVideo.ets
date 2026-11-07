@@ -13,6 +13,7 @@ export struct FullscreenSegmentVideo {
   @State private seconds: number = 0;
   @State private duration: number = 0;
   @State private playing: boolean = true;
+  @State private ready: boolean = false;
   @State private scaleValue: number = 1;
   @State private offsetX: number = 0;
   @State private offsetY: number = 0;
@@ -80,6 +81,19 @@ export struct FullscreenSegmentVideo {
     this.onPlayingChange(playing);
   }
 
+  private prepareVideo(duration: number): void {
+    this.duration = duration;
+    clearTimeout(this.prepareSeekTimer);
+    this.prepareSeekTimer = setTimeout((): void => {
+      if (!this.active) return;
+      const position = Math.max(0, Math.min(this.initialSeconds, this.duration));
+      this.seconds = position;
+      this.controller.setCurrentTime(position, SeekMode.Accurate);
+      this.ready = true;
+      if (this.playing) this.controller.start();
+    }, 32);
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       Stack() {
@@ -88,20 +102,12 @@ export struct FullscreenSegmentVideo {
           .autoPlay(false).controls(false)
           .scale({ x: this.scaleValue, y: this.scaleValue })
           .translate({ x: this.offsetX, y: this.offsetY })
-          .onPrepared((event): void => {
-            this.duration = event.duration;
-            clearTimeout(this.prepareSeekTimer);
-            this.prepareSeekTimer = setTimeout((): void => {
-              if (!this.active) return;
-              this.controller.setCurrentTime(Math.max(0, this.seconds), SeekMode.Accurate);
-              if (this.playing) this.controller.start();
-            }, 32);
-          })
+          .onPrepared((event): void => { this.prepareVideo(event.duration); })
           .onStart((): void => { this.updatePlaying(true); this.errorText = ''; })
           .onPause((): void => { this.updatePlaying(false); })
           .onFinish((): void => { this.updatePlaying(false); })
           .onUpdate((event): void => {
-            if (!this.active) return;
+            if (!this.active || !this.ready) return;
             this.seconds = event.time; this.onPosition(this.seconds); this.errorText = '';
           })
           .onError((): void => { this.errorText = '视频暂时无法播放，请返回后重试'; })
@@ -138,13 +144,13 @@ export struct FullscreenSegmentVideo {
           Text(this.errorText).fontColor(Color.White).fontSize(12)
         }
         Row({ space: 10 }) {
-          Button(this.playing ? '暂停' : '播放').onClick((): void => {
+          Button(this.playing ? '暂停' : '播放').enabled(this.ready).onClick((): void => {
             if (this.playing) this.controller.pause(); else this.controller.start();
           })
           Text(this.timeText(this.seconds)).fontColor(Color.White).fontSize(12)
           Slider({ value: this.seconds, min: 0, max: Math.max(1, this.duration), step: 1 })
-            .layoutWeight(1).onChange((value: number, mode: SliderChangeMode): void => {
-              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            .enabled(this.ready).layoutWeight(1).onChange((value: number, mode: SliderChangeMode): void => {
+              if (this.ready && (mode === SliderChangeMode.End || mode === SliderChangeMode.Click)) {
                 this.controller.setCurrentTime(value, SeekMode.Accurate); this.seconds = value;
               }
             })

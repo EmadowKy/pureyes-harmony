@@ -28,3 +28,21 @@ test('uses two-finger gestures and restores the previous window orientation', ()
   assert.match(source, /setPreferredOrientation\(this.previousOrientation\)/);
   assert.match(source, /this.onPosition\(this.seconds\)/);
 });
+test('a paused fullscreen player seeks to the original position after preparation', () => {
+  const prepare = source.slice(source.indexOf('  private prepareVideo('), source.indexOf('  build()'))
+    .replace('private ', '').replace('duration: number', 'duration').replaceAll('(): void', '()').replace('): void', ')');
+  let pending;
+  const PositionPlayer = vm.runInNewContext(`(class { ${prepare} })`, {
+    clearTimeout() {}, setTimeout(callback) { pending = callback; }, SeekMode: { Accurate: 3 }
+  });
+  const player = new PositionPlayer();
+  const seeks = [];
+  Object.assign(player, { active: true, seconds: 1, initialSeconds: 51, playing: false,
+    controller: { setCurrentTime: seconds => seeks.push(seconds), start: () => assert.fail('unexpected autoplay') } });
+  player.prepareVideo(51);
+  assert.deepEqual(seeks, []);
+  pending();
+  assert.deepEqual(seeks, [51]);
+  assert.equal(player.seconds, 51);
+  assert.equal(player.ready, true);
+});

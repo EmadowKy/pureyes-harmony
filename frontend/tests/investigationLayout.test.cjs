@@ -112,6 +112,13 @@ assert.equal(player.playerGeneration, 1, 'replay creates a fresh native player')
 assert.equal(player.prepared, false);
 assert.equal(player.playbackSeconds, 24);
 assert.equal(player.resumeOnPrepare, true);
+player.prepared = true;
+player.inlineCompleted = true;
+player.playbackSeconds = 16;
+player.scheduleSeek(false); flushSeeks();
+assert.equal(player.playerGeneration, 2, 'returning paused from fullscreen also replaces a completed player');
+assert.equal(player.playbackSeconds, 16);
+assert.equal(player.resumeOnPrepare, false);
 console.log('Inline player preparation, repeated seeking, fullscreen and teardown guards passed.');
 
 const restoreInlineMethod = video.slice(video.indexOf('  private restoreInlinePlayback()'),
