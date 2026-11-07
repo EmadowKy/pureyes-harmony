@@ -11,6 +11,7 @@ export struct RenewableVideo {
   controller: VideoController = new VideoController();
   @State playbackUrl: string = '';
   @State errorText: string = '';
+  @State private playerGeneration: number = 0;
   @State private fullscreen: boolean = false;
   private playbackSeconds: number = 0;
   private retryCount: number = 0;
@@ -21,6 +22,7 @@ export struct RenewableVideo {
   private addressEpoch: number = 0;
   private seekTimer: number = 0;
   private inlinePlaying: boolean = false;
+  private inlineCompleted: boolean = false;
   private fullscreenSeconds: number = 0;
   private fullscreenPlaying: boolean = false;
   private fullscreenOpen: boolean = false;
@@ -32,6 +34,7 @@ export struct RenewableVideo {
     this.refreshing = false;
     this.prepared = false;
     this.inlinePlaying = false;
+    this.inlineCompleted = false;
     this.resumeOnPrepare = undefined;
     this.retryCount = 0;
     this.playbackSeconds = Math.max(0, this.initialSeconds);
@@ -54,6 +57,15 @@ export struct RenewableVideo {
     this.seekTimer = setTimeout((): void => {
       this.seekTimer = 0;
       if (!this.active || !this.prepared || this.fullscreen || epoch !== this.addressEpoch) return;
+      if (resume && this.inlineCompleted) {
+        // A completed native player can seek to a frame without leaving the completed state.
+        this.prepared = false;
+        this.inlineCompleted = false;
+        this.playbackSeconds = seconds;
+        this.resumeOnPrepare = true;
+        this.playerGeneration++;
+        return;
+      }
       this.controller.setCurrentTime(seconds, SeekMode.Accurate);
       if (resume) this.controller.start();
     }, 32);
@@ -86,6 +98,7 @@ export struct RenewableVideo {
       if (this.playbackUrl !== url) {
         if (this.prepared) this.resumeOnPrepare = this.inlinePlaying;
         this.prepared = false;
+        this.inlineCompleted = false;
         this.playbackUrl = url;
       }
       this.errorText = '';
@@ -133,40 +146,54 @@ export struct RenewableVideo {
   build() {
     Stack() {
       if (this.playbackUrl) {
-        Video({ src: this.playbackUrl, controller: this.controller })
-          .width('100%').height('100%').autoPlay(false).controls(true)
-          .objectFit(ImageFit.Contain)
-          .onFullscreenChange((event): void => {
-            if (event.fullscreen && !this.fullscreenOpen) {
-              this.fullscreenSeconds = this.playbackSeconds;
-              this.fullscreenPlaying = this.inlinePlaying;
-              this.fullscreenOpen = true;
-              this.controller.exitFullscreen();
-              this.controller.pause();
-              this.fullscreen = true;
-            }
-          })
-          .onPrepared((): void => {
-            if (!this.active) return;
-            this.prepared = true;
-            if (!this.fullscreenOpen) {
-              this.scheduleSeek(this.resumeOnPrepare ?? this.autoPlay);
-              this.resumeOnPrepare = undefined;
-            }
-          })
-          .onStart((): void => {
-            if (this.fullscreenOpen) this.controller.pause();
-            else this.inlinePlaying = true;
-          })
-          .onPause((): void => { this.inlinePlaying = false; })
-          .onFinish((): void => { this.inlinePlaying = false; })
-          .onUpdate((event): void => {
-            if (this.active && this.prepared && !this.fullscreenOpen) {
-              this.playbackSeconds = event.time;
-              this.onPosition(event.time);
-            }
-          })
-          .onError((): void => { this.recover(); })
+        ForEach([this.playerGeneration], (generation: number): void => {
+          Video({ src: this.playbackUrl, controller: this.controller })
+            .width('100%').height('100%').autoPlay(false).controls(true)
+            .objectFit(ImageFit.Contain)
+            .onFullscreenChange((event): void => {
+              if (generation === this.playerGeneration && event.fullscreen && !this.fullscreenOpen) {
+                this.fullscreenSeconds = this.playbackSeconds;
+                this.fullscreenPlaying = this.inlinePlaying;
+                this.fullscreenOpen = true;
+                this.controller.exitFullscreen();
+                this.controller.pause();
+                this.fullscreen = true;
+              }
+            })
+            .onPrepared((): void => {
+              if (!this.active || generation !== this.playerGeneration) return;
+              this.prepared = true;
+              if (!this.fullscreenOpen) {
+                this.scheduleSeek(this.resumeOnPrepare ?? this.autoPlay);
+                this.resumeOnPrepare = undefined;
+              }
+            })
+            .onStart((): void => {
+              if (generation !== this.playerGeneration) return;
+              if (this.fullscreenOpen) this.controller.pause();
+              else {
+                this.inlinePlaying = true;
+                this.inlineCompleted = false;
+              }
+            })
+            .onPause((): void => {
+              if (generation === this.playerGeneration) this.inlinePlaying = false;
+            })
+            .onFinish((): void => {
+              if (generation !== this.playerGeneration) return;
+              this.inlinePlaying = false;
+              this.inlineCompleted = true;
+            })
+            .onUpdate((event): void => {
+              if (generation === this.playerGeneration && this.active && this.prepared && !this.fullscreenOpen) {
+                this.playbackSeconds = event.time;
+                this.onPosition(event.time);
+              }
+            })
+            .onError((): void => {
+              if (generation === this.playerGeneration) this.recover();
+            })
+        }, (generation: number): string => generation.toString())
       }
       if (this.errorText) {
         Column({ space: 8 }) {

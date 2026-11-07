@@ -71,6 +71,7 @@ vm.runInContext(ts.transpileModule(`class PlayerHarness {
   initialSeconds = 0; playbackSeconds = 12; seekRevision = 1;
   active = true; prepared = false; fullscreen = false;
   addressEpoch = 1; seekTimer = 0;
+  playerGeneration = 0; inlineCompleted = false; resumeOnPrepare: boolean | undefined;
   seeks: number[] = []; starts = 0;
   controller = {setCurrentTime: (seconds: number) => this.seeks.push(seconds), start: () => this.starts++};
   ${seekMethod}
@@ -103,6 +104,14 @@ player.initialSeconds = 7; player.seek();
 player.initialSeconds = 24; player.seek();
 flushSeeks();
 assert.deepEqual(Array.from(player.seeks), [0, 0, 24], 'rapid clicks apply only the newest requested position');
+player.inlineCompleted = true;
+const startsBeforeReplay = player.starts;
+player.seek(); flushSeeks();
+assert.equal(player.starts, startsBeforeReplay, 'a completed native player cannot resume directly');
+assert.equal(player.playerGeneration, 1, 'replay creates a fresh native player');
+assert.equal(player.prepared, false);
+assert.equal(player.playbackSeconds, 24);
+assert.equal(player.resumeOnPrepare, true);
 console.log('Inline player preparation, repeated seeking, fullscreen and teardown guards passed.');
 
 const restoreInlineMethod = video.slice(video.indexOf('  private restoreInlinePlayback()'),
