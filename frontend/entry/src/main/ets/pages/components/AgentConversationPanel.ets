@@ -1962,9 +1962,10 @@ export struct AgentConversationPanel {
                   y: this.isSelected(segment.id) ? 1 : 0.88 })
               if (segment.thumbnailUrl) {
                 Image(BASE_HOST + segment.thumbnailUrl)
-                  .width(56)
-                  .height(48)
-                  .objectFit(ImageFit.Cover)
+                  .width(80)
+                  .height(45)
+                  .objectFit(ImageFit.Contain)
+                  .backgroundColor($r('app.color.app_surface_inverted'))
                   .borderRadius(7)
               }
               Column({ space: 3 }) {

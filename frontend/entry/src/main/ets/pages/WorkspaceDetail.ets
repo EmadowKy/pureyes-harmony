@@ -3172,10 +3172,11 @@ struct WorkspaceDetail {
                               .margin({ right: 12 })
                           } else {
                             Image(BASE_HOST + seg.thumbnail_url)
-                              .width(100)
-                              .height(60)
+                              .width(this.workspaceWidth >= 840 ? 128 : 96)
+                              .height(this.workspaceWidth >= 840 ? 72 : 54)
                               .borderRadius(6)
-                              .objectFit(ImageFit.Cover)
+                              .objectFit(ImageFit.Contain)
+                              .backgroundColor($r('app.color.app_surface_inverted'))
                               .margin({ right: 12 })
                           }
 

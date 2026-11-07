@@ -62,6 +62,10 @@ const GRANULARITIES: Array<GranularityOption> = [
   new GranularityOption('second', '秒', 1)
 ];
 
+const MONITOR_GRID_INSET = 18;
+const MONITOR_GRID_GAP = 16;
+const MONITOR_GRID_MAX_WIDTHS: number[] = [880, 1120, 1360, 1560];
+
 @CustomDialog
 struct AddMonitorDialog {
   controller: CustomDialogController
@@ -622,6 +626,22 @@ export struct MonitorTab {
       .onClick(action)
   }
 
+  private monitorColumnCount(): number {
+    const width = this.monitorWidth;
+    const capacity = width >= 1500 ? 4 : width >= 1000 ? 3 : width >= 640 ? 2 : 1;
+    return Math.max(1, Math.min(this.monitors.length, capacity));
+  }
+
+  private monitorGridMaxWidth(): number {
+    return MONITOR_GRID_MAX_WIDTHS[this.monitorColumnCount() - 1];
+  }
+
+  private monitorCardWidth(): number {
+    const columns = this.monitorColumnCount();
+    const width = Math.min(this.monitorWidth || 360, this.monitorGridMaxWidth());
+    return (width - MONITOR_GRID_INSET * 2 - (columns - 1) * MONITOR_GRID_GAP) / columns;
+  }
+
   @Builder MonitorCover(monitor: MonitorInfo) {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 6 }) {
@@ -635,19 +655,64 @@ export struct MonitorTab {
       .justifyContent(FlexAlign.Center)
       .backgroundColor($r('app.color.app_card_subtle_bg'))
 
-      Image(monitor.cover_url)
-        .width('100%')
-        .height('100%')
-        .objectFit(ImageFit.Cover)
+      if (monitor.cover_url) {
+        Image(monitor.cover_url)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Contain)
+          .backgroundColor($r('app.color.app_surface_inverted'))
+      }
     }
     .width('100%')
-    .height(100)
+    .height(Math.max(1, this.monitorCardWidth() * 9 / 16))
     .borderRadius({ topLeft: 11, topRight: 11 })
     .clip(true)
-    .backgroundColor(Color.Gray)
     .onClick((): void => {
       this.openMonitor(monitor);
     })
+  }
+
+  @Builder MonitorCardFooter(monitor: MonitorInfo) {
+    Flex({
+      direction: this.monitorCardWidth() >= 360 ? FlexDirection.Row : FlexDirection.Column,
+      alignItems: this.monitorCardWidth() >= 360 ? ItemAlign.Center : ItemAlign.Start,
+      justifyContent: FlexAlign.SpaceBetween
+    }) {
+      Column({ space: 4 }) {
+        Text(monitor.name)
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(!monitor.source_configured ? '未配置视频源' :
+          monitor.recording_state === 'recording' ? '服务器正在连续保存录像' : '录像连接正在恢复')
+          .fontSize(12)
+          .fontColor($r('app.color.app_text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width(this.monitorCardWidth() >= 360 ? '56%' : '100%')
+      .alignItems(HorizontalAlign.Start)
+
+      Row({ space: 8 }) {
+        this.MonitorIconButton('open', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
+          this.openMonitor(monitor);
+        })
+        if (monitor.can_manage) {
+          this.MonitorIconButton('edit', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+            this.openEditMonitor(monitor);
+          })
+          this.MonitorIconButton('delete', $r('app.color.app_danger'), $r('app.color.app_card_subtle_bg'), (): void => {
+            this.confirmDeleteMonitor(monitor);
+          })
+        }
+      }
+      .alignSelf(this.monitorCardWidth() >= 360 ? ItemAlign.Center : ItemAlign.End)
+      .margin({ top: this.monitorCardWidth() >= 360 ? 0 : 8 })
+    }
+    .width('100%')
+    .padding(12)
   }
 
   async deleteMonitor(monitor: MonitorInfo): Promise<void> {
@@ -1255,7 +1320,8 @@ export struct MonitorTab {
           })
         }
         .width('100%')
-        .padding({ left: 18, right: 18, top: 22, bottom: 16 })
+        .constraintSize({ maxWidth: this.monitorGridMaxWidth() })
+        .padding({ left: MONITOR_GRID_INSET, right: MONITOR_GRID_INSET, top: 22, bottom: 16 })
 
         if (this.isLoadingMonitors && this.monitors.length === 0) {
           Column({ space: 12 }) {
@@ -1305,74 +1371,44 @@ export struct MonitorTab {
           Grid() {
             ForEach(this.monitors, (monitor: MonitorInfo): void => {
               GridItem() {
-                Column({ space: 8 }) {
+                Column() {
                   this.MonitorCover(monitor)
 
                   if (this.editingMonitorId === monitor.id) {
-                    TextInput({ placeholder: '请输入监控名称', text: this.editingMonitorName })
-                      .height(36)
-                      .fontSize(13)
-                      .fontColor($r('app.color.app_text_primary'))
-                      .backgroundColor($r('app.color.app_input_bg'))
-                      .onChange((val: string): void => {
-                        this.editingMonitorName = val;
-                      })
-                    TextInput({ placeholder: '请输入视频流地址', text: this.editingMonitorUrl })
-                      .height(36)
-                      .fontSize(13)
-                      .fontColor($r('app.color.app_text_primary'))
-                      .backgroundColor($r('app.color.app_input_bg'))
-                      .onChange((val: string): void => {
-                        this.editingMonitorUrl = val;
-                      })
-                    Row({ space: 10 }) {
-                      Blank()
-                      this.MonitorIconButton('save', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
-                        this.submitEditMonitor(monitor.id);
-                      })
-                      this.MonitorIconButton('cancel', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
-                        this.cancelEditMonitor();
-                      })
-                      Blank()
-                    }
-                    .width('100%')
-                    .padding({ left: 8, right: 8, bottom: 8 })
-                  } else {
-                    Text(monitor.name)
-                      .fontSize(14)
-                      .fontColor($r('app.color.app_text_primary'))
-                      .padding({ left: 8, right: 8, top: 2 })
-                      .width('100%')
-                      .textAlign(TextAlign.Center)
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(!monitor.source_configured ? '未配置视频源' : monitor.recording_state === 'recording' ? '服务器正在连续保存录像' : '录像连接正在恢复')
-                      .fontSize(10)
-                      .fontColor($r('app.color.app_text_secondary'))
-                      .padding({ left: 8, right: 8 })
-                      .width('100%')
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Row({ space: 10 }) {
-                      Blank()
-                      this.MonitorIconButton('open', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
-                        this.openMonitor(monitor);
-                      })
-                      if (monitor.can_manage) {
-                        this.MonitorIconButton('edit', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
-                          this.openEditMonitor(monitor);
+                    Column({ space: 8 }) {
+                      TextInput({ placeholder: '请输入监控名称', text: this.editingMonitorName })
+                        .height(36)
+                        .fontSize(13)
+                        .fontColor($r('app.color.app_text_primary'))
+                        .backgroundColor($r('app.color.app_input_bg'))
+                        .onChange((val: string): void => {
+                          this.editingMonitorName = val;
                         })
-                        this.MonitorIconButton('delete', $r('app.color.app_danger'), $r('app.color.app_card_subtle_bg'), (): void => {
-                          this.confirmDeleteMonitor(monitor);
+                      TextInput({ placeholder: '请输入视频流地址', text: this.editingMonitorUrl })
+                        .height(36)
+                        .fontSize(13)
+                        .fontColor($r('app.color.app_text_primary'))
+                        .backgroundColor($r('app.color.app_input_bg'))
+                        .onChange((val: string): void => {
+                          this.editingMonitorUrl = val;
+                        })
+                      Row({ space: 8 }) {
+                        this.MonitorIconButton('save', $r('app.color.app_text_on_inverted'), $r('app.color.app_surface_inverted'), (): void => {
+                          this.submitEditMonitor(monitor.id);
+                        })
+                        this.MonitorIconButton('cancel', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
+                          this.cancelEditMonitor();
                         })
                       }
-                      Blank()
+                      .alignSelf(ItemAlign.End)
                     }
                     .width('100%')
-                    .padding({ left: 8, right: 8, bottom: 8 })
+                    .padding(12)
+                  } else {
+                    this.MonitorCardFooter(monitor)
                   }
                 }
-                .padding({ bottom: 8 })
+                .width('100%')
                 .backgroundColor($r('app.color.app_card_bg'))
                 .border({ width: 1, color: $r('app.color.app_border') })
                 .borderRadius(12)
@@ -1389,12 +1425,12 @@ export struct MonitorTab {
                 .animation({ duration: 220, curve: Curve.EaseOut }))
             }, (monitor: MonitorInfo): string => monitor.id.toString())
           }
-          .columnsTemplate(this.monitorWidth >= 1180 ? '1fr 1fr 1fr 1fr' :
-            (this.monitorWidth >= 840 ? '1fr 1fr 1fr' : '1fr 1fr'))
-          .columnsGap(10)
-          .rowsGap(10)
-          .padding({ left: 18, right: 18, bottom: 24 })
+          .columnsTemplate('1fr '.repeat(this.monitorColumnCount()).trim())
+          .columnsGap(MONITOR_GRID_GAP)
+          .rowsGap(MONITOR_GRID_GAP)
+          .padding({ left: MONITOR_GRID_INSET, right: MONITOR_GRID_INSET, bottom: 24 })
           .width('100%')
+          .constraintSize({ maxWidth: this.monitorGridMaxWidth() })
           .layoutWeight(1)
         }
       }
