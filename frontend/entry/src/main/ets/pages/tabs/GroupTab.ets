@@ -505,6 +505,7 @@ export struct GroupTab {
         .width('100%')
       }
       .width('88%')
+      .constraintSize({ maxWidth: 520 })
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: 1, color: $r('app.color.app_border') })
@@ -585,6 +586,7 @@ export struct GroupTab {
       })
     }
     .width('90%')
+    .constraintSize({ maxWidth: 1000 })
     .padding(14)
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
@@ -605,6 +607,7 @@ export struct GroupTab {
         })
       }
       .width('90%')
+      .constraintSize({ maxWidth: 1000 })
 
       List({ space: 10 }) {
         ForEach(this.members, (member: MemberInfo): void => {
@@ -673,6 +676,7 @@ export struct GroupTab {
         }, (member: MemberInfo): string => member.emp_id)
       }
       .width('90%')
+      .constraintSize({ maxWidth: 1000 })
       .layoutWeight(1)
     }
     .width('100%')

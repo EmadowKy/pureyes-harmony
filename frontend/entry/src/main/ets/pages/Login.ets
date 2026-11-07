@@ -186,6 +186,7 @@ struct Login {
           .width('100%')
         }
         .width('90%')
+        .constraintSize({ maxWidth: 480 })
         .alignItems(HorizontalAlign.Start)
         .padding({ top: 52, bottom: 30 })
 
@@ -446,6 +447,7 @@ struct Login {
           .onClick((): void => { this.openGuide() })
         }
         .width('90%')
+        .constraintSize({ maxWidth: 480 })
         .padding(20)
         .backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })

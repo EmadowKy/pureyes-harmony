@@ -354,6 +354,8 @@ export struct WorkspaceTab {
           }, (ws: WorkspaceInfo): string => ws.id.toString())
         }
         .width('100%')
+        .constraintSize({ maxWidth: 1160 })
+        .lanes({ minLength: 340, maxLength: 560 }, 12)
         .padding({ left: 18, right: 18, bottom: 24 })
         .layoutWeight(1)
       }

@@ -31,6 +31,8 @@ interface ToastOptions {
   duration?: number;
 }
 
+const PROFILE_CONTENT_MAX_WIDTH = 840;
+
 const PAGE_HOME = 'home';
 const PAGE_INFO = 'info';
 const PAGE_SECURITY = 'security';
@@ -1117,6 +1119,7 @@ export struct ProfileTab {
       .layoutWeight(1)
     }
     .width('90%')
+    .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
     .padding({ left: 18, right: 18, top: 18, bottom: 18 })
     .backgroundColor($r('app.color.app_card_bg'))
     .border({ width: 1, color: $r('app.color.app_border') })
@@ -1140,6 +1143,7 @@ export struct ProfileTab {
       .layoutWeight(1)
     }
     .width('90%')
+    .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
     .padding({ top: 18, bottom: 6 })
   }
 
@@ -1241,6 +1245,7 @@ export struct ProfileTab {
           .onClick((): void => { this.openGuide() })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
 
         Row() {
           this.WideIconTextButton('logout', '退出登录', $r('app.color.app_danger'), $r('app.color.app_card_bg'), (): void => {
@@ -1317,6 +1322,7 @@ export struct ProfileTab {
           })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
         .padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
@@ -1359,7 +1365,7 @@ export struct ProfileTab {
             .onClick((): void => { AntiPeep.enable(); })
           Button('刷新状态').fontSize(13).onClick((): void => { AntiPeep.refresh(); })
         }.width('100%')
-      }.width('90%').padding(16).backgroundColor($r('app.color.app_card_bg'))
+      }.width('90%').constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH }).padding(16).backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') }).borderRadius(8)
 
       Column({ space: 12 }) {
@@ -1385,7 +1391,7 @@ export struct ProfileTab {
           Text('正在验证密码…').fontSize(12)
             .fontColor($r('app.color.app_text_secondary'))
         }
-      }.width('90%').padding(16)
+      }.width('90%').constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH }).padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') }).borderRadius(8)
     }
@@ -1431,6 +1437,7 @@ export struct ProfileTab {
         })
       }
       .width('90%')
+      .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: 1, color: $r('app.color.app_border') })
@@ -1481,6 +1488,7 @@ export struct ProfileTab {
           })
       }
       .width('90%')
+      .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
       .padding({ left: 14, right: 14, top: 12, bottom: 12 })
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: 1, color: $r('app.color.app_border') })
@@ -1600,6 +1608,7 @@ export struct ProfileTab {
         }
       }
       .width('90%')
+      .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
       .layoutWeight(1)
     }
     .width('100%')
@@ -1632,6 +1641,7 @@ export struct ProfileTab {
         })
       }
       .width('90%')
+      .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: 1, color: $r('app.color.app_border') })
@@ -1686,6 +1696,7 @@ export struct ProfileTab {
           }
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
         .padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
         .borderRadius(8)
@@ -1776,6 +1787,7 @@ export struct ProfileTab {
           })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
         .padding(16)
         .backgroundColor($r('app.color.app_card_bg'))
         .border({ width: 1, color: $r('app.color.app_border') })
@@ -2037,6 +2049,7 @@ export struct ProfileTab {
       }
       .width('88%')
       .height('82%')
+      .constraintSize({ maxWidth: 640, maxHeight: 720 })
       .padding(16)
       .backgroundColor($r('app.color.app_card_bg'))
       .border({ width: 1, color: $r('app.color.app_border') })
@@ -2069,6 +2082,7 @@ export struct ProfileTab {
           })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
 
         List({ space: 10 }) {
           if (this.adminUsers.length === 0) {
@@ -2122,6 +2136,7 @@ export struct ProfileTab {
           })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
         .layoutWeight(1)
       }
       .width('100%')
@@ -2166,6 +2181,7 @@ export struct ProfileTab {
           })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
 
         List({ space: 10 }) {
           if (this.adminUsers.length === 0) {
@@ -2219,6 +2235,7 @@ export struct ProfileTab {
           })
         }
         .width('90%')
+        .constraintSize({ maxWidth: PROFILE_CONTENT_MAX_WIDTH })
         .layoutWeight(1)
       }
       .width('100%')

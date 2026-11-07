@@ -122,6 +122,8 @@ export struct MonitorTab {
   @State monitors: Array<MonitorInfo> = [];
   @State pressedMonitorId: number = 0;
   @State selectedMonitorId: number = 0;
+  @State monitorWidth: number = 0;
+  @State monitorHeight: number = 0;
   @State selectedMonitorName: string = '';
   @State selectedMonitorUrl: string = '';
   @State isLiveStream: boolean = false;
@@ -938,9 +940,14 @@ export struct MonitorTab {
     await this.loadTimeline(nowText, false);
   }
 
-  build() {
-    Column() {
-      if (this.selectedMonitorId !== 0) {
+  private monitorPlayerHeight(): number {
+    const videoWidth = Math.min(Math.max(0, this.monitorWidth - 40), 1080);
+    return Math.max(140, Math.min(videoWidth * 9 / 16, Math.max(220, this.monitorHeight * 0.62)));
+  }
+
+  @Builder MonitorDetail() {
+    Scroll() {
+      Column() {
         Row() {
           this.MonitorIconButton('back', $r('app.color.app_text_primary'), $r('app.color.app_card_subtle_bg'), (): void => {
             this.resetSelection();
@@ -957,16 +964,17 @@ export struct MonitorTab {
               .fontColor($r('app.color.app_text_secondary'))
           }
           .layoutWeight(1)
+          .alignItems(this.monitorWidth >= 840 ? HorizontalAlign.Start : HorizontalAlign.Center)
           .margin({ left: 10 })
         }
         .width('100%')
-        .padding({ left: 18, right: 18, top: 16, bottom: 12 })
+        .padding({ top: 16, bottom: 12 })
 
         Stack({ alignContent: Alignment.TopStart }) {
           if (this.selectedMonitorUrl && (this.playbackMode === 'live' || this.hasReplayAtSelectedTime)) {
             Video({ src: this.selectedMonitorUrl, controller: this.videoController })
               .width('100%')
-              .height(220)
+              .height(this.monitorPlayerHeight())
               .autoPlay(true)
               .controls(false)
               .objectFit(ImageFit.Contain)
@@ -1028,8 +1036,9 @@ export struct MonitorTab {
         .borderRadius(5)
           .margin({ left: 15, top: 15 })
         }
-        .width('90%')
-        .height(220)
+        .width('100%')
+        .margin({ bottom: 4 })
+        .height(this.monitorPlayerHeight())
         .borderRadius(12)
         .clip(true)
         .backgroundColor(Color.Black)
@@ -1050,7 +1059,9 @@ export struct MonitorTab {
           })
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 12 })
+        .constraintSize({ maxWidth: 460 })
+        .alignSelf(ItemAlign.Start)
+        .padding({ top: 12 })
 
         Row() {
           Text('录像时间轴')
@@ -1082,7 +1093,7 @@ export struct MonitorTab {
           }
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 18, bottom: 8 })
+        .padding({ top: 18, bottom: 8 })
 
         Column({ space: 9 }) {
           Row() {
@@ -1184,6 +1195,7 @@ export struct MonitorTab {
               .fontSize(11)
               .fontColor($r('app.color.app_text_secondary'))
           }
+          .width('100%')
           if (this.timelineErrorText || this.mediaErrorText) {
             Text(this.timelineErrorText || this.mediaErrorText)
               .fontSize(12)
@@ -1191,8 +1203,22 @@ export struct MonitorTab {
           }
         }
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 16 })
+        .padding({ bottom: 20 })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 1120 })
+      .padding({ left: 20, right: 20 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .align(Alignment.Top)
+    .scrollBar(BarState.Auto)
+  }
 
+  build() {
+    Column() {
+      if (this.selectedMonitorId !== 0) {
+        this.MonitorDetail()
       } else {
         Row({ space: 12 }) {
           Column({ space: 3 }) {
@@ -1363,7 +1389,8 @@ export struct MonitorTab {
                 .animation({ duration: 220, curve: Curve.EaseOut }))
             }, (monitor: MonitorInfo): string => monitor.id.toString())
           }
-          .columnsTemplate('1fr 1fr')
+          .columnsTemplate(this.monitorWidth >= 1180 ? '1fr 1fr 1fr 1fr' :
+            (this.monitorWidth >= 840 ? '1fr 1fr 1fr' : '1fr 1fr'))
           .columnsGap(10)
           .rowsGap(10)
           .padding({ left: 18, right: 18, bottom: 24 })
@@ -1375,5 +1402,9 @@ export struct MonitorTab {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.app_page_bg'))
+    .onAreaChange((_oldArea: Area, area: Area): void => {
+      this.monitorWidth = Number(area.width);
+      this.monitorHeight = Number(area.height);
+    })
   }
 }
