@@ -21,6 +21,7 @@ export struct FullscreenSegmentVideo {
   private widthValue: number = 0;
   private heightValue: number = 0;
   private active: boolean = false;
+  private prepareSeekTimer: number = 0;
   private orientationTask: Promise<void> = Promise.resolve();
   private playerWindow: window.Window | undefined = undefined;
   private previousOrientation: window.Orientation = window.Orientation.PORTRAIT;
@@ -46,6 +47,7 @@ export struct FullscreenSegmentVideo {
 
   aboutToDisappear(): void {
     this.active = false;
+    clearTimeout(this.prepareSeekTimer);
     this.orientationTask.then(async (): Promise<void> => {
       if (this.playerWindow) await this.playerWindow.setPreferredOrientation(this.previousOrientation);
     }).catch((): void => {});
@@ -79,7 +81,10 @@ export struct FullscreenSegmentVideo {
           .translate({ x: this.offsetX, y: this.offsetY })
           .onPrepared((event): void => {
             this.duration = event.duration;
-            if (this.initialSeconds > 0) this.controller.setCurrentTime(this.initialSeconds);
+            clearTimeout(this.prepareSeekTimer);
+            this.prepareSeekTimer = setTimeout((): void => {
+              if (this.active) this.controller.setCurrentTime(Math.max(0, this.initialSeconds), SeekMode.Accurate);
+            }, 32);
           })
           .onStart((): void => { this.playing = true; this.errorText = ''; })
           .onPause((): void => { this.playing = false; })
@@ -110,10 +115,12 @@ export struct FullscreenSegmentVideo {
         ))
       Column({ space: 6 }) {
         Row({ space: 12 }) {
-          Button('返回').onClick((): void => { this.onClose(this.seconds); })
+          Button('返回').height(40).backgroundColor('#66000000').fontColor(Color.White)
+            .onClick((): void => { this.onClose(this.seconds); })
           Text('双指缩放 / 移动').fontColor(Color.White).fontSize(12).layoutWeight(1)
-          Button('复位').onClick((): void => { this.resetView(); })
-        }.width('100%')
+          Button('复位').height(40).backgroundColor('#66000000').fontColor(Color.White)
+            .onClick((): void => { this.resetView(); })
+        }.width('100%').height(48)
         Blank()
         if (this.errorText) {
           Text(this.errorText).fontColor(Color.White).fontSize(12)
@@ -126,13 +133,12 @@ export struct FullscreenSegmentVideo {
           Slider({ value: this.seconds, min: 0, max: Math.max(1, this.duration), step: 1 })
             .layoutWeight(1).onChange((value: number, mode: SliderChangeMode): void => {
               if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                this.controller.setCurrentTime(value); this.seconds = value;
+                this.controller.setCurrentTime(value, SeekMode.Accurate); this.seconds = value;
               }
             })
           Text(this.timeText(this.duration)).fontColor(Color.White).fontSize(12)
-        }.width('100%').padding(8).backgroundColor('#99000000')
-      }.width('100%').height('100%').padding(16)
+        }.width('100%').height(56).padding(8).backgroundColor('#99000000')
+      }.width('100%').height('100%').padding({ left: 16, right: 16, top: 48, bottom: 24 })
     }.width('100%').height('100%').backgroundColor(Color.Black)
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

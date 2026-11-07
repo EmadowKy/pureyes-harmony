@@ -5,7 +5,9 @@
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
     "deviceTypes": [
-      "phone"
+      "phone",
+      "tablet",
+      "2in1"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
@@ -23,6 +25,14 @@
       { "name": "ohos.arkui.UIMaterial.state", "value": "enable" }
     ],
     "requestPermissions": [
+      {
+        "name": "ohos.permission.DLP_GET_HIDE_STATUS"
+      },
+      {
+        "name": "ohos.permission.DISTRIBUTED_DATASYNC",
+        "reason": "$string:investigation_continue_reason",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }
+      },
       {
         "name": "ohos.permission.INTERNET"
       },
@@ -57,6 +67,8 @@
     "abilities": [
       {
         "name": "EntryAbility",
+        "continuable": true,
+        "supportWindowMode": ["fullscreen", "split", "floating"],
         "backgroundModes": ["dataTransfer"],
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
@@ -66,6 +78,10 @@
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
+          {
+            "actions": ["ohos.want.action.sendData"],
+            "uris": [{ "scheme": "file", "utd": "general.video", "maxFileSupported": 5 }]
+          },
           {
             "entities": [
               "entity.system.home"

@@ -3,8 +3,11 @@ import { FullscreenSegmentVideo } from './FullscreenSegmentVideo';
 
 @Component
 export struct RenewableVideo {
-  source: string = '';
-  initialSeconds: number = 0;
+  @Prop @Watch('onSourceChanged') source: string = '';
+  @Prop @Watch('seekToRequestedPosition') initialSeconds: number = 0;
+  @Prop @Watch('seekToRequestedPosition') seekRevision: number = 0;
+  @Prop autoPlay: boolean = true;
+  onPosition: (seconds: number) => void = (_seconds: number): void => {};
   controller: VideoController = new VideoController();
   @State playbackUrl: string = '';
   @State errorText: string = '';
@@ -14,6 +17,41 @@ export struct RenewableVideo {
   private refreshing: boolean = false;
   private active: boolean = false;
   private refreshTimer: number = 0;
+  private prepared: boolean = false;
+  private addressEpoch: number = 0;
+  private seekTimer: number = 0;
+  private fullscreenReturnSeconds: number = -1;
+
+  private onSourceChanged(): void {
+    clearTimeout(this.seekTimer);
+    this.addressEpoch++;
+    this.refreshing = false;
+    this.prepared = false;
+    this.retryCount = 0;
+    this.playbackSeconds = Math.max(0, this.initialSeconds);
+    this.playbackUrl = '';
+    this.errorText = '';
+    this.refreshAddress();
+  }
+
+  private seekToRequestedPosition(): void {
+    this.playbackSeconds = Number.isFinite(this.initialSeconds) ? Math.max(0, this.initialSeconds) : 0;
+    this.scheduleSeek(this.seekRevision > 0);
+  }
+
+  private scheduleSeek(resume: boolean): void {
+    clearTimeout(this.seekTimer);
+    const epoch = this.addressEpoch;
+    const seconds = this.playbackSeconds;
+    // Prop watchers and onPrepared run before the native Video update completes.
+    // Issue controller commands after that update, including repeated same-time seeks.
+    this.seekTimer = setTimeout((): void => {
+      this.seekTimer = 0;
+      if (!this.active || !this.prepared || this.fullscreen || epoch !== this.addressEpoch) return;
+      this.controller.setCurrentTime(seconds, SeekMode.Accurate);
+      if (resume) this.controller.start();
+    }, 32);
+  }
 
   aboutToAppear(): void {
     this.active = true;
@@ -25,21 +63,27 @@ export struct RenewableVideo {
 
   aboutToDisappear(): void {
     this.active = false;
+    this.addressEpoch++;
+    this.prepared = false;
     clearInterval(this.refreshTimer);
+    clearTimeout(this.seekTimer);
   }
 
   async refreshAddress(): Promise<void> {
     if (this.refreshing || !this.active) return;
     this.refreshing = true;
+    const epoch = ++this.addressEpoch;
+    const source = this.source;
     try {
-      const url = await renewMediaUrl(this.source);
-      if (!this.active) return;
+      const url = await renewMediaUrl(source);
+      if (!this.active || epoch !== this.addressEpoch) return;
+      this.prepared = false;
       this.playbackUrl = url;
       this.errorText = '';
     } catch (error) {
-      if (this.active) this.errorText = '视频加载失败，请检查网络或登录状态后重试';
+      if (this.active && epoch === this.addressEpoch) this.errorText = '视频加载失败，请检查网络或登录状态后重试';
     } finally {
-      this.refreshing = false;
+      if (epoch === this.addressEpoch) this.refreshing = false;
     }
   }
 
@@ -57,9 +101,11 @@ export struct RenewableVideo {
     FullscreenSegmentVideo({
       source: this.playbackUrl,
       initialSeconds: this.playbackSeconds,
-      onPosition: (seconds: number): void => { this.playbackSeconds = seconds; },
+      onPosition: (seconds: number): void => { this.playbackSeconds = seconds; this.onPosition(seconds); },
       onClose: (seconds: number): void => {
         this.playbackSeconds = seconds;
+        this.fullscreenReturnSeconds = seconds;
+        this.onPosition(seconds);
         this.fullscreen = false;
       }
     })
@@ -69,7 +115,7 @@ export struct RenewableVideo {
     Stack() {
       if (this.playbackUrl) {
         Video({ src: this.playbackUrl, controller: this.controller })
-          .width('100%').height('100%').autoPlay(!this.fullscreen).controls(true)
+          .width('100%').height('100%').autoPlay(this.autoPlay && !this.fullscreen).controls(true)
           .objectFit(ImageFit.Contain)
           .onFullscreenChange((event): void => {
             if (event.fullscreen) {
@@ -79,11 +125,16 @@ export struct RenewableVideo {
             }
           })
           .onPrepared((): void => {
-            if (this.playbackSeconds > 0) this.controller.setCurrentTime(this.playbackSeconds);
+            if (!this.active) return;
+            this.prepared = true;
+            this.scheduleSeek(this.autoPlay);
           })
           .onStart((): void => { if (this.fullscreen) this.controller.pause(); })
           .onUpdate((event): void => {
-            if (!this.fullscreen) this.playbackSeconds = event.time;
+            if (this.active && this.prepared && !this.fullscreen) {
+              this.playbackSeconds = event.time;
+              this.onPosition(event.time);
+            }
           })
           .onError((): void => { this.recover(); })
       }
@@ -102,8 +153,11 @@ export struct RenewableVideo {
         modalTransition: ModalTransition.NONE,
         onDisappear: (): void => {
           if (this.active) {
-            this.controller.setCurrentTime(this.playbackSeconds);
-            this.controller.start();
+            if (this.fullscreenReturnSeconds >= 0) {
+              this.playbackSeconds = this.fullscreenReturnSeconds;
+              this.fullscreenReturnSeconds = -1;
+            }
+            this.scheduleSeek(true);
           }
         }
       })

@@ -30,6 +30,6 @@ assert.match(panel.evidenceScopeLabel(), /范围保持一致/);
 assert.match(source, /@State referenceSegmentsExpanded: boolean = false/);
 assert.match(source, /this\.evidenceSegmentIds = \[\.\.\.mapped\[0\]\.segmentIds\]/);
 assert.match(source, /Math\.min\(180, this\.evidenceSegmentIds\.length \* 60\)/);
-assert.match(source, /this\.onTimestampClick\(segmentId, '00:00'\)/);
+assert.match(source, /this\.openEvidence\(segmentId, '00:00'\)/);
 assert.match(source, /Text\(`视频 \$\{index \+ 1\}`\)/);
 console.log('Reference segment metadata and layout guards passed.');

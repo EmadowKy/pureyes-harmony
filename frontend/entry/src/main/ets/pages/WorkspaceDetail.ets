@@ -4,6 +4,8 @@ import photoAccessHelper from '@ohos.file.photoAccessHelper';
 import picker from '@ohos.file.picker';
 import common from '@ohos.app.ability.common';
 import { uploadLocalVideo } from '../utils/localVideoUpload';
+import { droppedVideoRecords, VideoShare } from '../utils/videoShare';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { QARecordInfo } from './tabs/WorkspaceTab'
 import { AgentConversationPanel } from './components/AgentConversationPanel'
 import { MarkdownAnswer } from './components/MarkdownAnswer'
@@ -894,6 +896,7 @@ struct SegmentDetailDialog {
   @State selectedResolution: string = '1080P';
   showSelectionActions: boolean = false;
   @Prop jumpSeconds: number = 0;
+  onPlaybackPosition: (seconds: number) => void = (_seconds: number): void => {};
   onUpdate: (remark: string) => void = (_remark: string): void => {};
   onDelete: () => void = (): void => {};
   onConfirmSelection: () => void = (): void => {};
@@ -1041,6 +1044,7 @@ struct SegmentDetailDialog {
           RenewableVideo({
             source: BASE_HOST + this.segment.media_url,
             initialSeconds: this.jumpSeconds,
+            onPosition: (seconds: number): void => { this.onPlaybackPosition(seconds); },
             controller: this.videoController
           })
             .width('100%')
@@ -1361,9 +1365,13 @@ struct WorkspaceDetail {
   initialConversationId: string = '';
 
   @State currentSubTab: number = 0; // 0: 片段, 1: 人脸, 2: 问答
+  @StorageLink('shared_video_uris') sharedVideoUris: string = '[]';
+  @StorageLink('share_receive_available') shareReceiveAvailable: boolean = false;
+  @StorageLink('share_hint') shareHint: string = '';
   @State pressedSegmentId: number = 0;
   @State agentDetailOpen: boolean = false;
   @State agentReturnSignal: number = 0;
+  @State workspaceWidth: number = 0;
   @State segments: Array<WorkspaceVideoSegment> = [];
   @State segmentLoadError: string = '';
   @State exampleVideos: Array<ExampleVideoInfo> = [];
@@ -1506,11 +1514,14 @@ struct WorkspaceDetail {
     systemMaterial: NativeMaterial.none()
   })
 
+  private onAgentPreviewPosition: (seconds: number) => void = (_seconds: number): void => {};
+
   timestampPreviewDialogController: CustomDialogController = new CustomDialogController({
     builder: SegmentDetailDialog({
       segment: this.selectedSegment,
       showSelectionActions: false,
-      jumpSeconds: this.jumpSeconds
+      jumpSeconds: this.jumpSeconds,
+      onPlaybackPosition: (seconds: number): void => { this.onAgentPreviewPosition(seconds); }
     }),
     autoCancel: true,
     customStyle: true,
@@ -1519,6 +1530,7 @@ struct WorkspaceDetail {
 
   aboutToAppear(): void {
     this.workspaceVisible = true;
+    VideoShare.setReceiving(true);
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object>;
     if (params) {
       this.workspaceId = params['workspaceId'] as number;
@@ -1683,6 +1695,7 @@ struct WorkspaceDetail {
 
   aboutToDisappear(): void {
     this.workspaceVisible = false;
+    VideoShare.setReceiving(false);
     if (this.segmentPollTimer) {
       clearTimeout(this.segmentPollTimer);
       this.segmentPollTimer = 0;
@@ -1829,6 +1842,62 @@ struct WorkspaceDetail {
     } else {
       this.exampleVideos = [];
     }
+  }
+
+  onPageShow(): void { VideoShare.setReceiving(true); }
+  onPageHide(): void { VideoShare.setReceiving(false); }
+
+  private receiveVideoDrop(event: DragEvent | undefined, retry: boolean = true,
+    session: string = AppStorage.get<string>('access_token') || ''): void {
+    if (!event) return;
+    if (!this.workspaceVisible || !this.showSelectExampleVideo || !session ||
+      session !== AppStorage.get<string>('access_token') ||
+      AppStorage.get<string>('anti_peep_state') === 'shielded') {
+      event.setResult(DragResult.DRAG_FAILED);
+      return;
+    }
+    try {
+      const count = VideoShare.enqueue(droppedVideoRecords(event.getData().getRecords()));
+      event.setResult(count > 0 ? DragResult.DRAG_SUCCESSFUL : DragResult.DRAG_FAILED);
+    } catch (_error) {
+      if (retry) {
+        setTimeout((): void => { this.receiveVideoDrop(event, false, session); }, 1500);
+        return;
+      }
+      event.setResult(DragResult.DRAG_FAILED);
+      this.showToast({ message: '暂时无法读取拖入的视频，请重新拖入或选择文件' });
+    }
+  }
+
+  private async importSharedVideo(): Promise<void> {
+    const uri = VideoShare.pending()[0];
+    if (!uri || this.isUploadingVideo) return;
+    this.showSelectExampleVideo = true;
+    this.currentSubTab = 0;
+    this.isUploadingVideo = true;
+    this.videoUploadError = '';
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const response = await uploadLocalVideo(this.workspaceId, uri, context.cacheDir,
+        (percent: number): void => { this.videoUploadProgress = percent; });
+      if (response.code !== 0 || !response.data) {
+        this.videoUploadError = response.message || '上传失败，可以重试或移除此视频';
+        return;
+      }
+      const uploaded = JSON.parse(response.data) as ExampleVideoInfo;
+      if (!uploaded.filepath || uploaded.duration <= 0) {
+        this.videoUploadError = '服务器无法读取此视频，请选择可播放的视频文件';
+        return;
+      }
+      VideoShare.remove(uri);
+      uploaded.startOffset = 0;
+      uploaded.endOffset = uploaded.duration;
+      uploaded.isSelected = false;
+      this.exampleVideos = [uploaded, ...this.exampleVideos.filter(
+        (video: ExampleVideoInfo): boolean => video.id !== uploaded.id)];
+      if (this.workspaceVisible) this.handleExampleVideoClick(0);
+    } catch (_error) { this.videoUploadError = '无法导入视频，请检查文件权限后重试'; }
+    finally { this.isUploadingVideo = false; this.videoUploadProgress = -1; }
   }
 
   async selectLocalVideo(fromFiles: boolean): Promise<void> {
@@ -1997,12 +2066,13 @@ struct WorkspaceDetail {
     this.selectedSegment = realSeg;
     this.selectedSegmentIndex = videoNumber - 1;
     this.jumpSeconds = timeToSeconds(timeStr);
-    
+    this.onAgentPreviewPosition = (_seconds: number): void => {};
     this.timestampPreviewDialogController.open();
     this.showToast({ message: `已跳转到视频 ${videoNumber} 的 ${timeStr}`, duration: 1500 });
   }
 
-  handleAgentTimestampClick(segmentId: number, timeStr: string): void {
+  handleAgentTimestampClick(segmentId: number, timeStr: string,
+    onPosition: (seconds: number) => void): void {
     const segment = this.segments.find((item: WorkspaceVideoSegment): boolean => item.id === segmentId);
     if (!segment || !segment.media_url) {
       this.showToast({ message: '该视频片段已删除或暂时无法播放', duration: 1500 });
@@ -2010,6 +2080,7 @@ struct WorkspaceDetail {
     }
     this.selectedSegment = segment;
     this.jumpSeconds = timeToSeconds(timeStr);
+    this.onAgentPreviewPosition = onPosition;
     this.timestampPreviewDialogController.open();
   }
 
@@ -2453,9 +2524,65 @@ struct WorkspaceDetail {
     .onClick(action)
   }
 
+  @Builder WorkspaceRailItem(index: number, icon: Resource, label: string) {
+    Button() {
+      Column({ space: 7 }) {
+        Image(icon).width(24).height(24).objectFit(ImageFit.Contain)
+        Text(label).fontSize(12).fontWeight(this.currentSubTab === index ? FontWeight.Bold : FontWeight.Regular)
+          .fontColor(this.currentSubTab === index ? $r('app.color.app_primary') : $r('app.color.app_text_secondary'))
+      }.width('100%').padding({ top: 12, bottom: 12 })
+    }.width(64).padding(0).borderRadius(12)
+      .backgroundColor(this.currentSubTab === index ? $r('app.color.app_primary_soft') : Color.Transparent)
+      .accessibilityText(`${label}${this.currentSubTab === index ? '，已选中' : ''}`)
+      .onClick((): void => {
+        if (this.isNestedView()) this.returnToWorkspaceTab();
+        this.selectWorkspaceTab(index);
+      })
+  }
+
+  @Builder WorkspaceRail() {
+    Column({ space: 12 }) {
+      this.WorkspaceHeaderButton('home', (): void => { this.getUIContext().getRouter().back(); })
+      Blank().height(12)
+      this.WorkspaceRailItem(0, $r('app.media.business_clip_trim'), '片段')
+      this.WorkspaceRailItem(1, $r('app.media.business_face_library'), '人脸')
+      this.WorkspaceRailItem(2, $r('app.media.business_ai_qa'), '问答')
+      Blank()
+    }.width(84).height('100%').padding({ top: 18, bottom: 18 })
+      .backgroundColor($r('app.color.app_card_bg'))
+      .border({ width: { right: 1 }, color: $r('app.color.app_border') })
+  }
+
   build() {
-    Column() {
+    Row() {
+      if (this.workspaceWidth >= 840) { this.WorkspaceRail() }
+      Column() {
       // ===== Top Bar =====
+      if (this.sharedVideoUris !== '[]') {
+        Row({ space: 8 }) {
+          Column({ space: 2 }) {
+            Text(VideoShare.pendingName(this.sharedVideoUris)).fontSize(13).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+              .fontColor($r('app.color.app_text_primary'))
+            Text(`待处理 ${VideoShare.pending(this.sharedVideoUris).length} 个 · ${this.workspaceName}`).fontSize(11)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).fontColor($r('app.color.app_text_secondary'))
+          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+          Button(this.isUploadingVideo ? `上传中 ${Math.max(0, this.videoUploadProgress)}%` : '导入此工作区')
+            .fontSize(12).enabled(!this.isUploadingVideo)
+            .onClick((): void => { this.importSharedVideo(); })
+          Button('移除').fontSize(12).enabled(!this.isUploadingVideo).onClick((): void => {
+            const uri = VideoShare.pending()[0];
+            if (uri) VideoShare.remove(uri);
+          })
+        }.width('100%').padding(12).backgroundColor($r('app.color.app_primary_soft'))
+      }
+      if (this.shareReceiveAvailable && this.showSelectExampleVideo && this.sharedVideoUris === '[]') {
+        Text('可在附近设备的相册选择视频，通过系统分享或碰一碰发送到此工作区')
+          .fontSize(12).width('100%').padding(8).fontColor($r('app.color.app_text_secondary'))
+      }
+      if (this.shareHint) {
+        Text(this.shareHint).fontSize(12).width('100%').padding(8)
+          .fontColor($r('app.color.app_text_secondary'))
+      }
       Row() {
         if (this.isNestedView()) {
           this.WorkspaceHeaderButton('back', (): void => { this.returnToWorkspaceTab(); })
@@ -2825,7 +2952,8 @@ struct WorkspaceDetail {
                   Column({ space: 4 }) {
                     Text('上传本地视频').fontSize(14).fontWeight(FontWeight.Medium)
                       .fontColor($r('app.color.app_text_primary'))
-                    Text('从相册或文件选择，上传后设置截取范围')
+                    Text(this.workspaceWidth >= 840 ? '可从文件拖入视频，或点击选择' :
+                      '从相册或文件选择，上传后设置截取范围')
                       .fontSize(11).fontColor($r('app.color.app_text_muted'))
                   }
                   .layoutWeight(1).alignItems(HorizontalAlign.Start)
@@ -2842,6 +2970,8 @@ struct WorkspaceDetail {
                 .width('100%').padding(12).borderRadius(12)
                 .backgroundColor($r('app.color.app_card_bg'))
                 .border({ width: 1, color: $r('app.color.app_border') })
+                .allowDrop([utd.UniformDataType.FILE_URI, utd.UniformDataType.VIDEO, utd.UniformDataType.FILE])
+                .onDrop((event?: DragEvent): void => { this.receiveVideoDrop(event); })
                 if (this.isUploadingVideo) {
                   Column({ space: 6 }) {
                     Text(this.videoUploadProgress < 0 ? '正在选择或准备视频…' :
@@ -2935,9 +3065,9 @@ struct WorkspaceDetail {
                   .layoutWeight(1)
                   .justifyContent(FlexAlign.Start)
                 } else {
-                  List({ space: 12 }) {
+                  Grid() {
                     ForEach(this.segments, (seg: WorkspaceVideoSegment): void => {
-                      ListItem() {
+                      GridItem() {
                         Row() {
                           if (seg.status === 'processing' || seg.status === 'pending') {
                             Image($r('app.media.business_clip_trim'))
@@ -3025,6 +3155,10 @@ struct WorkspaceDetail {
                         .animation({ duration: 220, curve: Curve.EaseOut }))
                     }, (seg: WorkspaceVideoSegment): string => seg.id.toString())
                   }
+                  .columnsTemplate(this.workspaceWidth >= 1180 ? '1fr 1fr 1fr' :
+                    (this.workspaceWidth >= 840 ? '1fr 1fr' : '1fr'))
+                  .columnsGap(12)
+                  .rowsGap(12)
                   .width('90%')
                   .layoutWeight(1)
                 }
@@ -3155,7 +3289,8 @@ struct WorkspaceDetail {
                     }
                   })
                 }
-                .columnsTemplate('1fr 1fr')
+                .columnsTemplate(this.workspaceWidth >= 1180 ? '1fr 1fr 1fr 1fr' :
+                  (this.workspaceWidth >= 840 ? '1fr 1fr 1fr' : '1fr 1fr'))
                 .columnsGap(12)
                 .rowsGap(12)
                 .width('90%')
@@ -3198,8 +3333,8 @@ struct WorkspaceDetail {
                   this.agentDetailOpen = open;
                   if (!open) this.initialConversationId = '';
                 },
-                onTimestampClick: (segmentId: number, timeStr: string): void => {
-                  this.handleAgentTimestampClick(segmentId, timeStr);
+                onTimestampClick: (segmentId: number, timeStr: string, onPosition: (seconds: number) => void): void => {
+                  this.handleAgentTimestampClick(segmentId, timeStr, onPosition);
                 }
               })
             } else if (this.showCreateQA) {
@@ -3479,7 +3614,7 @@ struct WorkspaceDetail {
           }
 
           // Routed panels own their state; Tabs supplies the native bottom navigation surface.
-          if (!this.isNestedView()) {
+          if (!this.isNestedView() && this.workspaceWidth < 840) {
             Tabs({ barPosition: BarPosition.End, index: this.currentSubTab }) {
               TabContent() {}.tabBar(navigationTab($r('app.media.business_clip_trim'), '片段'))
               TabContent() {}.tabBar(navigationTab($r('app.media.business_face_library'), '人脸'))
@@ -3500,9 +3635,14 @@ struct WorkspaceDetail {
         .layoutWeight(1)
       }
     }
-    .width('100%')
+    .layoutWeight(1)
     .height('100%')
     .backgroundColor($r('app.color.app_page_bg'))
+    }
+    .width('100%').height('100%')
+    .onAreaChange((_oldArea: Area, area: Area): void => {
+      this.workspaceWidth = Number(area.width);
+    })
   }
 }
 

@@ -5,6 +5,7 @@ import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
 import { common } from '@kit.AbilityKit';
 import { openDocumentation } from '../../utils/documentation'
 import { CaptureProtection } from '../../utils/captureProtection'
+import { AntiPeep } from '../../utils/antiPeep';
 
 class ConfigGroupOption {
   id: number = 0;
@@ -1333,9 +1334,33 @@ export struct ProfileTab {
       .animation({ duration: 220, curve: Curve.EaseOut }))
   }
 
+  @StorageLink('anti_peep_state') antiPeepState: string = 'checking';
+
   @Builder PrivacyPage() {
     Column({ space: 14 }) {
       this.PageHeader('窗口隐私')
+
+      Column({ space: 12 }) {
+        Text('注视防窥').fontSize(16).fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary')).width('100%')
+        Text(this.antiPeepState === 'active' ? '系统防窥保护已开启' :
+          this.antiPeepState === 'shielded' ? '检测到窥视，系统已遮挡窗口' :
+          this.antiPeepState === 'unsupported' ? '当前设备不支持注视防窥' :
+          this.antiPeepState === 'permission' ? '当前安装包未取得系统防窥权限' :
+          this.antiPeepState === 'face_required' ? '请先在系统设置中录入机主人脸' :
+          this.antiPeepState === 'error' ? '暂时无法连接系统防窥服务，请重试' :
+          this.antiPeepState === 'disabled' ? '尚未开启系统防窥保护' : '正在检查系统防窥状态…')
+          .fontSize(12).fontColor($r('app.color.app_text_secondary')).width('100%')
+        Text('由系统识别非机主注视，在发现窥视时遮挡监控、视频、人脸与调查内容。')
+          .fontSize(12).fontColor($r('app.color.app_text_secondary')).width('100%')
+        Row({ space: 12 }) {
+          Button('系统防窥设置').fontSize(13)
+            .enabled(this.antiPeepState !== 'unsupported' && this.antiPeepState !== 'permission')
+            .onClick((): void => { AntiPeep.enable(); })
+          Button('刷新状态').fontSize(13).onClick((): void => { AntiPeep.refresh(); })
+        }.width('100%')
+      }.width('90%').padding(16).backgroundColor($r('app.color.app_card_bg'))
+        .border({ width: 1, color: $r('app.color.app_border') }).borderRadius(8)
 
       Column({ space: 12 }) {
         Text('截图与录屏').fontSize(16).fontWeight(FontWeight.Medium)

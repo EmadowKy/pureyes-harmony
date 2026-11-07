@@ -6,6 +6,9 @@ import { InvestigationTaskCenter } from '../utils/investigationTasks';
 import { CaptureProtection } from '../utils/captureProtection';
 import { InvestigationFloat } from '../utils/investigationFloat';
 import { AppMotion } from '../utils/appMotion';
+import { AntiPeep } from '../utils/antiPeep';
+import { VideoShare } from '../utils/videoShare';
+import { InvestigationHandoff } from '../utils/investigationHandoff';
 
 const DOMAIN = 0x0000;
 
@@ -25,6 +28,9 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     AppMotion.start();
+    InvestigationHandoff.bind(this.context);
+    this.receiveContinuation(want, launchParam);
+    VideoShare.receiveWant(want);
     const route = this.cardTarget(want);
     if (route) AppStorage.setOrCreate('widget_route', route);
     try {
@@ -36,6 +42,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    AntiPeep.clear();
+    VideoShare.clear();
+    InvestigationHandoff.clear();
     AppMotion.stop();
     InvestigationFloat.clear();
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
@@ -59,6 +68,8 @@ export default class EntryAbility extends UIAbility {
     try {
       const win = await windowStage.getMainWindow();
       await CaptureProtection.bind(win);
+      AntiPeep.bind(win, this.context);
+      VideoShare.bind(this.context, win.getWindowProperties().id);
     } catch (error) {
       hilog.error(DOMAIN, 'PrivacyMode', 'Unable to initialize capture protection');
       return;
@@ -74,6 +85,8 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    AntiPeep.clear();
+    VideoShare.setForeground(false);
     InvestigationFloat.clear();
     CaptureProtection.unbind();
     this.mainStage = undefined;
@@ -82,11 +95,19 @@ export default class EntryAbility extends UIAbility {
   }
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    const continuation = this.continuationPayload(want, launchParam);
+    VideoShare.receiveWant(want);
     const route = this.cardTarget(want);
-    if (!route || !this.mainStage) return;
+    if (!route && !continuation) return;
+    if (!this.mainStage) {
+      if (continuation) InvestigationHandoff.receive(continuation);
+      else AppStorage.setOrCreate('widget_route', route);
+      return;
+    }
     this.mainStage.getMainWindow().then((win: window.Window): void => {
       win.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).then((): void => {
-        AppStorage.setOrCreate('widget_route', route);
+        if (continuation) InvestigationHandoff.receive(continuation);
+        else AppStorage.setOrCreate('widget_route', route);
       }).catch((error: Object): void => {
         hilog.error(DOMAIN, 'InvestigationCard', 'Failed to open index: %{public}s', JSON.stringify(error));
       });
@@ -96,6 +117,8 @@ export default class EntryAbility extends UIAbility {
   }
 
   onForeground(): void {
+    AntiPeep.setForeground(true);
+    VideoShare.setForeground(true);
     InvestigationTaskCenter.start(this.context);
     // Ability has brought to foreground
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
@@ -103,8 +126,34 @@ export default class EntryAbility extends UIAbility {
   }
 
   onBackground(): void {
+    AntiPeep.setForeground(false);
+    VideoShare.setForeground(false);
     InvestigationTaskCenter.setForeground(false);
     // Ability has back to background
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+  }
+
+  private receiveContinuation(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    const raw = this.continuationPayload(want, launchParam);
+    if (raw) InvestigationHandoff.receive(raw);
+  }
+
+  private continuationPayload(want: Want, launchParam: AbilityConstant.LaunchParam): string {
+    if (launchParam.launchReason !== AbilityConstant.LaunchReason.CONTINUATION) return '';
+    const raw = want.parameters?.['pureyes.handoff'];
+    return typeof raw === 'string' && raw.length <= 16000 ? raw : '';
+  }
+
+  onContinue(wantParam: Record<string, Object>): AbilityConstant.OnContinueResult {
+    const snapshot = InvestigationHandoff.snapshot();
+    if (!snapshot) return AbilityConstant.OnContinueResult.REJECT;
+    wantParam['pureyes.handoff'] = snapshot;
+    wantParam['ohos.extra.param.key.supportContinuePageStack'] = false;
+    wantParam['ohos.extra.param.key.supportContinueSourceExit'] = false;
+    return AbilityConstant.OnContinueResult.AGREE;
+  }
+
+  onWindowStageRestore(windowStage: window.WindowStage): void {
+    this.onWindowStageCreate(windowStage);
   }
 }

@@ -12,7 +12,9 @@
 | Asset Store Kit | `frontend/entry/src/main/ets/utils/security.ets` | 保存会话令牌与服务器地址等本地敏感值；读取失败时由登录流程处理。服务端模型 API Key 不通过这里分发到组员手机。 |
 | 隐私窗口 | `frontend/entry/src/main/ets/utils/captureProtection.ets`、`frontend/entry/src/main/ets/entryability/EntryAbility.ets` | 默认限制系统截屏和录屏；用户在窗口隐私页验证当前密码后可更改联合权限。设置按账号保存，启动先开启保护、验证登录后应用设置，退出登录恢复保护。 |
 | 系统凭据填充 | `frontend/entry/src/main/ets/pages/Login.ets` | 账号与密码输入框分别标注 `ContentType.USER_NAME`、`ContentType.PASSWORD`，允许系统识别凭据字段。是否提示保存及如何解锁由设备和用户设置决定。 |
-| Share Kit 系统分享 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 已完成且有结论的调查轮次提供“分享结论”；点击后分享问题与 Markdown 原文，由用户在系统面板选择目标。不会自动分享视频、截图、令牌或服务器地址。 |
+| Share Kit 系统分享与碰一碰 | `utils/videoShare.ets`、`pages/WorkspaceDetail.ets`、`pages/components/AgentConversationPanel.ets` | 分享结论文本和 Markdown 报告；接收相册或文件分享的视频；在支持的设备上注册碰一碰收发。 |
+| Ability Kit 跨设备接续 | `utils/investigationHandoff.ets`、`entryability/EntryAbility.ets` | 通过系统接续入口恢复调查、证据时间点和未发送的追问。 |
+| Device Security Kit 注视防窥 | `utils/antiPeep.ets`、`pages/tabs/ProfileTab.ets` | 通过系统检测结果为应用主窗口启用防窥遮挡。 |
 | Sensor Service Kit 触感 | `frontend/entry/src/main/ets/pages/components/AgentConversationPanel.ets` | 页面在轮询中看到任务完成时发出一次 60 ms 轻触感。设备无马达或系统禁用振动时静默退化，结果仍正常显示。 |
 | Form Kit 互动服务卡片 | `frontend/entry/src/main/ets/investigationform/`、`pages/InvestigationLiveCard.ets`、`utils/investigationCard.ets` | 2×2 / 2×4 小鸮卡片展示调查状态；动态卡片支持点击反馈、任务切换与跳转，LiveForm 扩展提供短时互动面板。 |
 | Ability Kit 应用 Skill | `frontend/entry/skills/pureyes-investigation/`、`utils/investigationSkill.ets` | API 26 的应用 Skill 声明查询调查进度、打开已有会话两项能力，供完成平台接入的小艺调用。 |
@@ -20,6 +22,25 @@
 | Window Kit 闪控窗／闪控球 | `utils/investigationFloat.ets`、`utils/investigationFloatState.ets`、`pages/InvestigationFloatWindow.ets` | HarmonyOS 7 上由用户主动开启跨应用任务窗口，支持系统窗球联动、多任务切换、阶段与耗时展示，以及返回所选调查。 |
 | ArkUI 页面动效 | `frontend/entry/src/main/ets/pages/` | 主栏及工作区子栏选中态、列表卡片按压与入场、个人页切换、登录输入焦点和调查工具步骤采用短时属性动画及转场；调查记录标识使用 `geometryTransition` 共享元素转场。 |
 | 系统媒体／文件选择器 | `pages/WorkspaceDetail.ets`、`utils/localVideoUpload.ets` | PhotoViewPicker 选择相册视频，DocumentViewPicker 选择文件；读取用户授予的单文件 URI，私有缓存准备原生 multipart 上传，不扫描媒体库。 |
+| ArkUI 自适应调查工作台 | `pages/WorkspaceDetail.ets`、`pages/components/InvestigationEvidencePane.ets`、`utils/investigationLayout.ets` | 按窗口可用宽度切换栏目侧栏、视频核验与对话布局，支持手机、平板和鸿蒙电脑。时间点与当前视频人脸抓拍联动定位。 |
+
+## 自适应调查工作台
+
+工作区通过 `onAreaChange` 获取实际窗口宽度，达到 840 vp 时用栏目侧栏替换底部导航，片段网格采用双列或三列，人脸网格采用三列或四列。入口模块声明 `phone`、`tablet` 与 `2in1` 设备类型，支持手机、平板和鸿蒙电脑。
+
+调查面板使用自身可用宽度计算布局：不足 840 vp 时使用单列与视频弹窗；840–1179 vp 时并排展示核验区和对话；达到 1180 vp 时增加 208 vp 的线索栏。对话区保留至少 400 vp，视频高度随可用空间调整。判断不依赖设备型号，支持分屏后回到窄屏布局。
+
+`AgentConversationPanel` 继续持有会话、草稿与轮询状态，窗口变化不重新请求或创建调查。`InvestigationEvidencePane` 只读取当前引用片段；回答中的引用和工具证据通过同一定位入口选择视频，片段内时间由 `RenewableVideo` 在准备完成后定位。定位修订号让重复点击同一时间、跳回零秒也能生效；控制器指令延后至原生组件更新后执行，连续点击仅保留最新请求，切换源或退出页面取消旧请求。播放地址仍经已登录接口续签，初次打开宽屏调查不自动播放。
+
+人脸面板按当前片段请求分组和抓拍，结果通过片段 ID 再次过滤；切换视频或离开面板时递增请求代次，丢弃迟到响应。工具证据按片段与毫秒时间去重，列表保留最多 200 项。人脸分组管理与片段修改仍由工作区原有入口负责。
+
+## 分享、接续与防窥
+
+系统分享通过 `ohos.want.action.sendData` 和 `general.video` 注册视频接收，鸿蒙电脑和平板支持通过 ArkUI 拖入文件。两种入口都进入最多 5 个文件的待处理队列。用户选择工作区并确认后才开始上传，随后可设定截取范围和预处理参数。HarmonyOS 7 支持的设备通过 `harmonyShare` 注册当前窗口的接收能力；离开工作区或应用进入后台后注销。调查详情提供结论文本和 Markdown 文件两种分享方式；碰一碰发送的是当前调查最近一次已完成的结论。接收后只清理应用自己创建的临时副本，分享报告的临时文件到期或退出登录时清理。
+
+接续由用户在调查详情主动开启，使用 `DISTRIBUTED_DATASYNC` 和系统任务接续。接续数据含服务器标识、小组、工作区、会话、片段、片内时间及未发送的草稿，有效期 10 分钟。目标设备用自己的会话验证服务端与小组权限，再载入调查；不传输令牌、临时播放地址或模型密钥。切换调查后需重新开启；窄屏上通过【查看接续位置】打开视频。
+
+注视防窥使用 `dlpAntiPeep`，由系统设置控制并提供检测结果；应用不直接使用相机。应用声明 `ohos.permission.DLP_GET_HIDE_STATUS`，须在支持的设备和签名授权下运行。系统要求遮挡时，应用为主窗口调用系统遮挡；不支持的设备继续使用独立的截图与录屏权限。系统感知、碰一碰和跨设备接续须在支持的实体设备上验收。
 
 ## 界面动效
 

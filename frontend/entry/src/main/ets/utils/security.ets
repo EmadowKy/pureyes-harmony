@@ -3,6 +3,8 @@ import util from '@ohos.util';
 import { common } from '@kit.AbilityKit';
 import { InvestigationTaskCenter } from './investigationTasks';
 import { CaptureProtection } from './captureProtection';
+import { VideoShare } from './videoShare';
+import { InvestigationHandoff } from './investigationHandoff';
 
 function stringToUint8Array(str: string): Uint8Array {
   const encoder = new util.TextEncoder();
@@ -106,7 +108,13 @@ export class SecurityUtil {
     }
   }
 
-  static async clearSession(context?: common.Context): Promise<void> {
+  static async clearSession(context?: common.Context, preserveIncoming: boolean = false): Promise<void> {
+    InvestigationHandoff.update(undefined);
+    AppStorage.setOrCreate('handoff_restore', '');
+    if (!preserveIncoming) {
+      InvestigationHandoff.clear();
+      VideoShare.clear();
+    }
     try {
       await CaptureProtection.apply(false);
     } catch (error) {

@@ -5,6 +5,7 @@ import { ProfileTab } from './tabs/ProfileTab'
 import { HttpResult, HttpUtil, getBaseUrl } from '../utils/http'
 import { SecurityUtil } from '../utils/security'
 import { CaptureProtection } from '../utils/captureProtection'
+import { parseHandoff } from '../utils/investigationHandoff';
 import { common } from '@kit.AbilityKit';
 import { AppMotion, FloatingTabsStyle, navigationTab } from '../utils/appMotion';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
@@ -27,6 +28,8 @@ struct Index {
   @StorageLink('refreshGroupFlag') @Watch('onRefreshFlagChange') refreshGroupFlag: number = 0;
   @StorageLink('session_check_flag') @Watch('onSessionCheck') sessionCheckFlag: number = 0;
   @StorageLink('widget_route') @Watch('onWidgetRoute') widgetRoute: string = '';
+  @StorageLink('handoff_incoming') @Watch('onHandoffIncoming') handoffIncoming: string = '';
+  @StorageLink('shared_video_uris') @Watch('onIncomingVideos') sharedVideoUris: string = '[]';
   @State groups: Array<GroupInfo> = [];
   @State groupsLoaded: boolean = false;
   @State sessionState: string = 'checking';
@@ -50,8 +53,8 @@ struct Index {
 
   private selectGroup(groupId: number): void {
     this.currentGroupId = groupId;
-    this.currentIndex = 0;
-    this.tabsController.changeIndex(0);
+    this.currentIndex = this.sharedVideoUris !== '[]' ? 1 : 0;
+    this.tabsController.changeIndex(this.currentIndex);
     this.openWidgetTarget();
   }
 
@@ -70,6 +73,27 @@ struct Index {
 
   onWidgetRoute(): void {
     if (this.sessionState === 'ready' && this.groupsLoaded) this.openWidgetTarget();
+  }
+
+  onHandoffIncoming(): void {
+    if (this.sessionState !== 'ready' || !this.groupsLoaded || !this.handoffIncoming) return;
+    const raw = this.handoffIncoming;
+    this.handoffIncoming = '';
+    const state = parseHandoff(raw, getBaseUrl().replace(/\/+$/, ''), Date.now());
+    if (!state || !this.groups.some((group: GroupInfo): boolean => group.id === state.groupId)) {
+      this.getUIContext().getPromptAction().showToast({ message: '无法接续，请确认两台设备连接同一服务器且账号有权访问该小组' });
+      return;
+    }
+    this.currentGroupId = state.groupId;
+    AppStorage.setOrCreate('handoff_restore', JSON.stringify(state));
+    this.widgetRoute = JSON.stringify({ groupId: state.groupId, workspaceId: state.workspaceId,
+      conversationId: state.conversationId });
+  }
+
+  onIncomingVideos(): void {
+    if (this.sharedVideoUris === '[]' || this.sessionState !== 'ready' || !this.hasSelectedGroup()) return;
+    this.currentIndex = 1;
+    this.tabsController.changeIndex(1);
   }
 
   private openWidgetTarget(): void {
@@ -126,7 +150,7 @@ struct Index {
         AppStorage.setOrCreate('login_notice', savedServer ?
           '服务器地址已更改，请重新登录' : '登录状态升级后需重新登录一次');
       }
-      await SecurityUtil.clearSession(this.getUIContext().getHostContext() as common.UIAbilityContext);
+      await SecurityUtil.clearSession(this.getUIContext().getHostContext() as common.UIAbilityContext, !token && !savedServer);
       this.checkingSession = false;
       this.openLogin();
       return;
@@ -170,6 +194,8 @@ struct Index {
       this.sessionState = 'ready';
       await this.loadGroups();
       this.checkingSession = false;
+      if (this.handoffIncoming) this.onHandoffIncoming();
+      else if (!this.widgetRoute) this.onIncomingVideos();
       this.openWidgetTarget();
       return;
     }

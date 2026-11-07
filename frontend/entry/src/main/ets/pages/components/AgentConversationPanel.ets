@@ -1,14 +1,19 @@
 import { HttpUtil, BASE_HOST } from '../../utils/http'
 import { MarkdownAnswer } from './MarkdownAnswer'
 import { ModelConfigOption, parseModelConfig } from '../../utils/modelConfig'
-import { systemShare } from '@kit.ShareKit';
-import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { VideoShare } from '../../utils/videoShare';
+import { InvestigationHandoff, InvestigationHandoffState, parseHandoff } from '../../utils/investigationHandoff';
+import { getBaseUrl } from '../../utils/http';
 import { common } from '@kit.AbilityKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { cleanAnswerForDisplay } from '../../utils/answerFormatting';
 import { InvestigationTaskCenter } from '../../utils/investigationTasks';
 import { InvestigationFloat } from '../../utils/investigationFloat';
 import { AppMotion } from '../../utils/appMotion';
+import { timeToSeconds } from '../../utils/answerFormatting';
+import { InvestigationEvidencePane } from './InvestigationEvidencePane';
+import { InvestigationLayout, InvestigationClip, InvestigationFocus, InvestigationEvidenceMark,
+  investigationLayout, evidenceFocus, evidenceMarks } from '../../utils/investigationLayout';
 
 @CustomDialog
 struct ConversationTitleDialog {
@@ -55,6 +60,8 @@ class AgentSegmentChoice {
   videoName: string = '';
   filePath: string = '';
   thumbnailUrl: string = '';
+  mediaUrl: string = '';
+  duration: number = 0;
   durationText: string = '';
   status: string = 'pending';
 }
@@ -162,19 +169,23 @@ export struct AgentConversationPanel {
   @Prop @Watch('onReturnToList') returnToListSignal: number = 0;
   @Prop parentBackButton: boolean = false;
   onDetailChange: (open: boolean) => void = (_open: boolean): void => {};
-  onTimestampClick: (segmentId: number, timeStr: string) => void =
-    (_segmentId: number, _timeStr: string): void => {};
+  onTimestampClick: (segmentId: number, timeStr: string, onPosition: (seconds: number) => void) => void =
+    (_segmentId: number, _timeStr: string, _onPosition: (seconds: number) => void): void => {};
 
   @State conversations: Array<AgentConversationItem> = [];
   @State modelConfigs: Array<ModelConfigOption> = [];
   @State selectedModelConfigId: number = 0;
-  @State messages: Array<AgentTurnItem> = [];
-  @State segments: Array<AgentSegmentChoice> = [];
-  @State selectedConversationId: string = '';
+  @State @Watch('publishHandoff') messages: Array<AgentTurnItem> = [];
+  @State @Watch('restoreHandoff') segments: Array<AgentSegmentChoice> = [];
+  @State @Watch('publishHandoff') selectedConversationId: string = '';
   @State evidenceSegmentIds: Array<number> = [];
   @State referenceSegmentsExpanded: boolean = false;
   @State selectedSegmentIds: Array<number> = [];
-  @State composerText: string = '';
+  @State @Watch('publishHandoff') composerText: string = '';
+  @StorageLink('continuation_hint') continuationHint: string = '';
+  @State resumedEvidenceId: number = 0;
+  @State resumedEvidenceSeconds: number = 0;
+  private panelActive: boolean = false;
   @State creatingInvestigation: boolean = false;
   @State isLoading: boolean = true;
   @State isSending: boolean = false;
@@ -184,13 +195,19 @@ export struct AgentConversationPanel {
   @State elapsedSeconds: number = 0;
   @State quietSeconds: number = 0;
   @State currentTaskId: string = '';
-  @State conversationReady: boolean = false;
+  @State @Watch('publishHandoff') conversationReady: boolean = false;
   @State expandedCallKeys: Array<string> = [];
   @State expandedProcessTurns: Array<string> = [];
   @State collapsedRunningProcessTurns: Array<string> = [];
   @State composerFocused: boolean = false;
   @State conversationLoadError: string = '';
   @State segmentLoadError: string = '';
+  @State workbench: InvestigationLayout = new InvestigationLayout();
+  @State focusedSegmentId: number = 0;
+  @State focusedSeconds: number = 0;
+  @State evidenceRevision: number = 0;
+  private evidencePlaybackSegmentId: number = 0;
+  private evidencePlaybackSeconds: number = 0;
   @State modelLoadError: string = '';
   @State shareErrorTurnId: string = '';
   @State conversationActionError: string = '';
@@ -213,6 +230,7 @@ export struct AgentConversationPanel {
   private messageSource: AgentMessageDataSource = new AgentMessageDataSource();
 
   aboutToAppear(): void {
+    this.panelActive = true;
     InvestigationTaskCenter.start(this.getUIContext().getHostContext() as common.UIAbilityContext);
     if (this.initialConversationId) {
       this.selectedConversationId = this.initialConversationId;
@@ -226,29 +244,74 @@ export struct AgentConversationPanel {
   }
 
   aboutToDisappear(): void {
+    this.panelActive = false;
+    InvestigationHandoff.update(undefined);
+    VideoShare.setConclusion('');
     this.stopPolling();
     this.stopSync();
   }
 
-  async shareConclusion(turn: AgentTurnItem): Promise<void> {
+  async shareConclusion(turn: AgentTurnItem, asFile: boolean = false): Promise<void> {
     const answer = cleanAnswerForDisplay(turn.answer);
     if (turn.status !== 'completed' || !answer) return;
     this.shareErrorTurnId = '';
     try {
-      const data: systemShare.SharedData = new systemShare.SharedData({
-        utd: utd.UniformDataType.TEXT,
-        content: `问题：${turn.question}\n\n调查结论：\n${answer}`,
-        title: '清眸调查结论'
-      });
-      const controller: systemShare.ShareController = new systemShare.ShareController(data);
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      await controller.show(context, {
-        selectionMode: systemShare.SelectionMode.SINGLE,
-        previewMode: systemShare.SharePreviewMode.DETAIL
-      });
+      if (asFile) {
+        await VideoShare.shareReport(context, turn.question, answer);
+      } else {
+        await VideoShare.shareText(context, '问题：' + turn.question + '\n\n调查结论：\n' + answer);
+      }
     } catch (_error) {
       this.shareErrorTurnId = turn.id;
     }
+  }
+
+  private publishHandoff(): void {
+    if (!this.panelActive) return;
+    if (!this.canContinue()) {
+      InvestigationHandoff.update(undefined);
+      VideoShare.setConclusion('');
+      return;
+    }
+    const state = new InvestigationHandoffState();
+    state.server = getBaseUrl().replace(/\/+$/, '');
+    state.groupId = AppStorage.get<number>('currentGroupId') || 0;
+    state.workspaceId = this.workspaceId;
+    state.conversationId = this.selectedConversationId;
+    state.segmentId = this.evidencePlaybackSegmentId;
+    state.seconds = this.evidencePlaybackSeconds;
+    state.draft = this.composerText.slice(0, 4000);
+    InvestigationHandoff.update(state);
+    const last = [...this.messages].reverse().find((turn: AgentTurnItem): boolean =>
+      turn.status === 'completed' && !!turn.answer);
+    VideoShare.setConclusion(last ? `问题：${last.question}\n\n调查结论：\n${cleanAnswerForDisplay(last.answer)}` : '');
+  }
+
+  private restoreHandoff(): void {
+    const raw = AppStorage.get<string>('handoff_restore') || '';
+    if (!raw || !this.panelActive || !this.conversationReady) return;
+    const state = parseHandoff(raw, getBaseUrl().replace(/\/+$/, ''), Date.now());
+    if (!state || state.workspaceId !== this.workspaceId || state.conversationId !== this.selectedConversationId) return;
+    if (state.segmentId && this.segments.length === 0) return;
+    AppStorage.setOrCreate('handoff_restore', '');
+    this.composerText = state.draft;
+    const restored = state.segmentId > 0 && this.selectEvidence(state.segmentId, state.seconds, false);
+    if (restored) {
+      this.resumedEvidenceId = state.segmentId;
+      this.resumedEvidenceSeconds = this.evidencePlaybackSeconds;
+    }
+    this.continuationHint = restored ? '已接续调查，已恢复视频位置与追问草稿' :
+      '已接续调查，已恢复追问草稿';
+  }
+
+  @Builder ContinuationControls() {
+    Row({ space: 8 }) {
+      Text(this.continuationHint || '可将当前调查、视频位置与草稿接续到其他设备')
+        .fontSize(11).fontColor($r('app.color.app_text_muted')).layoutWeight(1)
+      Button('跨设备接续').fontSize(12).height(32)
+        .onClick((): void => { this.publishHandoff(); InvestigationHandoff.enable(); })
+    }.width('100%').padding({ left: 12, right: 12, top: 4, bottom: 4 })
   }
 
   async signalTaskCompleted(): Promise<void> {
@@ -396,26 +459,36 @@ export struct AgentConversationPanel {
       segment.videoName = (item['video_name'] as string) || '监控录像';
       segment.filePath = (item['filepath'] as string) || '';
       segment.thumbnailUrl = (item['thumbnail_url'] as string) || '';
+      segment.mediaUrl = (item['media_url'] as string) || '';
       const start = (item['start_offset'] as number) || 0;
       const end = (item['end_offset'] as number) || 0;
+      segment.duration = (item['duration'] as number) || Math.max(0, end - start);
       segment.durationText = `${start.toFixed(0)}s – ${end.toFixed(0)}s`;
       segment.status = (item['status'] as string) || 'pending';
       mapped.push(segment);
     }
     this.segments = mapped;
+    this.reconcileEvidence();
+    this.restoreHandoff();
+    this.publishHandoff();
   }
 
   async openConversation(conversationId: string, scrollToEnd: boolean = true): Promise<void> {
+    const switched = conversationId !== this.selectedConversationId;
+    if (switched) this.resetEvidence();
     this.stopPolling();
     const epoch = this.pollEpoch;
     this.onDetailChange(true);
     this.getUIContext().animateTo(AppMotion.options(260), (): void => {
+      if (switched || !this.conversationReady) {
+        this.conversationReady = false;
+        this.referenceSegmentsExpanded = false;
+        this.evidenceSegmentIds = [];
+        this.messages = [];
+        this.messageSource.setItems([]);
+      }
       this.selectedConversationId = conversationId;
-      this.referenceSegmentsExpanded = false;
-      this.evidenceSegmentIds = [];
-      this.conversationReady = false;
-      this.messages = [];
-      this.messageSource.setItems([]);
+      if (switched) this.composerText = '';
       this.creatingInvestigation = false;
     });
     this.currentTaskId = '';
@@ -427,8 +500,6 @@ export struct AgentConversationPanel {
       return;
     }
     if (res.code !== 0 || !res.data) {
-      this.messages = [];
-      this.messageSource.setItems([]);
       this.liveProgress = res.message || '加载调查记录失败';
       return;
     }
@@ -439,7 +510,6 @@ export struct AgentConversationPanel {
 
   applyConversationData(data: Record<string, Object>, scrollToEnd: boolean): void {
     const conversation = data['conversation'] as Record<string, Object>;
-    this.conversationReady = true;
     const conversationSegmentIds = (conversation['segment_ids'] as Array<number>) || [];
     this.evidenceSegmentIds = conversationSegmentIds;
     const rawMessages = (data['messages'] as Array<Record<string, Object>>) || [];
@@ -492,6 +562,7 @@ export struct AgentConversationPanel {
     if (this.evidenceSegmentIds.length === 0 && mapped.length > 0) {
       this.evidenceSegmentIds = [...mapped[0].segmentIds];
     }
+    this.reconcileEvidence();
     const statusChanged = mapped.some((turn: AgentTurnItem): boolean => {
       const previous = this.messages.find((item: AgentTurnItem): boolean => item.id === turn.id);
       return previous !== undefined && previous.status !== turn.status;
@@ -515,6 +586,8 @@ export struct AgentConversationPanel {
       this.isSending = false;
       this.isStopping = false;
     }
+    this.conversationReady = true;
+    this.restoreHandoff();
     if (mapped.length > 0) this.publishCard(mapped[mapped.length - 1]);
     if (scrollToEnd) {
       this.scheduleScrollToEnd(120);
@@ -592,6 +665,7 @@ export struct AgentConversationPanel {
   }
 
   startInvestigation(): void {
+    this.resetEvidence();
     this.referenceSegmentsExpanded = false;
     this.stopPolling();
     this.stopSync();
@@ -613,6 +687,7 @@ export struct AgentConversationPanel {
   }
 
   showConversationList(): void {
+    this.resetEvidence();
     this.referenceSegmentsExpanded = false;
     this.stopPolling();
     this.stopSync();
@@ -635,6 +710,116 @@ export struct AgentConversationPanel {
 
   canContinue(): boolean {
     return this.selectedConversationId.length > 0 && this.conversationReady;
+  }
+
+  private resetEvidence(): void {
+    InvestigationHandoff.update(undefined);
+    VideoShare.setConclusion('');
+    this.focusedSegmentId = 0; this.focusedSeconds = 0; this.evidenceRevision = 0;
+    this.resumedEvidenceId = 0;
+    this.resumedEvidenceSeconds = 0;
+    this.continuationHint = '';
+    this.evidencePlaybackSegmentId = 0;
+    this.evidencePlaybackSeconds = 0;
+  }
+
+  private workbenchClips(): Array<InvestigationClip> {
+    return this.evidenceSegmentIds.map((id: number): InvestigationClip => {
+      const segment = this.referenceSegment(id);
+      const clip = new InvestigationClip();
+      clip.id = id;
+      clip.title = segment.title;
+      clip.videoName = segment.videoName;
+      clip.mediaUrl = segment.mediaUrl;
+      clip.thumbnailUrl = segment.thumbnailUrl;
+      clip.duration = segment.duration;
+      return clip;
+    });
+  }
+
+  private reconcileEvidence(): void {
+    if (this.evidenceSegmentIds.indexOf(this.focusedSegmentId) >= 0) return;
+    const first = this.evidenceSegmentIds.length > 0 ? this.evidenceSegmentIds[0] : 0;
+    const focus = new InvestigationFocus();
+    focus.segmentId = first;
+    this.focusedSegmentId = focus.segmentId;
+    this.focusedSeconds = focus.seconds;
+    this.evidenceRevision = focus.revision;
+    this.evidencePlaybackSegmentId = first;
+    this.evidencePlaybackSeconds = 0;
+  }
+
+  private selectEvidence(segmentId: number, seconds: number, showError: boolean = true): boolean {
+    const focus = evidenceFocus(this.workbenchClips(), segmentId, seconds, this.evidenceRevision);
+    if (!focus) {
+      if (showError) try {
+        this.getUIContext().getPromptAction().showToast({ message: '该片段暂时无法播放，请重新加载片段信息。' });
+      } catch (_error) { /* A detached page cannot display a toast. */ }
+      return false;
+    }
+    this.evidencePlaybackSegmentId = segmentId;
+    this.evidencePlaybackSeconds = focus.seconds;
+    this.focusedSegmentId = focus.segmentId;
+    this.focusedSeconds = focus.seconds;
+    this.evidenceRevision = focus.revision;
+    this.publishHandoff();
+    return true;
+  }
+
+  private openEvidence(segmentId: number, time: string): void {
+    if (!this.selectEvidence(segmentId, timeToSeconds(time))) return;
+    this.resumedEvidenceId = 0;
+    if (this.workbench.mode === 'compact') {
+      const conversationId = this.selectedConversationId;
+      this.onTimestampClick(segmentId, time, (seconds: number): void => {
+        if (this.selectedConversationId !== conversationId || this.evidencePlaybackSegmentId !== segmentId) return;
+        this.evidencePlaybackSeconds = seconds;
+        this.publishHandoff();
+      });
+    }
+  }
+
+  private resizeWorkbench(width: number, height: number): void {
+    const next = investigationLayout(width, height);
+    if (this.workbench.mode === 'compact' && next.mode !== 'compact' &&
+      this.evidencePlaybackSegmentId === this.focusedSegmentId) {
+      const focus = new InvestigationFocus();
+      focus.segmentId = this.focusedSegmentId;
+      focus.seconds = this.evidencePlaybackSeconds;
+      // Returning from split-screen restores position without starting playback.
+      this.focusedSegmentId = focus.segmentId;
+      this.focusedSeconds = focus.seconds;
+      this.evidenceRevision = focus.revision;
+    }
+    if (next.mode !== this.workbench.mode || next.evidenceWidth !== this.workbench.evidenceWidth ||
+      Math.abs(next.playerHeight - this.workbench.playerHeight) > 1) this.workbench = next;
+  }
+
+  private workbenchMarks(): Array<InvestigationEvidenceMark> {
+    const marks: Array<InvestigationEvidenceMark> = [];
+    this.messages.forEach((turn: AgentTurnItem): void => {
+      turn.toolCalls.forEach((call: AgentToolCall): void => {
+        call.evidence.forEach((item: AgentToolEvidence): void => {
+          const mark = new InvestigationEvidenceMark();
+          mark.segmentId = item.segmentId;
+          mark.seconds = item.timestampSec;
+          mark.label = `第 ${turn.turnIndex} 轮 · ${this.toolNameLabel(call.name)}`;
+          marks.push(mark);
+        });
+        if (call.evidence.length === 0) {
+          const segmentId = this.toolSegmentId(turn, call.videoId);
+          const times = call.timestampSec >= 0 ? [call.timestampSec, ...call.times] : call.times;
+          times.forEach((seconds: number): void => {
+            const mark = new InvestigationEvidenceMark();
+            mark.segmentId = segmentId;
+            mark.seconds = seconds;
+            mark.label = `第 ${turn.turnIndex} 轮 · ${this.toolNameLabel(call.name)}`;
+            marks.push(mark);
+          });
+        }
+      });
+    });
+    return evidenceMarks(marks, this.workbenchClips());
   }
 
   isLatestTurn(turnId: string): boolean {
@@ -1247,7 +1432,7 @@ export struct AgentConversationPanel {
                   .padding({ top: 5, bottom: 5 })
                   .onClick((): void => {
                     if (turn.segmentIds.indexOf(evidence.segmentId) >= 0) {
-                      this.onTimestampClick(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
+                      this.openEvidence(evidence.segmentId, this.formatTimestamp(evidence.timestampSec));
                     }
                   })
               }, (evidence: AgentToolEvidence, evidenceIndex: number): string => `${turn.id}-${index}-evidence-${evidenceIndex}`)
@@ -1257,7 +1442,7 @@ export struct AgentConversationPanel {
                     .fontSize(11).fontColor($r('app.color.app_primary'))
                     .padding({ top: 5, bottom: 5 })
                     .onClick((): void => {
-                      this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(call.timestampSec));
+                      this.openEvidence(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(call.timestampSec));
                     })
                 }
                 ForEach(call.times, (seconds: number, timeIndex: number): void => {
@@ -1265,7 +1450,7 @@ export struct AgentConversationPanel {
                     .fontSize(11).fontColor($r('app.color.app_primary'))
                     .padding({ top: 5, bottom: 5 })
                     .onClick((): void => {
-                      this.onTimestampClick(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(seconds));
+                      this.openEvidence(this.toolSegmentId(turn, call.videoId), this.formatTimestamp(seconds));
                     })
                 }, (seconds: number, timeIndex: number): string => `${turn.id}-${index}-time-${timeIndex}`)
               }
@@ -1394,6 +1579,7 @@ export struct AgentConversationPanel {
     .layoutWeight(1)
     .width('100%')
     .padding({ left: 18, right: 18 })
+    .constraintSize({ maxWidth: 920 })
     .backgroundColor($r('app.color.app_card_bg'))
     .transition(TransitionEffect.OPACITY
       .combine(TransitionEffect.translate({ x: -16 }))
@@ -1401,6 +1587,13 @@ export struct AgentConversationPanel {
   }
 
   @Builder ReferenceSegments() {
+    if (this.workbench.mode === 'compact' && this.resumedEvidenceId > 0) {
+      Button('查看接续位置 · ' + this.formatTimestamp(this.resumedEvidenceSeconds))
+        .fontSize(12).margin({ left: 16, bottom: 4 })
+        .onClick((): void => {
+          this.openEvidence(this.resumedEvidenceId, this.formatTimestamp(this.resumedEvidenceSeconds));
+        })
+    }
     Column() {
       Row({ space: 8 }) {
         SymbolGlyph($r('sys.symbol.chevron_right'))
@@ -1443,7 +1636,7 @@ export struct AgentConversationPanel {
               .width('100%').height(60).padding({ left: 18, right: 18 })
               .onClick((): void => {
                 if (this.referenceSegment(segmentId).status !== 'unavailable') {
-                  this.onTimestampClick(segmentId, '00:00');
+                  this.openEvidence(segmentId, '00:00');
                 }
               })
             }
@@ -1540,18 +1733,20 @@ export struct AgentConversationPanel {
                   failed: turn.status === 'failed' || turn.status === 'stopped',
                   onTimestampClick: (video: number, time: string): void => {
                     if (video <= turn.segmentIds.length) {
-                      this.onTimestampClick(turn.segmentIds[video - 1], time);
+                      this.openEvidence(turn.segmentIds[video - 1], time);
                     }
                   }
                 })
                   .width('100%')
                 if (turn.status === 'completed' && cleanAnswerForDisplay(turn.answer).length > 0) {
-                  Button('分享结论')
-                    .fontSize(12)
-                    .backgroundColor($r('app.color.app_primary_soft'))
-                    .fontColor($r('app.color.app_primary'))
-                    .borderRadius(8)
-                    .onClick((): void => { this.shareConclusion(turn); })
+                  Row({ space: 8 }) {
+                    Button('分享结论').fontSize(12)
+                      .backgroundColor($r('app.color.app_primary_soft')).fontColor($r('app.color.app_primary'))
+                      .borderRadius(8).onClick((): void => { this.shareConclusion(turn); })
+                    Button('分享报告').fontSize(12)
+                      .backgroundColor($r('app.color.app_primary_soft')).fontColor($r('app.color.app_primary'))
+                      .borderRadius(8).onClick((): void => { this.shareConclusion(turn, true); })
+                  }
                   if (this.shareErrorTurnId === turn.id) {
                     Text('无法打开系统分享面板，请稍后重试。')
                       .fontSize(11)
@@ -1838,6 +2033,8 @@ export struct AgentConversationPanel {
     .width('100%')
     .layoutWeight(1)
     .padding(18)
+    .constraintSize({ maxWidth: 840 })
+    .alignSelf(ItemAlign.Center)
     .transition(TransitionEffect.OPACITY
       .combine(TransitionEffect.translate({ x: 16 }))
       .animation(AppMotion.options(260)))
@@ -2014,24 +2211,45 @@ export struct AgentConversationPanel {
         .alignItems(HorizontalAlign.Center)
         .justifyContent(FlexAlign.Center)
       } else {
-        if (this.conversationReady && this.evidenceSegmentIds.length > 0) {
-          this.ReferenceSegments()
-        }
-        this.MessageStream()
-        if (this.canContinue()) {
-          this.Composer()
-        } else {
-          Text('调查记录尚未加载，暂时无法追问。')
-            .fontSize(12)
-            .fontColor($r('app.color.app_text_muted'))
-            .width('100%')
-            .padding(15)
-            .backgroundColor($r('app.color.app_card_bg'))
-        }
+        if (this.conversationReady) { this.ContinuationControls() }
+        Row() {
+          if (this.workbench.mode !== 'compact' && this.conversationReady) {
+            InvestigationEvidencePane({ workspaceId: this.workspaceId, clips: this.workbenchClips(),
+              segmentId: this.focusedSegmentId, seconds: this.focusedSeconds,
+              seekRevision: this.evidenceRevision, marks: this.workbenchMarks(),
+              resourceWidth: this.workbench.resourceWidth, playerHeight: this.workbench.playerHeight,
+              onSelect: (id: number, seconds: number): void => { this.selectEvidence(id, seconds); },
+              onPosition: (id: number, seconds: number): void => {
+                if (id === this.focusedSegmentId && Number.isFinite(seconds)) {
+                  this.evidencePlaybackSegmentId = id;
+                  this.evidencePlaybackSeconds = seconds;
+                  this.publishHandoff();
+                }
+              },
+              onRetry: (): void => { this.loadSegments(); } })
+              .width(this.workbench.evidenceWidth)
+          }
+          Column() {
+            if (this.workbench.mode === 'compact' && this.conversationReady && this.evidenceSegmentIds.length > 0) {
+              this.ReferenceSegments()
+            }
+            this.MessageStream()
+            if (this.canContinue()) {
+              this.Composer()
+            } else {
+              Text(this.liveProgress || '调查记录尚未加载，暂时无法追问。')
+                .fontSize(12).fontColor($r('app.color.app_text_muted'))
+                .width('100%').padding(15).backgroundColor($r('app.color.app_card_bg'))
+            }
+          }.layoutWeight(1).height('100%')
+        }.width('100%').layoutWeight(1).alignItems(VerticalAlign.Top)
       }
     }
     .width('100%')
     .layoutWeight(1)
     .backgroundColor($r('app.color.app_page_bg'))
+    .onAreaChange((_oldArea: Area, area: Area): void => {
+      this.resizeWorkbench(Number(area.width), Number(area.height));
+    })
   }
 }

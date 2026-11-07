@@ -62,7 +62,7 @@ const stage = fs.readFileSync(path.join(root, 'pages/components/MotionStage.ets'
 assert.match(stage, /aboutToDisappear\(\)[\s\S]*clearTimeout\(this\.frameTimer\)/);
 assert.match(stage, /if \(!this\.visible \|\| this\.reduceMotion\)/);
 const workspace = fs.readFileSync(path.join(root, 'pages/WorkspaceDetail.ets'), 'utf8');
-assert.match(workspace, /if \(!this\.isNestedView\(\)\) \{\s*Tabs\(/);
+assert.match(workspace, /if \(!this\.isNestedView\(\) && this\.workspaceWidth < 840\) \{\s*Tabs\(/);
 assert.match(workspace, /item\.id === rec\.segment_id/);
 assert.doesNotMatch(workspace, /s\.duration = rec\.end_time_offset \+ 5/);
 const panel = fs.readFileSync(path.join(root, 'pages/components/AgentConversationPanel.ets'), 'utf8');
