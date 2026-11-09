@@ -40,7 +40,7 @@
 
 ## 文档入口
 
-- [在线使用说明](http://116.62.178.139/) · [快速开始](docs/user-guide/02-quick-start.md) · [调查问答](docs/user-guide/07-ai-multimodal-qa.md)
+- [在线使用说明](https://pureyes.top/) · [快速开始](docs/user-guide/02-quick-start.md) · [调查问答](docs/user-guide/07-ai-multimodal-qa.md)
 - [开发者文档](docs/developer-guide/01-architecture-design.md) · [Agent 工具与运行机制](docs/developer-guide/04-ai-mva-engine.md)
 - [服务器部署](docs/server-deployment/01-requirements-and-env.md) · [部署步骤](docs/server-deployment/02-backend-deployment-guide.md)
 

@@ -5,6 +5,9 @@ import { InvestigationTaskCenter } from './investigationTasks';
 import { CaptureProtection } from './captureProtection';
 import { VideoShare } from './videoShare';
 import { InvestigationHandoff } from './investigationHandoff';
+import { OFFICIAL_SERVER_URL } from './http';
+
+const LEGACY_OFFICIAL_SERVER_URL = 'http://116.62.178.139:8000/api';
 
 function stringToUint8Array(str: string): Uint8Array {
   const encoder = new util.TextEncoder();
@@ -92,7 +95,6 @@ export class SecurityUtil {
       const refreshToken = await SecurityUtil.getSecureProp('refresh_token');
       AppStorage.setOrCreate('refresh_token', refreshToken || '');
       const sessionServer = await SecurityUtil.getSecureProp('session_server_url');
-      AppStorage.setOrCreate('session_server_url', sessionServer || '');
 
       const secureServerUrl = await SecurityUtil.getSecureProp('custom_server_url');
       if (secureServerUrl) {
@@ -103,6 +105,13 @@ export class SecurityUtil {
       if (secureIsCustom !== null) {
         AppStorage.setOrCreate('is_custom_server', secureIsCustom === 'true');
       }
+
+      const migrateOfficialSession = !!secureToken && sessionServer === LEGACY_OFFICIAL_SERVER_URL &&
+        AppStorage.get<boolean>('is_custom_server') !== true;
+      if (migrateOfficialSession) {
+        await SecurityUtil.setSecureProp('session_server_url', OFFICIAL_SERVER_URL);
+      }
+      AppStorage.setOrCreate('session_server_url', migrateOfficialSession ? OFFICIAL_SERVER_URL : (sessionServer || ''));
     } catch (e) {
       console.warn('[SecurityUtil] initSecureState fallback:', JSON.stringify(e));
     }

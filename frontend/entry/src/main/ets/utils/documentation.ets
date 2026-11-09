@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit'
 
-export const DOCUMENTATION_URL = 'http://116.62.178.139/'
+export const DOCUMENTATION_URL = 'https://pureyes.top/'
 
 export async function openDocumentation(context: common.UIAbilityContext): Promise<void> {
   await context.startAbility({
