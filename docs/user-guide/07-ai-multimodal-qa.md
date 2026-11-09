@@ -54,11 +54,18 @@
 
 窄屏窗口继续使用展开的引用片段列表和视频弹窗。查看其他画面不会改变调查引用范围；加入新的片段仍需新建调查。
 
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/tablet-workbench.webp"><img src="/screenshots/2026-harmonyos/tablet-workbench.webp" alt="平板上并排显示引用片段、视频核验和带时间引用的调查回答" loading="lazy" /></a><figcaption>平板 · 三栏调查工作台</figcaption></figure>
+
 ### 分享与跨设备接续
 
 已完成的回答提供【分享结论】与【分享报告】，分别分享文字和 Markdown 文件，由系统分享面板选择接收方。支持碰一碰的设备可在调查详情分享当前调查最近一次完成的结论。
 
 要在另一台鸿蒙设备继续核验，在调查详情点击【跨设备接续】，允许系统多设备协同，再从附近设备的系统接续入口打开。两台设备应登录同一华为账号，清眸连接同一服务器，目标设备上的清眸账号需有权访问该调查。接续会恢复未发送的追问和已选视频位置；窄屏上点击【查看接续位置】打开对应画面。
+
+<div class="screenshot-grid screenshot-grid-wide">
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/report-share.webp"><img src="/screenshots/2026-harmonyos/report-share.webp" alt="系统分享面板显示清眸调查报告文件" loading="lazy" /></a><figcaption>电脑 · 分享调查报告</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/continuation-permission.webp"><img src="/screenshots/2026-harmonyos/continuation-permission.webp" alt="跨设备接续入口触发的系统附近设备授权提示" loading="lazy" /></a><figcaption>电脑 · 接续的附近设备授权</figcaption></figure>
+</div>
 
 ## 4. 组员追问与上下文
 

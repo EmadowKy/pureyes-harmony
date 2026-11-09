@@ -12,12 +12,16 @@
 - **设备网格卡片**：每个监控卡片包含：
   - **摄像头名称**：例如“东门入口高清球机”、“3楼走廊摄像头”。
   - **画面封面快照**：系统后台定期抓取的最新画面缩略图。
-  - **在线状态标签**：绿色标示在线，灰色标示离线。
+  - **录像状态**：显示持续保存、连接恢复或未配置视频源等状态。
 - **自动模式切换**：时间轴位于最新位置时自动跟随实时画面；向过去拖动后自动进入历史回放。视频源地址仅由有管理权限的成员配置，不会展示给普通查看者。
 
 ---
 
 ## 2. 模式一：实时视频直播
+
+宽屏上，单路视频源以较大的居中封面显示。多路视频源按窗口宽度分列，各封面按原比例完整显示。
+
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/monitor-overview.webp"><img src="/screenshots/2026-harmonyos/monitor-overview.webp" alt="电脑上的监控列表与居中的单路视频封面" loading="lazy" /></a><figcaption>电脑 · 单路监控封面</figcaption></figure>
 
 - **流媒体播放**：点击监控卡片的播放按钮进入播放页面，底栏收起；点击左上角返回按钮回到监控列表。页面内可实时查看摄像头视频推流。
 - **定时封面刷新**：系统后台会定期（每 1 分钟）自动抓取并更新摄像头的封面快照，让您无需点击播放即可了解各监控区域的大致动态。
@@ -27,6 +31,8 @@
 ## 3. 模式二：多粒度历史视频回放与时间轴定位
 
 排查过去的画面时，在监控播放页向过去拖动时间轴，或输入目标时间并点击【跳转定位】。选择有录像的时间段后即可回放。
+
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/monitor-replay.webp"><img src="/screenshots/2026-harmonyos/monitor-replay.webp" alt="电脑上的历史监控画面与录像时间轴" loading="lazy" /></a><figcaption>电脑 · 历史回放与时间轴</figcaption></figure>
 
 ```mermaid
 graph TD

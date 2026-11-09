@@ -6,6 +6,11 @@
 
 操作说明：[快速开始](02-quick-start.md)、[监控与回放](05-live-monitoring.md)。
 
+<div class="screenshot-grid screenshot-grid-wide">
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/monitor-overview.webp"><img src="/screenshots/2026-harmonyos/monitor-overview.webp" alt="电脑上的监控列表与居中的单路视频封面" loading="lazy" /></a><figcaption>电脑 · 单路监控封面</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/monitor-replay.webp"><img src="/screenshots/2026-harmonyos/monitor-replay.webp" alt="电脑上的历史监控画面与录像时间轴" loading="lazy" /></a><figcaption>电脑 · 历史回放与时间轴</figcaption></figure>
+</div>
+
 <details open><summary>选择小组、历史回放与添加视频源</summary>
 <div class="screenshot-grid">
 <figure><a href="/screenshots/20260929/01-group-selection.webp"><img src="/screenshots/20260929/01-group-selection.webp" alt="选择调查小组" loading="lazy" /></a><figcaption>选择调查小组</figcaption></figure>
@@ -16,6 +21,12 @@
 ## 工作区、上传、截取与预处理
 
 操作说明：[工作区与视频片段](06-workspace-management.md)。
+
+<div class="screenshot-grid screenshot-grid-wide">
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/clip-detail.webp"><img src="/screenshots/2026-harmonyos/clip-detail.webp" alt="电脑上并排显示片段播放器、视频来源和预处理状态" loading="lazy" /></a><figcaption>电脑 · 片段详情</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/clip-trim.webp"><img src="/screenshots/2026-harmonyos/clip-trim.webp" alt="电脑上并排显示视频预览、截取范围和预处理参数" loading="lazy" /></a><figcaption>电脑 · 视频截取与预处理</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/import-queue.webp"><img src="/screenshots/2026-harmonyos/import-queue.webp" alt="工作区顶部显示待导入视频、导入及移除按钮" loading="lazy" /></a><figcaption>电脑 · 接收系统分享的视频</figcaption></figure>
+</div>
 
 <details><summary>展开 8 张工作区与视频处理截图</summary>
 <div class="screenshot-grid">
@@ -42,6 +53,12 @@
 ## 多视频调查与追问
 
 操作说明：[调查问答](07-ai-multimodal-qa.md)。
+
+<div class="screenshot-grid screenshot-grid-wide">
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/tablet-workbench.webp"><img src="/screenshots/2026-harmonyos/tablet-workbench.webp" alt="平板上并排显示引用片段、视频核验和带时间引用的调查回答" loading="lazy" /></a><figcaption>平板 · 三栏调查工作台</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/report-share.webp"><img src="/screenshots/2026-harmonyos/report-share.webp" alt="系统分享面板显示清眸调查报告文件" loading="lazy" /></a><figcaption>电脑 · 分享调查报告</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/continuation-permission.webp"><img src="/screenshots/2026-harmonyos/continuation-permission.webp" alt="跨设备接续入口触发的系统附近设备授权提示" loading="lazy" /></a><figcaption>电脑 · 接续的附近设备授权</figcaption></figure>
+</div>
 
 <details><summary>展开 8 张调查截图</summary>
 <div class="screenshot-grid">
@@ -74,16 +91,22 @@
 <figure><a href="/screenshots/20260929/37-member-detail.webp"><img src="/screenshots/20260929/37-member-detail.webp" alt="成员资料" loading="lazy" /></a><figcaption>成员资料</figcaption></figure>
 </div></details>
 
-## 桌面小部件
+## 闪控、桌面小部件与窗口隐私
 
 操作说明：[调查通知与桌面小部件](10-investigation-notifications.md)。
 
-![桌面服务卡片展示调查完成记录](/screenshots/20260929/35-desktop-widget.webp)
+<div class="screenshot-grid">
+<figure><a href="/screenshots/2026-harmonyos/interactive-widget.webp"><img src="/screenshots/2026-harmonyos/interactive-widget.webp" alt="清眸桌面卡片显示已完成状态及上一项和下一项按钮" loading="lazy" /></a><figcaption>手机 · 切换桌面卡片任务</figcaption></figure>
+<figure><a href="/screenshots/2026-harmonyos/flash-window.webp"><img src="/screenshots/2026-harmonyos/flash-window.webp" alt="桌面上的闪控窗显示调查阶段、工具步骤数与用时" loading="lazy" /></a><figcaption>手机 · 闪控窗中的调查进度</figcaption></figure>
+<figure><a href="/screenshots/2026-harmonyos/flash-ball.webp"><img src="/screenshots/2026-harmonyos/flash-ball.webp" alt="收起后的闪控球显示调查步数与用时" loading="lazy" /></a><figcaption>手机 · 闪控球</figcaption></figure>
+</div>
+
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/tablet-privacy.webp"><img src="/screenshots/2026-harmonyos/tablet-privacy.webp" alt="窗口隐私设置显示设备不支持注视防窥及独立的截图录屏开关" loading="lazy" /></a><figcaption>平板 · 窗口隐私设置</figcaption></figure>
 
 <span id="截图来源与使用边界"></span>
 
 ## 截图与素材说明
 
-截图采集于 2026-09-29 的鸿蒙模拟器，原图为 1256 × 2760，网页使用同分辨率 WebP 图片。账号、小组、模型名称和视频备注为示例内容，可按团队需要设置。
+截图采集于 2026 年 9 月至 11 月的鸿蒙手机、平板及电脑模拟器，网页使用等比 WebP 图片。账号、小组、模型名称和视频备注为示例内容，可按团队需要设置。接续和防窥截图分别展示授权入口与设置页面。
 
 人脸示例来自 ChokePoint 研究数据，视频调查示例使用 UCF-Crime 素材。素材再使用遵循原数据集许可；公开展示时请确认使用范围、署名要求与人物隐私。截图与录屏权限的设置方法见[窗口隐私](09-profile-and-settings.md#截图与录屏权限)。

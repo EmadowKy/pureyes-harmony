@@ -23,11 +23,24 @@
   margin: 0 auto 10px;
 }
 
-.vp-doc .screenshot-grid figcaption {
+.vp-doc .screenshot-grid figcaption,
+.vp-doc .screenshot-wide figcaption {
   text-align: center;
   font-size: 13px;
   color: var(--vp-c-text-2);
   line-height: 1.6;
+}
+
+.vp-doc .screenshot-grid-wide {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+.vp-doc .screenshot-wide img[src*="/screenshots/"] {
+  max-width: 100%;
+}
+
+.vp-doc :not(.screenshot-grid) > figure.screenshot-wide {
+  margin: 20px 0;
 }
 
 .vp-doc details > summary {

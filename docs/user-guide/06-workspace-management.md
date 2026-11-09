@@ -36,6 +36,13 @@
 
 截取后会生成独立的视频片段。片段详情提供播放、备注编辑和特征预处理管理，也有删除片段入口。具体可选视频源取决于当前工作区和服务器上的文件。
 
+宽屏下，截取页将视频预览与时间范围、备注、预处理设置并排显示，片段详情也会将播放器和片段信息分栏。缩窄窗口后，内容改为上下排列。
+
+<div class="screenshot-grid screenshot-grid-wide">
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/clip-trim.webp"><img src="/screenshots/2026-harmonyos/clip-trim.webp" alt="电脑上并排显示视频预览、截取范围和预处理参数" loading="lazy" /></a><figcaption>电脑 · 视频截取与预处理</figcaption></figure>
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/clip-detail.webp"><img src="/screenshots/2026-harmonyos/clip-detail.webp" alt="电脑上并排显示片段播放器、视频来源和预处理状态" loading="lazy" /></a><figcaption>电脑 · 片段详情</figcaption></figure>
+</div>
+
 <div class="screenshot-grid">
 <figure><img src="/screenshots/20260929/11-local-upload-menu.webp" alt="截取新片段页面可从相册或文件选择本地视频" loading="lazy" /><figcaption>从手机选择本地视频</figcaption></figure>
 <figure><img src="/screenshots/20260929/12-segment-trim-settings.webp" alt="上传视频的预览和起止时间滑块" loading="lazy" /><figcaption>上传后预览并选择截取范围</figcaption></figure>
@@ -48,6 +55,8 @@
 在系统相册或文件应用选择视频，打开【分享】并选择清眸。进入目标工作区后，核对顶部显示的视频名和工作区，再点击【导入此工作区】；选错视频可以点击【移除】。待处理列表最多保留 5 个视频。支持碰一碰的鸿蒙设备也可在清眸工作区处于前台时接收，导入与截取流程相同。
 
 在鸿蒙电脑或分屏的平板上，也可以从支持拖放的文件应用把视频拖到【截取新片段 → 上传本地视频】区域，再确认导入。
+
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/import-queue.webp"><img src="/screenshots/2026-harmonyos/import-queue.webp" alt="工作区顶部显示待导入视频、导入及移除按钮" loading="lazy" /></a><figcaption>电脑 · 接收系统分享的视频</figcaption></figure>
 
 ## 3. 可选的 AI 特征预处理
 

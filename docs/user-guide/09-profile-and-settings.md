@@ -49,6 +49,8 @@
 
 支持注视防窥的设备可在同一页面点击【系统防窥设置】，按系统提示完成设置。开启后，系统判断需要防窥时会遮挡当前清眸窗口。注视防窥与截图录屏开关分别生效。
 
+<figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/tablet-privacy.webp"><img src="/screenshots/2026-harmonyos/tablet-privacy.webp" alt="窗口隐私设置显示设备不支持注视防窥及独立的截图录屏开关" loading="lazy" /></a><figcaption>平板 · 窗口隐私设置</figcaption></figure>
+
 权限按账号保存，登录后恢复；退出登录时本机恢复保护。开关同时控制截图和录屏。允许后可以使用系统截图、录屏功能，请妥善保管含监控画面或人脸信息的文件。
 
 ## 其他入口
