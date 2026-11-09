@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 BACKEND = Path(__file__).resolve().parents[1]
 PUBLIC_AVATARS = Path('/var/www/docs/demo-assets/avatars')
+PUBLIC_ORIGIN = 'https://pureyes.top'
 TABLES = ('users', 'groups', 'group_members', 'workspaces', 'workspace_video_segments',
           'workspace_face_groups', 'workspace_face_records', 'agent_conversations', 'qa_records')
 
@@ -122,9 +123,9 @@ def seed(password):
             con.execute('''INSERT INTO users(emp_id,name,password_hash,role,is_active,avatar,
                 auth_version,screen_capture_allowed,created_at,updated_at) VALUES(?,?,?,?,?,?,0,0,?,?)''',
                 (emp_id, name, generate_password_hash(password), role, active,
-                 f'http://116.62.178.139/demo-assets/avatars/{emp_id}.svg', now, now))
+                 f'{PUBLIC_ORIGIN}/demo-assets/avatars/{emp_id}.svg', now, now))
         con.execute("UPDATE users SET avatar=?,updated_at=? WHERE emp_id='admin'",
-                    ('http://116.62.178.139/demo-assets/avatars/admin.svg', now))
+                    (f'{PUBLIC_ORIGIN}/demo-assets/avatars/admin.svg', now))
         for emp_id in ('demo_analyst', 'demo_patrol', 'demo_lead', 'demo_newbie'):
             con.execute('INSERT INTO group_members(group_id,emp_id,status,joined_at) VALUES(?,?,?,?)',
                         (group_id, emp_id, 'pending' if emp_id == 'demo_newbie' else 'accepted', now))
