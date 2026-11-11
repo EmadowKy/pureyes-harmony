@@ -158,25 +158,32 @@ struct MonitorTimeRangeDialog {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
-  @Builder ParameterOption(label: string, isSelected: boolean, action: () => void) {
-    Button(label)
-      .height(32)
-      .layoutWeight(1)
-      .fontSize(12)
-      .fontWeight(isSelected ? FontWeight.Bold : FontWeight.Medium)
-      .fontColor(isSelected ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
-      .backgroundColor(Color.Transparent)
-      .border({
-        width: { bottom: isSelected ? 3 : 1 },
-        color: isSelected ? $r('app.color.app_accent') : $r('app.color.app_border')
-      })
-      .borderRadius(0)
-      .onClick(action)
+  @Builder ParameterOption(label: string, action: () => void) {
+    Column({ space: 0 }) {
+      Button(label)
+        .height(32)
+        .width('100%')
+        .padding({ left: 0, right: 0 })
+        .fontSize(12)
+        .fontWeight((label === `${this.selectedFps.toFixed(1)} FPS` || label === this.selectedResolution) ? FontWeight.Bold : FontWeight.Medium)
+        .fontColor((label === `${this.selectedFps.toFixed(1)} FPS` || label === this.selectedResolution) ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
+        .backgroundColor(Color.Transparent)
+        .borderRadius(0)
+        .onClick(action)
+
+      Row()
+        .width('100%')
+        .height(3)
+        .backgroundColor((label === `${this.selectedFps.toFixed(1)} FPS` || label === this.selectedResolution) ? $r('app.color.app_accent') : $r('app.color.app_border'))
+    }
+    .layoutWeight(1)
   }
 
   @Builder QuickRange(label: string, minutes: number) {
     Button(label)
       .fontSize(11)
+      .layoutWeight(1)
+      .padding({ left: 0, right: 0 })
       .fontColor($r('app.color.app_text_primary'))
       .height(28)
       .backgroundColor(Color.Transparent)
@@ -212,14 +219,18 @@ struct MonitorTimeRangeDialog {
             }
             .width('100%')
 
-            Row({ space: 6 }) {
+            Column({ space: 4 }) {
               Text('快捷填充:')
                 .fontSize(12)
                 .fontColor($r('app.color.app_text_secondary'))
+                .alignSelf(ItemAlign.Start)
 
-              this.QuickRange('最近 1 分钟', 1)
-              this.QuickRange('最近 3 分钟', 3)
-              this.QuickRange('最近 5 分钟', 5)
+              Row({ space: 6 }) {
+                this.QuickRange('最近 1 分钟', 1)
+                this.QuickRange('最近 3 分钟', 3)
+                this.QuickRange('最近 5 分钟', 5)
+              }
+              .width('100%')
             }
             .width('100%')
 
@@ -291,9 +302,9 @@ struct MonitorTimeRangeDialog {
                   .width('100%')
 
                   Row({ space: 6 }) {
-                    this.ParameterOption('0.5 FPS', this.selectedFps === 0.5, (): void => { this.selectedFps = 0.5; })
-                    this.ParameterOption('1.0 FPS', this.selectedFps === 1.0, (): void => { this.selectedFps = 1.0; })
-                    this.ParameterOption('2.0 FPS', this.selectedFps === 2.0, (): void => { this.selectedFps = 2.0; })
+                    this.ParameterOption('0.5 FPS', (): void => { this.selectedFps = 0.5; })
+                    this.ParameterOption('1.0 FPS', (): void => { this.selectedFps = 1.0; })
+                    this.ParameterOption('2.0 FPS', (): void => { this.selectedFps = 2.0; })
                   }
                   .width('100%')
                 }
@@ -315,14 +326,10 @@ struct MonitorTimeRangeDialog {
                   .width('100%')
 
                   Row({ space: 6 }) {
-                    this.ParameterOption('480P', this.selectedResolution === '480P', (): void => { this.selectedResolution = '480P'; })
-                    this.ParameterOption('720P', this.selectedResolution === '720P', (): void => { this.selectedResolution = '720P'; })
-                  }
-                  .width('100%')
-
-                  Row({ space: 6 }) {
-                    this.ParameterOption('1080P', this.selectedResolution === '1080P', (): void => { this.selectedResolution = '1080P'; })
-                    this.ParameterOption('4K', this.selectedResolution === '4K', (): void => { this.selectedResolution = '4K'; })
+                    this.ParameterOption('480P', (): void => { this.selectedResolution = '480P'; })
+                    this.ParameterOption('720P', (): void => { this.selectedResolution = '720P'; })
+                    this.ParameterOption('1080P', (): void => { this.selectedResolution = '1080P'; })
+                    this.ParameterOption('4K', (): void => { this.selectedResolution = '4K'; })
                   }
                   .width('100%')
 
@@ -397,7 +404,7 @@ struct MonitorTimeRangeDialog {
       .width('100%')
     }
     .width('94%')
-    .constraintSize({ maxWidth: 560, maxHeight: Math.max(160, this.availableHeight * 0.85) })
+    .constraintSize({ maxWidth: 560, maxHeight: Math.max(160, this.availableHeight * 0.93) })
     .align(Alignment.Top)
     .scrollBar(BarState.Auto)
     .backgroundColor($r('app.color.app_card_bg'))

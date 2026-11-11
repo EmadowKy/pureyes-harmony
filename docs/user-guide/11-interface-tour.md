@@ -28,7 +28,7 @@
 <figure class="screenshot-wide"><a href="/screenshots/2026-harmonyos/import-queue.webp"><img src="/screenshots/2026-harmonyos/import-queue.webp" alt="工作区顶部显示待导入视频、导入及移除按钮" loading="lazy" /></a><figcaption>电脑 · 接收系统分享的视频</figcaption></figure>
 </div>
 
-<details><summary>展开 8 张工作区与视频处理截图</summary>
+<details><summary>展开 7 张工作区与视频处理截图</summary>
 <div class="screenshot-grid">
 <figure><a href="/screenshots/20260929/06-workspace-list.webp"><img src="/screenshots/20260929/06-workspace-list.webp" alt="工作区列表" loading="lazy" /></a><figcaption>工作区列表</figcaption></figure>
 <figure><a href="/screenshots/20260929/07-workspace-create.webp"><img src="/screenshots/20260929/07-workspace-create.webp" alt="创建工作区" loading="lazy" /></a><figcaption>创建工作区</figcaption></figure>
@@ -36,8 +36,7 @@
 <figure><a href="/screenshots/20260929/10-segment-sources.webp"><img src="/screenshots/20260929/10-segment-sources.webp" alt="选择可用视频源" loading="lazy" /></a><figcaption>选择监控或上传的视频源</figcaption></figure>
 <figure><a href="/screenshots/20260929/11-local-upload-menu.webp"><img src="/screenshots/20260929/11-local-upload-menu.webp" alt="本地视频上传选择菜单" loading="lazy" /></a><figcaption>从手机相册或文件选择</figcaption></figure>
 <figure><a href="/screenshots/20260929/12-segment-trim-settings.webp"><img src="/screenshots/20260929/12-segment-trim-settings.webp" alt="视频截取范围" loading="lazy" /></a><figcaption>视频预览与截取范围</figcaption></figure>
-<figure><a href="/screenshots/20260929/13-preprocess-options.webp"><img src="/screenshots/20260929/13-preprocess-options.webp" alt="AI 预处理参数" loading="lazy" /></a><figcaption>AI 预处理参数</figcaption></figure>
-<figure><a href="/screenshots/20260929/14-monitor-trim.webp"><img src="/screenshots/20260929/14-monitor-trim.webp" alt="截取监控历史录像" loading="lazy" /></a><figcaption>按日期时间截取监控录像</figcaption></figure>
+<figure><a href="/screenshots/20261111/monitor-clip-settings.webp"><img src="/screenshots/20261111/monitor-clip-settings.webp" alt="监控录像截取时间及 AI 预处理参数" loading="lazy" /></a><figcaption>监控录像截取与预处理</figcaption></figure>
 </div></details>
 
 ## 人脸线索
@@ -97,7 +96,7 @@
 
 <div class="screenshot-grid">
 <figure><a href="/screenshots/2026-harmonyos/interactive-widget.webp"><img src="/screenshots/2026-harmonyos/interactive-widget.webp" alt="清眸桌面卡片显示已完成状态及上一项和下一项按钮" loading="lazy" /></a><figcaption>手机 · 切换桌面卡片任务</figcaption></figure>
-<figure><a href="/screenshots/2026-harmonyos/flash-window.webp"><img src="/screenshots/2026-harmonyos/flash-window.webp" alt="桌面上的闪控窗显示调查阶段、工具步骤数与用时" loading="lazy" /></a><figcaption>手机 · 闪控窗中的调查进度</figcaption></figure>
+<figure><a href="/screenshots/20261111/flash-window.webp"><img src="/screenshots/20261111/flash-window.webp" alt="闪控窗显示调查标题、阶段、工具步骤数与用时" loading="lazy" /></a><figcaption>手机 · 闪控窗中的调查进度</figcaption></figure>
 <figure><a href="/screenshots/2026-harmonyos/flash-ball.webp"><img src="/screenshots/2026-harmonyos/flash-ball.webp" alt="收起后的闪控球显示调查步数与用时" loading="lazy" /></a><figcaption>手机 · 闪控球</figcaption></figure>
 </div>
 

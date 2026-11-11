@@ -63,7 +63,7 @@
 截取时可开启【AI 特征提取与识别预处理】，也可以先截取，随后在片段详情中手动开始预处理。界面提供 **0.5、1.0、2.0 FPS** 采样率，以及 **480P、720P、1080P、4K** 预处理画质；默认是 1.0 FPS 和 1080P。较高的采样率、画质或较长的片段会增加处理时间。
 
 <div class="screenshot-grid">
-<figure><img src="/screenshots/20260929/13-preprocess-options.webp" alt="截取页面的 AI 预处理开关采样帧率及画质选项" loading="lazy" /><figcaption>确认截取前设置预处理</figcaption></figure>
+<figure><img src="/screenshots/20261111/monitor-clip-settings.webp" alt="截取页面的 AI 预处理开关采样帧率及画质选项" loading="lazy" /><figcaption>确认截取前设置预处理</figcaption></figure>
 <figure><img src="/screenshots/20260929/09-segment-detail.webp" alt="片段详情显示已预处理以及采样配置" loading="lazy" /><figcaption>播放片段并查看特征状态</figcaption></figure>
 </div>
 

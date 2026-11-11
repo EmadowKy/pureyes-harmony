@@ -47,11 +47,11 @@
 ## 5. 闪控窗与闪控球
 
 <div class="screenshot-grid">
-<figure><a href="/screenshots/2026-harmonyos/flash-window.webp"><img src="/screenshots/2026-harmonyos/flash-window.webp" alt="桌面上的闪控窗显示调查阶段、工具步骤数与用时" loading="lazy" /></a><figcaption>手机 · 闪控窗中的调查进度</figcaption></figure>
+<figure><a href="/screenshots/20261111/flash-window.webp"><img src="/screenshots/20261111/flash-window.webp" alt="闪控窗显示调查标题、阶段、工具步骤数与用时" loading="lazy" /></a><figcaption>手机 · 闪控窗中的调查进度</figcaption></figure>
 <figure><a href="/screenshots/2026-harmonyos/flash-ball.webp"><img src="/screenshots/2026-harmonyos/flash-ball.webp" alt="收起后的闪控球显示调查步数与用时" loading="lazy" /></a><figcaption>手机 · 闪控球</figcaption></figure>
 </div>
 
-闪控适用于支持该能力的 HarmonyOS 7 设备。在工作区【问答】页面点击【开启闪控】，按系统提示授权；从某条调查详情开启时，优先展示该调查。开启后可以离开清眸，在其他应用上方查看进度。
+闪控适用于支持该能力的 HarmonyOS 7 设备。在工作区【问答】页面点击【开启闪控】，按系统提示授权；从某条调查详情开启时，优先展示该调查。闪控窗显示调查标题，方便区分多项任务。开启后可以离开清眸，在其他应用上方查看进度。
 
 | 操作与状态 | 显示或行为 |
 | --- | --- |
