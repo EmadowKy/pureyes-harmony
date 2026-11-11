@@ -162,7 +162,7 @@ struct MonitorTimeRangeDialog {
     Button(label)
       .height(32)
       .layoutWeight(1)
-      .fontSize(11)
+      .fontSize(12)
       .fontWeight(isSelected ? FontWeight.Bold : FontWeight.Medium)
       .fontColor(isSelected ? $r('app.color.app_text_primary') : $r('app.color.app_text_secondary'))
       .backgroundColor(Color.Transparent)
@@ -292,7 +292,7 @@ struct MonitorTimeRangeDialog {
 
                   Row({ space: 6 }) {
                     this.ParameterOption('0.5 FPS', this.selectedFps === 0.5, (): void => { this.selectedFps = 0.5; })
-                    this.ParameterOption('1.0 FPS · 推荐', this.selectedFps === 1.0, (): void => { this.selectedFps = 1.0; })
+                    this.ParameterOption('1.0 FPS', this.selectedFps === 1.0, (): void => { this.selectedFps = 1.0; })
                     this.ParameterOption('2.0 FPS', this.selectedFps === 2.0, (): void => { this.selectedFps = 2.0; })
                   }
                   .width('100%')
@@ -317,10 +317,19 @@ struct MonitorTimeRangeDialog {
                   Row({ space: 6 }) {
                     this.ParameterOption('480P', this.selectedResolution === '480P', (): void => { this.selectedResolution = '480P'; })
                     this.ParameterOption('720P', this.selectedResolution === '720P', (): void => { this.selectedResolution = '720P'; })
-                    this.ParameterOption('1080P · 推荐', this.selectedResolution === '1080P', (): void => { this.selectedResolution = '1080P'; })
+                  }
+                  .width('100%')
+
+                  Row({ space: 6 }) {
+                    this.ParameterOption('1080P', this.selectedResolution === '1080P', (): void => { this.selectedResolution = '1080P'; })
                     this.ParameterOption('4K', this.selectedResolution === '4K', (): void => { this.selectedResolution = '4K'; })
                   }
                   .width('100%')
+
+                  Text('推荐：1.0 FPS · 1080P')
+                    .fontSize(10)
+                    .fontColor($r('app.color.app_text_secondary'))
+                    .alignSelf(ItemAlign.Start)
                 }
                 .width('100%')
                 .margin({ top: 2 })
