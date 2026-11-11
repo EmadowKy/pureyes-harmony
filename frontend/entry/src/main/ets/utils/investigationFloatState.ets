@@ -1,8 +1,9 @@
 import { InvestigationDashboard, InvestigationTaskSnapshot, taskDuration } from './investigationTaskState';
 
-// Only operational metadata is copied into the cross-application window.
+// Include the investigation title so users can distinguish concurrent tasks.
 export class InvestigationFloatSnapshot {
   taskId: string = '';
+  title: string = '';
   conversationId: string = '';
   workspaceId: number = 0;
   groupId: number = 0;
@@ -61,6 +62,7 @@ export function floatSnapshot(dashboard: InvestigationDashboard, selected: strin
     return result;
   }
   const task = pool[index];
+  result.title = task.title?.trim() || '视频调查';
   result.stale = result.stale || (task.status === 'processing' && now - synchronizedAt > 20000);
   result.taskId = task.taskId;
   result.conversationId = task.conversationId;

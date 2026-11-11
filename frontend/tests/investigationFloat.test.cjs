@@ -105,7 +105,9 @@ async function settle() { await flush(); await flush(); }
   assert.equal(snapshot(data, 'a', now, now, true).stale, true);
   assert.equal(snapshot(dashboard([]), '', now, now, false).stage, '暂无调查');
   assert.equal(snapshot(dashboard([]), '', 0, now, false).stage, '正在同步');
-  assert.ok(!JSON.stringify(snapshot(data, 'a', now, now, false)).includes('PRIVATE TITLE'), 'no title leakage');
+  assert.equal(snapshot(data, 'a', now, now, false).title, 'PRIVATE TITLE', 'show the selected investigation title');
+  const titled = dashboard([{ ...task('first'), title: '调查一' }, { ...task('second'), title: '调查二' }]);
+  assert.equal(snapshot(titled, next(titled, 'first', 1), now, now, false).title, '调查二', 'switching tasks updates the title');
   assert.ok(errorHint(201).includes('签名'));
   assert.ok(errorHint(1300034).includes('画中画'));
   const size = context.api.floatWindowSize(limits, 2);

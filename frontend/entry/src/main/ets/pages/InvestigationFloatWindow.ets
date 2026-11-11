@@ -40,11 +40,12 @@ struct InvestigationFloatWindow {
             .height(26)
             .objectFit(ImageFit.Contain)
           Column({ space: 1 }) {
-            Text('清眸调查')
+            Text(this.token && this.task.taskId ? this.task.title || '视频调查' : '清眸调查')
               .fontSize(13)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.app_text_primary'))
-              .maxLines(1)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
             if (this.token) {
               Row({ space: 4 }) {
                 Text('')
