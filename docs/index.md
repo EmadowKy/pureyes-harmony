@@ -36,6 +36,6 @@ features:
 
 ## 鸿蒙原生能力
 
-![端侧人脸比对、桌面小部件、调查通知、交互动效与安全隐私](/illustrations/harmony-native-features.webp)
+![闪控窗与闪控球、端侧人脸比对、安全与隐私、互动桌面卡片、跨设备分享与接续、多端自适应](/illustrations/harmony-native-features.webp)
 
 查看[鸿蒙能力接入](/developer-guide/06-harmonyos-native-features)，或从[功能截图导览](/user-guide/11-interface-tour)浏览实际操作页面。
